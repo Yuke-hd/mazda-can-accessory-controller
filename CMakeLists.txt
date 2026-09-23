@@ -15,7 +15,7 @@ set(VEHICLE_CAN_CORE_REPOSITORY
     "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     CACHE STRING "Pinned vehicle CAN core repository")
 set(VEHICLE_CAN_CORE_COMMIT
-    "f75c71e1484aae6002852ee450153677c1b24e72"
+    "f30764b36868952ffb593a146d5d81bc15a4381e"
     CACHE STRING "Full immutable vehicle CAN core commit SHA")
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/esp32-vehicle-can-core"
