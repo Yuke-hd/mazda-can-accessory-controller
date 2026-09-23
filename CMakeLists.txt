@@ -9,14 +9,13 @@ include(CTest)
 include(FetchContent)
 
 # The generic CAN/telemetry runtime is maintained in the companion core
-# repository. Keep this reviewed full SHA immutable while updating the
-# controller dependency deliberately.
+# repository. Pin this dependency to a reviewed release tag.
 set(VEHICLE_CAN_CORE_REPOSITORY
     "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     CACHE STRING "Pinned vehicle CAN core repository")
-set(VEHICLE_CAN_CORE_COMMIT
-    "f75c71e1484aae6002852ee450153677c1b24e72"
-    CACHE STRING "Full immutable vehicle CAN core commit SHA")
+set(VEHICLE_CAN_CORE_TAG
+    "0.1.0"
+    CACHE STRING "Vehicle CAN core release tag")
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/esp32-vehicle-can-core"
     CACHE PATH "Local vehicle CAN core checkout for offline builds")
@@ -38,7 +37,7 @@ else()
   FetchContent_Declare(
     vehicle_can_core
     GIT_REPOSITORY "${VEHICLE_CAN_CORE_REPOSITORY}"
-    GIT_TAG "${VEHICLE_CAN_CORE_COMMIT}"
+    GIT_TAG "${VEHICLE_CAN_CORE_TAG}"
     GIT_SHALLOW OFF
   )
   set(_mazda_build_testing ${BUILD_TESTING})

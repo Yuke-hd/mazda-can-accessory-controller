@@ -299,25 +299,40 @@ def _check_dependency_layout(root: Path) -> None:
         if path.exists():
             raise ArchitectureFailure(f"generic component is duplicated in controller: {path}")
     cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
-    for needle in ("VEHICLE_CAN_CORE_REPOSITORY", "VEHICLE_CAN_CORE_COMMIT", "FetchContent"):
+    for needle in ("VEHICLE_CAN_CORE_REPOSITORY", "VEHICLE_CAN_CORE_TAG", "FetchContent"):
         if needle not in cmake:
             raise ArchitectureFailure(f"pinned generic dependency contract is missing: {needle}")
-    commit_match = re.search(
-        r"set\(VEHICLE_CAN_CORE_COMMIT\s+\"([0-9a-fA-F]{40})\"", cmake
+    tag_match = re.search(
+        r"set\s*\(\s*VEHICLE_CAN_CORE_TAG\s+\"([^\"]+)\"", cmake
     )
-    if commit_match is None:
-        raise ArchitectureFailure("VEHICLE_CAN_CORE_COMMIT must be a full 40-character SHA")
+    if tag_match is None:
+        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must name a release tag")
+    release_tag = tag_match.group(1)
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_tag) or release_tag != "0.1.0":
+        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must be the 0.1.0 release tag")
     manifest = root / "firmware/weact-can485-v1.1/main/idf_component.yml"
     if not manifest.exists():
         raise ArchitectureFailure(f"firmware dependency manifest is missing: {manifest}")
-    refs = re.findall(
-        r"^\s+version:\s+\"([0-9a-fA-F]{40})\"\s*$",
-        manifest.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if len(refs) != 3 or set(refs) != {commit_match.group(1)}:
+    manifest_text = manifest.read_text(encoding="utf-8")
+    component_refs: List[str] = []
+    for component in ("vehicle_core", "can_bus", "vehicle_telemetry"):
+        component_match = re.search(
+            rf"^  {component}:\s*\n((?:^    .*\n)*)",
+            manifest_text,
+            re.MULTILINE,
+        )
+        if component_match is None:
+            continue
+        version_match = re.search(
+            r'^    version:\s+"([^\"]+)"\s*$',
+            component_match.group(1),
+            re.MULTILINE,
+        )
+        if version_match is not None:
+            component_refs.append(version_match.group(1))
+    if len(component_refs) != 3 or set(component_refs) != {release_tag}:
         raise ArchitectureFailure(
-            "CMake and all three ESP-IDF generic component refs must use the same full SHA"
+            "CMake and all three ESP-IDF generic component refs must use the same 0.1.0 release tag"
         )
     print("OK   generic vehicle-core components are external and pinned")
 

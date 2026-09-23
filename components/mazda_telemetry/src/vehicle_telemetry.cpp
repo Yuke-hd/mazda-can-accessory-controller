@@ -179,6 +179,16 @@ Reading<T> notification_reading(const PublishedSnapshot &snapshot,
 inline constexpr LightingDescriptor<TurnState> kTurnNotificationDescriptor{
     &VehicleState::turn_state, &candidate::kTurnLeftSwitchDefinition};
 
+void configure_runtime(vehicle_telemetry::Runtime &runtime,
+                       const TelemetryConfig &config) noexcept {
+  vehicle_telemetry::RuntimeConfig runtime_config{};
+  runtime_config.receive_timeout_ms =
+      static_cast<std::uint32_t>(std::max<vehicle_core::Microseconds>(
+          1, (config.availability_service_target_us + 999) / 1'000));
+  runtime_config.transport_silence_timeout_us = config.transport_silence_timeout_us;
+  (void)runtime.configure(runtime_config);
+}
+
 } // namespace
 
 vehicle_core::MonotonicTimestamp SteadyClock::now() const noexcept {
@@ -328,25 +338,28 @@ const NotificationDescriptorTuple &VehicleTelemetryService::notification_descrip
 
 VehicleTelemetryService::VehicleTelemetryService() noexcept
 #if defined(ESP_PLATFORM)
-    : VehicleTelemetryService(steady_clock_, can_bus_source_, null_lighting_sink_){}
+    : clock_(&steady_clock_), lighting_sink_(&null_lighting_sink_),
+      runtime_(can_bus_source_, *this, *this, steady_clock_),
+      publication_(steady_clock_, TelemetryConfig{}), config_{} {
 #else
-    : VehicleTelemetryService(steady_clock_, host_source_, null_lighting_sink_) {
-}
+    : clock_(&steady_clock_), lighting_sink_(&null_lighting_sink_),
+      runtime_(host_source_, *this, *this, steady_clock_),
+      publication_(steady_clock_, TelemetryConfig{}), config_{} {
 #endif
+  initialize_registration_slots();
+  processing_state_.apply_freshness_policy(config_.freshness);
+  configure_runtime(runtime_, config_);
+}
 
-      VehicleTelemetryService::VehicleTelemetryService(
-          vehicle_core::MonotonicClock & clock, vehicle_telemetry::AcquisitionSource & source,
-          LightingSink & lighting_sink, const TelemetryConfig config) noexcept
+VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &clock,
+                                                 vehicle_telemetry::AcquisitionSource &source,
+                                                 LightingSink &lighting_sink,
+                                                 const TelemetryConfig config) noexcept
     : clock_(&clock), lighting_sink_(&lighting_sink), runtime_(source, *this, *this, clock),
       publication_(clock, config), config_(config) {
   initialize_registration_slots();
   processing_state_.apply_freshness_policy(config_.freshness);
-  vehicle_telemetry::RuntimeConfig runtime_config{};
-  runtime_config.receive_timeout_ms =
-      static_cast<std::uint32_t>(std::max<vehicle_core::Microseconds>(
-          1, (config_.availability_service_target_us + 999) / 1'000));
-  runtime_config.transport_silence_timeout_us = config_.transport_silence_timeout_us;
-  (void)runtime_.configure(runtime_config);
+  configure_runtime(runtime_, config_);
 }
 
 VehicleTelemetryService::ExecutionIdentity
