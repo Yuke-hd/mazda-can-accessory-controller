@@ -1,0 +1,22 @@
+if(COMMAND idf_component_register)
+  idf_component_register(SRCS "src/policy.cpp" INCLUDE_DIRS "include" REQUIRES mazda vehicle_core)
+  return()
+endif()
+
+add_library(vehicle_lighting_policy STATIC src/policy.cpp)
+target_include_directories(vehicle_lighting_policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(vehicle_lighting_policy PUBLIC mazda vehicle_core)
+target_compile_features(vehicle_lighting_policy PUBLIC cxx_std_17)
+
+if(MSVC)
+  target_compile_options(vehicle_lighting_policy PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_lighting_policy PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(vehicle_lighting_policy_tests tests/policy_tests.cpp)
+  target_link_libraries(vehicle_lighting_policy_tests PRIVATE vehicle_lighting_policy)
+  target_compile_features(vehicle_lighting_policy_tests PRIVATE cxx_std_17)
+  add_test(NAME vehicle_lighting_policy_tests COMMAND vehicle_lighting_policy_tests)
+endif()

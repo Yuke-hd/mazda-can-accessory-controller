@@ -1,0 +1,119 @@
+VERSION "Mazda custom human-readable signals for SavvyCAN"
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEF_REL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_:
+
+BU_: Mazda Unknown
+
+BO_ 514 ENGINE_DATA: 8 Mazda
+ SG_ EngineRPM : 7|16@0+ (0.25,0) [0|8500] "rpm" Unknown
+ SG_ AcceleratorPedal_Reference : 39|16@0+ (0.0015625,0) [0|100] "%" Unknown
+
+BO_ 552 TRANSMISSION: 8 Mazda
+ SG_ Selector : 2|3@0+ (1,0) [0|7] "" Unknown
+ SG_ ActualGear : 36|4@0+ (1,0) [0|15] "" Unknown
+
+BO_ 1086 DOORS: 8 Mazda
+ SG_ Liftgate_Open_Reference : 32|1@0+ (1,0) [0|1] "" Unknown
+ SG_ RearRightDoor_Open_Reference : 34|1@0+ (1,0) [0|1] "" Unknown
+ SG_ RearLeftDoor_Open_Reference : 35|1@0+ (1,0) [0|1] "" Unknown
+ SG_ FrontOtherDoor_Open_Reference : 36|1@0+ (1,0) [0|1] "" Unknown
+ SG_ FrontRightDoor_Open_RHD : 37|1@0+ (1,0) [0|1] "" Unknown
+ SG_ DoorsUnlocked_Reference : 30|1@0+ (1,0) [0|1] "" Unknown
+
+BO_ 154 BLINK_INFO: 8 Mazda
+ SG_ LeftIndicatorLamp_Reference : 18|1@1+ (1,0) [0|1] "" Unknown
+ SG_ RightIndicatorLamp_Reference : 19|1@0+ (1,0) [0|1] "" Unknown
+ SG_ WiperLow_Reference : 33|1@0+ (1,0) [0|1] "" Unknown
+
+BO_ 145 TURN_SWITCH: 8 Mazda
+ SG_ HazardSwitch_Reference : 10|1@0+ (1,0) [0|1] "" Unknown
+ SG_ RightIndicatorSwitch_Reference : 12|1@0+ (1,0) [0|1] "" Unknown
+ SG_ LeftIndicatorSwitch_Reference : 13|1@0+ (1,0) [0|1] "" Unknown
+ SG_ FrontWiper : 21|2@0+ (1,0) [0|3] "" Unknown
+
+BO_ 357 BRAKE_PEDAL: 8 Mazda
+ SG_ BrakePressed : 4|1@0+ (1,0) [0|1] "" Unknown
+
+BO_ 120 BRAKE_PRESSURE: 8 Mazda
+ SG_ BrakePressureRaw : 24|9@0+ (1,0) [0|511] "raw" Unknown
+
+BO_ 359 HVAC_DATA: 8 Mazda
+ SG_ Possible_HVAC_TempDemandRaw : 47|4@0+ (1,0) [0|15] "raw" Unknown
+
+BO_ 1056 CHECK_AND_TEMP: 8 Mazda
+ SG_ Possible_CoolantTemp : 7|8@0+ (1,-40) [-40|215] "degC" Unknown
+ SG_ Possible_OutdoorTemp : 63|8@0+ (0.5,-40) [-40|87.5] "degC" Unknown
+
+VAL_ 552 Selector 0 "Shifting" 1 "Park" 2 "Reverse" 3 "Neutral" 4 "Drive" 5 "Unknown_5" 6 "Unknown_6" 7 "Unknown_7";
+VAL_ 552 ActualGear 0 "P_or_N" 1 "1st" 2 "2nd" 3 "3rd" 4 "4th" 5 "5th" 6 "6th" 7 "Unknown_7" 8 "Unknown_8" 9 "Unknown_9" 10 "Unknown_10" 11 "Unknown_11" 12 "Unknown_12" 13 "Unknown_13" 14 "Reverse" 15 "Shifting";
+VAL_ 1086 FrontRightDoor_Open_RHD 0 "Closed" 1 "Open";
+VAL_ 1086 FrontOtherDoor_Open_Reference 0 "Closed" 1 "Open";
+VAL_ 1086 RearRightDoor_Open_Reference 0 "Closed" 1 "Open";
+VAL_ 1086 RearLeftDoor_Open_Reference 0 "Closed" 1 "Open";
+VAL_ 1086 Liftgate_Open_Reference 0 "Closed" 1 "Open";
+VAL_ 1086 DoorsUnlocked_Reference 0 "Locked" 1 "Unlocked";
+VAL_ 154 LeftIndicatorLamp_Reference 0 "Off" 1 "On";
+VAL_ 154 RightIndicatorLamp_Reference 0 "Off" 1 "On";
+VAL_ 145 HazardSwitch_Reference 0 "Off" 1 "On";
+VAL_ 145 RightIndicatorSwitch_Reference 0 "Off" 1 "On";
+VAL_ 145 LeftIndicatorSwitch_Reference 0 "Off" 1 "On";
+VAL_ 145 FrontWiper 0 "Off" 1 "On" 2 "High" 3 "Intermittent";
+VAL_ 154 WiperLow_Reference 0 "Off" 1 "On";
+VAL_ 357 BrakePressed 0 "Released" 1 "Pressed";
+
+CM_ BO_ 514 "0x202. Engine data.";
+CM_ SG_ 514 EngineRPM "Confirmed from user capture: ((data[0] << 8) | data[1]) * 0.25 rpm.";
+CM_ SG_ 514 AcceleratorPedal_Reference "Reference mapping for accelerator pedal position at 0x202 D5-D6. Signal was zero throughout this capture because the accelerator was not exercised; scaling is from Mazda reference DBC and is not empirically confirmed on this vehicle.";
+CM_ BO_ 552 "0x228. Transmission state.";
+CM_ SG_ 552 Selector "Confirmed from user P-R-N-D transitions.";
+CM_ SG_ 552 ActualGear "Confirmed from user capture; observed 1st <-> 2nd changes.";
+CM_ BO_ 1086 "0x43E. Door/status frame.";
+CM_ SG_ 1086 FrontRightDoor_Open_RHD "Confirmed on user's Australian RHD Mazda: byte 5 mask 0x20; 0=closed, 1=open. Public Mazda DBC labels this bit FL.";
+CM_ SG_ 1086 FrontOtherDoor_Open_Reference "Reference only; not empirically tested on this vehicle.";
+CM_ SG_ 1086 RearRightDoor_Open_Reference "Reference only; not empirically tested on this vehicle.";
+CM_ SG_ 1086 RearLeftDoor_Open_Reference "Reference only; not empirically tested on this vehicle.";
+CM_ SG_ 1086 Liftgate_Open_Reference "Reference only; not empirically tested on this vehicle.";
+CM_ SG_ 1086 DoorsUnlocked_Reference "Reference definition; also differed between supplied captures.";
+CM_ BO_ 154 "0x09A. Indicator lamp status plus wiper-operation state.";
+CM_ SG_ 154 WiperLow_Reference "Observed in the user capture: D5 bit 1 changed with the three wiper activations. This appears to be actual low-speed wiper operation rather than the stalk request.";
+CM_ BO_ 145 "0x091. Steering-column switch state.";
+CM_ SG_ 145 FrontWiper "Confirmed from user capture: ((data[2] >> 4) & 0x03). Exactly three active pulses matched the three wiper activations. Observed 0=Off and 1=On; values 2=High and 3=Intermittent are reference mappings.";
+CM_ BO_ 357 "0x165. Brake-pedal switch state.";
+CM_ SG_ 357 BrakePressed "Confirmed from user capture: data[0] mask 0x10. Exactly four pressed windows were observed, with the fourth substantially longer, matching the test sequence.";
+CM_ BO_ 120 "0x078. Brake-pressure-related frame.";
+CM_ SG_ 120 BrakePressureRaw "Confirmed pressure-correlated raw signal from user capture: ((data[3] & 0x01) << 8) | data[4]. Baseline was about 152 and the four press peaks were about 359-370. Physical pressure/% scaling is not calibrated.";
+CM_ BO_ 359 "0x167. HVAC/powertrain-related frame. Temperature interpretation is POSSIBLE, not confirmed.";
+CM_ SG_ 359 Possible_HVAC_TempDemandRaw "POSSIBLE HVAC temperature/demand field. Upper nibble of data[5] followed 9,7,5,3,1,3,5,7,9 while the climate setting was changed 20.0 -> 18.0 -> 20.0 C in 0.5 C steps. It may represent HVAC cooling demand or engine-load compensation rather than the literal setpoint.";
+CM_ BO_ 1056 "0x420. POSSIBLE coolant/outdoor temperature frame.";
+CM_ SG_ 1056 Possible_CoolantTemp "POSSIBLE coolant temperature. data[0] rose 0x76 -> 0x77 -> 0x78 during warm-up. Using provisional raw-40 scaling gives 78 -> 79 -> 80 C. Signal location is strong; physical scaling should still be independently confirmed.";
+CM_ SG_ 1056 Possible_OutdoorTemp "POSSIBLE outdoor temperature. data[7] stayed at 0x78 throughout the capture. Provisional scaling raw*0.5-40 gives 20.0 C, consistent with the user's low-20s ambient observation, but a second known-temperature capture is needed to confirm scaling.";

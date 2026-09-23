@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  host-cmake-compatibility:
+    name: Host CMake ${{ matrix.cmake }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep both compatibility legs exact and reproducible. The modern
+        # leg catches policy removals in new CMake releases (notably the
+        # removal of compatibility with pre-3.5 projects).
+        cmake: ["3.20.5", "4.4.3"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned CMake
+        run: |
+          case "${{ matrix.cmake }}" in
+            3.20.5) sha256="5ffbc450c992cbc383c787576385ff35aefb762b0f05cbde8bab2c995ab045aa" ;;
+            4.4.3) sha256="d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc" ;;
+            *) echo "Unsupported CMake matrix entry" >&2; exit 1 ;;
+          esac
+          archive="$RUNNER_TEMP/cmake-${{ matrix.cmake }}.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/Kitware/CMake/releases/download/v${{ matrix.cmake }}/cmake-${{ matrix.cmake }}-linux-x86_64.tar.gz"
+          echo "$sha256  $archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/cmake"
+          tar --extract --gzip --file "$archive" --strip-components=1 --directory "$RUNNER_TEMP/cmake"
+          echo "$RUNNER_TEMP/cmake/bin" >> "$GITHUB_PATH"
+          cmake --version
+          ninja --version
+      - name: Configure host tests
+        run: cmake -S . -B "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+      - name: Build host tests
+        run: cmake --build "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --parallel
+      - name: Run host tests
+        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-${{ matrix.cmake }}" --output-on-failure
+  host:
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache-host
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Restore host compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/ccache-host
+          key: ${{ runner.os }}-host-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'CMakeLists.txt', 'components/**', 'lib/**', 'tests/**', 'tools/**') }}
+          restore-keys: |
+            ${{ runner.os }}-host-ccache-v1-
+      - name: Install host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang-format-14 cmake ccache ninja-build ripgrep python3
+      - name: Check host toolchain versions
+        run: python3 tools/check_toolchain.py --scope host
+      - name: Test toolchain checker diagnostics
+        run: python3 -m unittest discover -s tests/tools -p '*_test.py'
+      - name: Validate C++ formatting
+        shell: bash
+        run: |
+          mapfile -t sources < <(find lib components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
+          test "${#sources[@]}" -gt 0
+          clang-format-14 --dry-run --Werror "${sources[@]}"
+      - name: Configure host tests
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build host tests
+        run: cmake --build build/host --parallel
+      - name: Run host tests
+        run: ctest --test-dir build/host --output-on-failure
+  host-sanitizers:
+    name: Host ASan + UBSan
+    runs-on: ubuntu-22.04
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1:print_summary=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install pinned sanitizer toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y clang-14 cmake ninja-build python3
+          clang++-14 --version
+          cmake --version
+          ninja --version
+      - name: Configure host tests with ASan and UBSan
+        env:
+          CC: clang-14
+          CXX: clang++-14
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/mazda-host-sanitizers" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON \
+            -DMAZDA_BUILD_HOST_TESTS=ON \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - name: Build portable and service tests with sanitizers
+        run: cmake --build "$RUNNER_TEMP/mazda-host-sanitizers" --parallel
+      - name: Run portable and service tests with sanitizers
+        run: ctest --test-dir "$RUNNER_TEMP/mazda-host-sanitizers" --output-on-failure
+  firmware:
+    runs-on: ubuntu-22.04
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.cache/ccache-firmware
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Restore firmware compiler cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/ccache-firmware
+          key: ${{ runner.os }}-firmware-ccache-v1-${{ hashFiles('.github/workflows/ci.yml', 'firmware/**', 'components/**', 'lib/**', 'tools/check_toolchain.py') }}
+          restore-keys: |
+            ${{ runner.os }}-firmware-ccache-v1-
+      - name: Check and build with ESP-IDF v5.5.4
+        run: |
+          mkdir -p .cache/ccache-firmware
+          docker run --rm -v "$PWD:/project" -w /project \
+            -e CCACHE_DIR=/project/.cache/ccache-firmware \
+            -e CCACHE_BASEDIR=/project \
+            -e IDF_CCACHE_ENABLE=1 \
+            espressif/idf:v5.5.4 \
+            bash -lc 'source /opt/esp/idf/export.sh >/dev/null && python3 tools/check_toolchain.py --scope firmware && cd firmware/weact-can485-v1.1 && idf.py set-target esp32 && idf.py build && chmod -R a+rwX /project/.cache/ccache-firmware'

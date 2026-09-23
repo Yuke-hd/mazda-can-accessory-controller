@@ -1,0 +1,45 @@
+# ESP-IDF / CMake
+build/
+managed_components/
+/third_party/esp32-vehicle-can-core/
+graphify-out/
+sdkconfig
+sdkconfig.old
+CMakeFiles/
+CMakeCache.txt
+cmake-build-*/
+compile_commands.json
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+wifi_credentials.*
+
+# Private vehicle captures and generated reports
+captures/private/
+artifacts/
+reports/generated/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak

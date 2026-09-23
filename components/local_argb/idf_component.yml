@@ -1,0 +1,7 @@
+version: "0.1.0"
+description: "Fail-off semantic 100-pixel vehicle light-strip renderer"
+dependencies:
+  idf:
+    version: "==5.5.4"
+  espressif/led_strip:
+    version: "==3.0.3"
