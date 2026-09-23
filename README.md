@@ -98,10 +98,10 @@ physical direction must be confirmed during hardware validation.
 
 The generic CAN/frame/runtime code is consumed from the pinned vehicle-core
 dependency through CMake `FetchContent` at
-`https://github.com/Yuke-hd/esp32-vehicle-can-core`. `VEHICLE_CAN_CORE_COMMIT`
-must always be a full immutable source commit SHA. For offline work, set
-`VEHICLE_CAN_CORE_SOURCE_DIR` to a checkout of that exact source commit. Do not
-copy generic components back into this repository.
+`https://github.com/Yuke-hd/esp32-vehicle-can-core`. `VEHICLE_CAN_CORE_TAG`
+selects release tag `0.1.0`. For offline work, set
+`VEHICLE_CAN_CORE_SOURCE_DIR` to a checkout of that exact release. Do not copy
+generic components back into this repository.
 
 ### Host build, test, and validation
 
@@ -216,9 +216,9 @@ facts.
   clearing, and sustained CAN/LED load on hardware.
 - Keep signal provenance, privacy review, and vehicle-specific compatibility
   evidence current before any installation decision.
-- Update the core dependency only by reviewing its source commit, updating the
-  full SHA in CMake and ESP-IDF manifests/lock data, and running the architecture
-  validator plus host tests against that exact checkout.
+- Update the core dependency only by reviewing its release tag, updating the tag
+  in CMake and ESP-IDF manifests/lock data, and running the architecture
+  validator plus host tests against that exact release.
 
 ## Contributing
 

@@ -74,14 +74,14 @@ for focused edits and inspect `git diff` before submitting.
 The controller consumes generic `vehicle_core`, `can_bus`, and
 `vehicle_telemetry` from the companion source repository with ordinary CMake
 `FetchContent` and ESP-IDF Component Manager Git dependencies. Keep the
-repository URL and full immutable commit SHA synchronized across CMake and
+repository URL and release tag synchronized across CMake and
 manifests; after an ESP-IDF configure, review and commit the generated
 `dependencies.lock` when Component Manager is available. The canonical source
 repository is `https://github.com/Yuke-hd/esp32-vehicle-can-core`. Do not
 reintroduce copied generic component directories into this controller
 repository. Run a fresh
 host configure, architecture validator, and test suite against the exact
-candidate checkout before updating the pin.
+candidate release before updating the tag.
 
 ## Safety and review checklist
 
