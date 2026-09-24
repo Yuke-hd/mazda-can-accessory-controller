@@ -48,6 +48,18 @@ target_link_libraries(mazda_availability_tests PRIVATE mazda telemetry_test_supp
 target_compile_features(mazda_availability_tests PRIVATE cxx_std_17)
 doctest_discover_tests(mazda_availability_tests)
 
+# Portable signal contracts link only the generic target and doctest; no Mazda
+# target or test support is reachable from this test.
+add_executable(vehicle_signals_tests vehicle_signals_tests.cpp)
+target_link_libraries(vehicle_signals_tests PRIVATE vehicle_signals doctest::doctest)
+target_compile_features(vehicle_signals_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_signals_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_signals_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(vehicle_signals_tests)
+
 add_executable(board_config_tests board_config_tests.cpp)
 target_include_directories(board_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/components/board/include)
 target_compile_features(board_config_tests PRIVATE cxx_std_17)

@@ -60,6 +60,7 @@ add_subdirectory(lib/vehicle_lighting_policy)
 add_subdirectory(components/local_argb_sink_contract)
 add_subdirectory(components/local_argb)
 add_subdirectory(components/local_argb_compat)
+add_subdirectory(lib/vehicle_signals)
 add_subdirectory(components/mazda_telemetry)
 
 if(MAZDA_BUILD_HOST_TESTS)
