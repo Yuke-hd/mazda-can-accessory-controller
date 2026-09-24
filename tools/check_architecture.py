@@ -3,7 +3,10 @@
 
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
-the vehicle binding must compile and exercise its project-owned listen-only
+the portable ``vehicle_signals`` contracts must build against that core alone
+and reach only its value-only telemetry contracts, the host generic consumer
+must include only the public provider and ``vehicle_signals`` headers, the
+vehicle binding must compile and exercise its project-owned listen-only
 contract, and retired capture code must stay absent. The
 existing source-safety validators are run here rather than duplicated in
 CTest and firmware CI. Public-header positive/negative checks remain the
@@ -280,6 +283,359 @@ def _check_core_only(
     print("OK   vehicle_core builds and links without Mazda/RTOS dependencies")
 
 
+VEHICLE_SIGNALS_HEADERS = (
+    "vehicle_signals/signal_contracts.hpp",
+    "vehicle_signals/signal_catalog.hpp",
+)
+# The only companion-core header the portable signal contracts may reach.
+VEHICLE_SIGNALS_CORE_ALLOWED = ("vehicle_core/telemetry_contracts.hpp",)
+# Path segments that identify a make-specific, RTOS, SDK, or CAN-driver input.
+_FORBIDDEN_SIGNALS_SEGMENTS = frozenset(
+    ("mazda", "mazda_telemetry", "freertos", "esp-idf", "esp_idf", "esp", "sdkconfig")
+)
+_FORBIDDEN_SIGNALS_DEFINITION = re.compile(
+    r"mazda|freertos|esp_platform|esp_idf|sdkconfig|twai", re.IGNORECASE
+)
+_CPP_SUFFIXES = frozenset((".c", ".cc", ".cpp", ".h", ".hpp", ".inl", ".ipp"))
+
+
+def _write_vehicle_signals_probe(probe_dir: Path, root: Path, core_root: Path) -> Path:
+    source = probe_dir / "vehicle_signals_consumer.cpp"
+    includes = "".join(f'#include "{header}"\n' for header in VEHICLE_SIGNALS_HEADERS)
+    source.write_text(
+        includes + "#include <string_view>\n"
+        "namespace {\n"
+        "using vehicle_signals::SignalCapability;\n"
+        "using vehicle_signals::SignalId;\n"
+        "using vehicle_signals::SignalMetadata;\n"
+        "constexpr SignalMetadata kProbeCatalog[] = {\n"
+        "    {SignalId{1}, \"probe.number\", vehicle_signals::SignalType::Number,\n"
+        "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
+        "     SignalCapability::Read},\n"
+        "    {SignalId{2}, \"probe.flag\", vehicle_signals::SignalType::Boolean,\n"
+        "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
+        "     SignalCapability::Read},\n"
+        "};\n"
+        "constexpr vehicle_signals::SignalCatalogView kProbeView{kProbeCatalog};\n"
+        "static_assert(kProbeView.well_formed());\n"
+        "} // namespace\n"
+        "int main() {\n"
+        "  const SignalMetadata *by_key = kProbeView.find(std::string_view{\"probe.flag\"});\n"
+        "  const SignalMetadata *by_id = kProbeView.find(SignalId{2});\n"
+        "  const vehicle_signals::SignalReading reading{};\n"
+        "  return by_key != nullptr && by_key == by_id && !reading.value.has_value() ? 0 : 1;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (probe_dir / "CMakeLists.txt").write_text(
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(vehicle_signals_only_consumer LANGUAGES CXX)\n"
+        "set(CMAKE_CXX_STANDARD 17)\n"
+        "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
+        "set(CMAKE_CXX_EXTENSIONS OFF)\n"
+        "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
+        "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
+        "add_subdirectory(" + _quoted(core_root / "components/vehicle_core") + " vehicle_core)\n"
+        "add_subdirectory(" + _quoted(root / "lib/vehicle_signals") + " vehicle_signals)\n"
+        "add_executable(vehicle_signals_consumer " + _quoted(source) + ")\n"
+        "target_link_libraries(vehicle_signals_consumer PRIVATE vehicle_signals)\n"
+        "target_compile_features(vehicle_signals_consumer PRIVATE cxx_std_17)\n"
+        # Record the evaluated target interface so link targets and exported
+        # include directories are checked as CMake resolved them.
+        "file(GENERATE OUTPUT \"${CMAKE_BINARY_DIR}/vehicle_signals_interface.txt\" CONTENT\n"
+        "  \"include=$<TARGET_PROPERTY:vehicle_signals,INTERFACE_INCLUDE_DIRECTORIES>\\n"
+        "link=$<TARGET_PROPERTY:vehicle_signals,INTERFACE_LINK_LIBRARIES>\\n"
+        "consumer_link=$<TARGET_PROPERTY:vehicle_signals_consumer,LINK_LIBRARIES>\\n\")\n",
+        encoding="utf-8",
+    )
+    return source
+
+
+def _include_directories(tokens: Sequence[str], cwd: Path) -> List[Path]:
+    directories: List[Path] = []
+    flags = ("-I", "/I", "-isystem", "-iquote", "-idirafter")
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        value: Optional[str] = None
+        if token in flags and index + 1 < len(tokens):
+            value = tokens[index + 1]
+            index += 1
+        else:
+            for flag in flags:
+                if token.startswith(flag) and len(token) > len(flag):
+                    value = token[len(flag) :]
+                    break
+        if value is not None:
+            path = Path(value)
+            directories.append((path if path.is_absolute() else cwd / path).resolve())
+        index += 1
+    return directories
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _has_forbidden_signals_segment(path: Path) -> bool:
+    for segment in path.as_posix().lower().split("/"):
+        if segment in _FORBIDDEN_SIGNALS_SEGMENTS or "twai" in segment:
+            return True
+    return False
+
+
+def _vehicle_signals_interface_violations(
+    interface_file: Path, root: Path, core_root: Path
+) -> List[str]:
+    try:
+        lines = interface_file.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        return [f"vehicle_signals interface properties are unreadable: {error}"]
+    # CMake evaluates INTERFACE_INCLUDE_DIRECTORIES transitively, so the core's
+    # include root legitimately appears through the vehicle_core link.
+    allowed_includes = (
+        (root / "lib/vehicle_signals/include").resolve(),
+        (core_root / "components/vehicle_core/include").resolve(),
+    )
+    allowed_links = {"link": {"vehicle_core"}, "consumer_link": {"vehicle_signals"}}
+    labels = {"link": "vehicle_signals target", "consumer_link": "vehicle_signals consumer"}
+    violations: List[str] = []
+    for line in lines:
+        key, _, value = line.partition("=")
+        items = [part for part in value.split(";") if part]
+        if key == "include":
+            for item in items:
+                include_dir = Path(item).resolve()
+                if include_dir not in allowed_includes:
+                    violations.append(
+                        f"forbidden vehicle_signals target include directory: {include_dir}"
+                    )
+        elif key in allowed_links:
+            for item in items:
+                if item not in allowed_links[key]:
+                    violations.append(f"forbidden {labels[key]} link target: {item}")
+    return violations
+
+
+def _strip_cpp_comments(text: str) -> Tuple[str, List[str]]:
+    """Return code text without comments, plus its string literal contents."""
+
+    code: List[str] = []
+    literals: List[str] = []
+    index = 0
+    while index < len(text):
+        char = text[index]
+        pair = text[index : index + 2]
+        if pair == "//":
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline
+            continue
+        if pair == "/*":
+            end = text.find("*/", index + 2)
+            index = len(text) if end < 0 else end + 2
+            code.append(" ")
+            continue
+        if char in "\"'":
+            end = index + 1
+            while end < len(text) and text[end] != char:
+                end += 2 if text[end] == "\\" else 1
+            if char == '"':
+                literals.append(text[index + 1 : end])
+            code.append(text[index : end + 1])
+            index = end + 1
+            continue
+        code.append(char)
+        index += 1
+    return "".join(code), literals
+
+
+def _mazda_type_names(root: Path) -> Tuple[str, ...]:
+    types_header = root / "lib/mazda/include/mazda/types.hpp"
+    if not types_header.is_file():
+        return ()
+    code, _ = _strip_cpp_comments(types_header.read_text(encoding="utf-8"))
+    pattern = r"\b(?:enum\s+class|enum\s+struct|struct|class)\s+([A-Za-z_]\w*)"
+    return tuple(sorted(set(re.findall(pattern, code))))
+
+
+def _vehicle_signals_source_violations(root: Path) -> List[str]:
+    signals_root = root / "lib/vehicle_signals"
+    type_names = _mazda_type_names(root)
+    violations: List[str] = []
+    for path in sorted(signals_root.rglob("*")):
+        if not path.is_file():
+            continue
+        label = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8")
+        if path.suffix in _CPP_SUFFIXES:
+            code, literals = _strip_cpp_comments(text)
+            for literal in literals:
+                if literal.startswith("vehicle."):
+                    violations.append(f"{label} contains a Mazda catalog key literal: {literal}")
+            for name in type_names:
+                if re.search(rf"\b{re.escape(name)}\b", code):
+                    violations.append(f"{label} names Mazda type {name}")
+        elif path.name == "CMakeLists.txt" or path.suffix in {".cmake", ".yml", ".yaml"}:
+            code = re.sub(r"#.*", "", text)
+        else:
+            continue
+        if re.search("mazda", code, re.IGNORECASE):
+            violations.append(f"{label} references Mazda outside comments")
+    return violations
+
+
+def _vehicle_signals_dependency_violations(
+    compile_database: Path,
+    consumer_source: Path,
+    root: Path,
+    work_dir: Path,
+    core_root: Path,
+) -> List[str]:
+    try:
+        entries = json.loads(compile_database.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"vehicle_signals compile database is unreadable: {error}"]
+    consumer_source = consumer_source.resolve()
+    matching = [entry for entry in entries if _compile_database_source(entry) == consumer_source]
+    if not matching:
+        return ["vehicle_signals consumer compile command is missing"]
+    signals_include = (root / "lib/vehicle_signals/include").resolve()
+    core_include = (core_root / "components/vehicle_core/include").resolve()
+    allowed_core = {(core_include / name).resolve() for name in VEHICLE_SIGNALS_CORE_ALLOWED}
+    violations: List[str] = []
+    for index, entry in enumerate(matching):
+        directory = entry.get("directory") if isinstance(entry, dict) else None
+        cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
+        tokens = _command_tokens(entry)
+        for include_dir in _include_directories(tokens, cwd):
+            if include_dir not in (signals_include, core_include):
+                violations.append(
+                    f"forbidden vehicle_signals consumer include directory: {include_dir}"
+                )
+        for token in tokens:
+            if token.startswith(("-D", "/D")) and _FORBIDDEN_SIGNALS_DEFINITION.search(token):
+                violations.append(f"forbidden vehicle_signals consumer definition: {token}")
+        # -MD rather than -MMD: a header reached through -isystem must not be
+        # hidden from the closure.
+        depfile = work_dir / f"vehicle_signals_dependency_{index}.d"
+        probe = _run([*tokens, "-MD", "-MF", str(depfile), "-MT", str(consumer_source)], cwd=cwd)
+        if probe[0] != 0:
+            violations.append("vehicle_signals dependency probe failed\n" + probe[1][-3000:])
+            continue
+        dependencies = _dependency_paths(depfile, cwd)
+        if not dependencies:
+            violations.append("vehicle_signals dependency probe produced no dependency data")
+            continue
+        for dependency in dependencies:
+            if dependency == consumer_source or _is_within(dependency, signals_include):
+                continue
+            if _is_within(dependency, core_root):
+                if dependency not in allowed_core:
+                    violations.append(f"forbidden vehicle_signals core dependency: {dependency}")
+                continue
+            if _is_within(dependency, root) or _has_forbidden_signals_segment(dependency):
+                violations.append(f"forbidden vehicle_signals dependency: {dependency}")
+    return list(dict.fromkeys(violations))
+
+
+def _check_vehicle_signals_only(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    core_root: Optional[Path] = None,
+) -> None:
+    root = root.resolve()
+    core_root = (core_root or root / "third_party/esp32-vehicle-can-core").resolve()
+    if not (root / "lib/vehicle_signals/CMakeLists.txt").is_file():
+        raise ArchitectureFailure("vehicle_signals component is missing")
+    probe_dir = work_dir / "vehicle_signals_probe"
+    probe_dir.mkdir()
+    source = _write_vehicle_signals_probe(probe_dir, root, core_root)
+    build_dir = probe_dir / "build"
+    configure = [cmake, "-S", str(probe_dir), "-B", str(build_dir), "-G", "Ninja"]
+    if len(compiler) == 1:
+        configure.append(f"-DCMAKE_CXX_COMPILER={compiler[0]}")
+    result = _run(configure, cwd=root)
+    if result[0] != 0:
+        raise ArchitectureFailure("vehicle_signals-only configure failed\n" + result[1][-3000:])
+    # Report the resolved interface and source scan alongside any build
+    # failure: a Mazda link target otherwise surfaces only as a linker error.
+    violations = _vehicle_signals_interface_violations(
+        build_dir / "vehicle_signals_interface.txt", root, core_root
+    )
+    violations.extend(_vehicle_signals_source_violations(root))
+    result = _run(
+        [cmake, "--build", str(build_dir), "--target", "vehicle_signals_consumer"], cwd=root
+    )
+    if result[0] != 0:
+        violations.append("vehicle_signals-only build failed\n" + result[1][-3000:])
+        raise ArchitectureFailure("\n".join(violations))
+    result = _run([str(build_dir / "vehicle_signals_consumer")], cwd=root)
+    if result[0] != 0:
+        violations.append("vehicle_signals-only consumer execution failed\n" + result[1][-3000:])
+        raise ArchitectureFailure("\n".join(violations))
+    violations.extend(
+        _vehicle_signals_dependency_violations(
+            build_dir / "compile_commands.json", source, root, work_dir, core_root
+        )
+    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   vehicle_signals builds without Mazda/RTOS dependencies and reaches only "
+        "value-only core contracts"
+    )
+
+
+GENERIC_CONSUMER_SOURCES = (
+    Path("tests/host/generic_signal_consumer.hpp"),
+    Path("tests/host/generic_signal_consumer.cpp"),
+)
+_GENERIC_CONSUMER_ALLOWED_INCLUDE = re.compile(
+    r"mazda/signal_provider\.hpp|vehicle_signals/[\w/]+\.hpp|generic_signal_consumer\.hpp"
+)
+
+
+def _check_generic_consumer(root: Path) -> None:
+    """Keep the host generic consumer on the public provider interface."""
+
+    violations: List[str] = []
+    for relative in GENERIC_CONSUMER_SOURCES:
+        path = root / relative
+        if not path.is_file():
+            violations.append(f"generic consumer source is missing: {relative.as_posix()}")
+            continue
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', code, re.M):
+            # Angle includes are limited to standard headers, which have no
+            # directory component.
+            allowed = (
+                "/" not in name
+                if delimiter == "<"
+                else _GENERIC_CONSUMER_ALLOWED_INCLUDE.fullmatch(name) is not None
+            )
+            if not allowed:
+                violations.append(f"{relative.as_posix()} includes forbidden header {name}")
+    host_cmake = root / "tests/host/CMakeLists.txt"
+    cmake_code = re.sub(r"#.*", "", host_cmake.read_text(encoding="utf-8"))
+    if re.search(r"target_include_directories\s*\(\s*generic_signal_consumer\b", cmake_code):
+        violations.append("generic_signal_consumer must not add include directories")
+    for match in re.finditer(
+        r"target_link_libraries\s*\(\s*generic_signal_consumer\b([^)]*)\)", cmake_code
+    ):
+        for item in match.group(1).split():
+            if item not in {"PUBLIC", "PRIVATE", "INTERFACE", "mazda_telemetry_contracts"}:
+                violations.append(f"generic_signal_consumer links forbidden target {item}")
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   generic signal consumer uses only the public provider and vehicle_signals headers")
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -447,6 +803,8 @@ def check(
         try:
             _check_dependency_layout(root)
             _check_core_only(root, cmake, compiler, work_dir, core_root)
+            _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
+            _check_generic_consumer(root)
             _check_adapter(
                 root,
                 cmake,

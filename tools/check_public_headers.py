@@ -6,7 +6,8 @@ build.  Each public entry point is compiled in its own translation unit and
 the compiler's dependency file is inspected; this catches transitive
 dependencies even when a header happens to compile successfully.  A small
 CMake consumer project then exercises the exported interface of the real
-``mazda_telemetry_contracts`` target.
+``mazda_telemetry_contracts`` target, including a provider-only consumer that
+is held to the generic provider's stricter dependency rules.
 
 The checker is a required Stage 1.5 host regression gate. It is registered
 once by the host CTest flow after the public/private header split and returns a
@@ -28,10 +29,42 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 
+DependencyRules = Tuple[Tuple[str, Tuple[str, ...]], ...]
+
+
 @dataclass(frozen=True)
 class PublicHeader:
     include: str
     label: str
+    # Rules applied to this header's closure on top of FORBIDDEN_DEPENDENCIES.
+    extra_forbidden: DependencyRules = ()
+
+
+# The generic provider exposes value-only vehicle_signals contracts. Unlike the
+# typed facade, whose value types legitimately live in mazda/types.hpp, it must
+# not reach Mazda value types, state, definitions, the service, publication
+# store, or the private catalog/descriptor bindings.
+PROVIDER_FORBIDDEN_DEPENDENCIES: DependencyRules = (
+    (
+        "provider service/state/publication/catalog",
+        (
+            "mazda/vehicle_telemetry_service.hpp",
+            "mazda/vehicle_telemetry_internal.hpp",
+            "mazda/publication_store.hpp",
+            "mazda/signal_catalog.hpp",
+            "mazda/state.hpp",
+            "mazda/types.hpp",
+            "mazda/definitions.hpp",
+        ),
+    ),
+)
+
+
+# The portable signal contracts know no vehicle make. Every Mazda header,
+# public or private, lives below an include*/mazda/ directory.
+VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES: DependencyRules = (
+    ("Mazda dependency", ("include/mazda/",)),
+)
 
 
 # These are the application-facing entry points, including the frozen Mazda
@@ -44,13 +77,26 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
     PublicHeader("mazda/notification.hpp", "notification contract"),
     PublicHeader("mazda/telemetry_contracts.hpp", "Mazda compatibility contracts"),
     PublicHeader("vehicle_core/telemetry_contracts.hpp", "public telemetry contracts"),
+    PublicHeader(
+        "mazda/signal_provider.hpp", "generic signal provider", PROVIDER_FORBIDDEN_DEPENDENCIES
+    ),
+    PublicHeader(
+        "vehicle_signals/signal_contracts.hpp",
+        "portable signal contracts",
+        VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
+    ),
+    PublicHeader(
+        "vehicle_signals/signal_catalog.hpp",
+        "portable signal catalog view",
+        VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
+    ),
 )
 
 
 # Match path names rather than source spellings.  These are the boundaries
 # that must remain outside every application-facing header's include closure.
 # A suffix match keeps the checker usable for a temporary copied fixture root.
-FORBIDDEN_DEPENDENCIES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+FORBIDDEN_DEPENDENCIES: DependencyRules = (
     ("raw frame", ("vehicle_core/frame.hpp",)),
     (
         "decoder contracts/definitions",
@@ -113,6 +159,7 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
         root / "components/mazda_telemetry/include",
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
         root / "lib/mazda/include",
+        root / "lib/vehicle_signals/include",
         resolved_core_root / "components/vehicle_core/include",
         root / "lib/vehicle_core/include",  # legacy isolated fixture
     )
@@ -179,7 +226,9 @@ def _relative_name(path: Path, root: Path) -> str:
         return path.as_posix().lower()
 
 
-def _dependency_violation(path: Path, root: Path) -> Optional[str]:
+def _dependency_violation(
+    path: Path, root: Path, extra_forbidden: DependencyRules = ()
+) -> Optional[str]:
     name = _relative_name(path, root)
     # Do not treat the host's temporary directory (often /private/var on
     # macOS) as a repository-private include.  Only the deliberate component
@@ -196,7 +245,7 @@ def _dependency_violation(path: Path, root: Path) -> Optional[str]:
         return "private/internal include path"
     if name.endswith("mazda/internal_contracts.hpp"):
         return "private internal contract"
-    for category, suffixes in FORBIDDEN_DEPENDENCIES:
+    for category, suffixes in (*FORBIDDEN_DEPENDENCIES, *extra_forbidden):
         if any(name.endswith(suffix) or suffix in name for suffix in suffixes):
             return category
     return None
@@ -288,7 +337,7 @@ def check_public_headers(
             continue
         violations = []
         for dependency in dependencies:
-            category = _dependency_violation(dependency, root)
+            category = _dependency_violation(dependency, root, header.extra_forbidden)
             if category is not None:
                 violations.append((category, _relative_name(dependency, root)))
         if violations:
@@ -302,20 +351,39 @@ def check_public_headers(
     return failures
 
 
-def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path]:
+def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path, Path]:
+    # The probes use only the provider's constructor, catalog() and read(), so
+    # linking the public target proves those members are exported.
     facade_source = probe_dir / "facade_consumer.cpp"
     facade_source.write_text(
         '#include "mazda/vehicle_telemetry.hpp"\n'
         '#include "mazda/facade_contracts.hpp"\n'
         '#include "mazda/reading.hpp"\n'
         '#include "mazda/notification.hpp"\n'
+        '#include "mazda/signal_provider.hpp"\n'
         '#include "mazda/telemetry_contracts.hpp"\n'
         '#include "vehicle_core/telemetry_contracts.hpp"\n'
+        '#include "vehicle_signals/signal_catalog.hpp"\n'
+        '#include "vehicle_signals/signal_contracts.hpp"\n'
         "int main() {\n"
         "  mazda::VehicleTelemetry telemetry;\n"
-        "  (void)telemetry;\n"
+        "  const mazda::MazdaSignalProvider provider{telemetry};\n"
+        "  (void)provider.catalog();\n"
         "  return 0;\n"
         "}\n",
+        encoding="utf-8",
+    )
+    provider_source = probe_dir / "provider_consumer.cpp"
+    provider_source.write_text(
+        '#include "mazda/signal_provider.hpp"\n'
+        "vehicle_signals::SignalCatalogView\n"
+        "provider_catalog(const mazda::MazdaSignalProvider &provider) noexcept {\n"
+        "  return provider.catalog();\n"
+        "}\n"
+        "bool provider_reads(const mazda::MazdaSignalProvider &provider) noexcept {\n"
+        "  return provider.read(vehicle_signals::SignalId{}).ok();\n"
+        "}\n"
+        "int main() { return 0; }\n",
         encoding="utf-8",
     )
     lower_level_source = probe_dir / "lower_level_consumer.cpp"
@@ -348,10 +416,12 @@ def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path]:
         f'add_executable(public_header_facade_consumer {json.dumps(facade_source.as_posix())})\n'
         f"target_link_libraries(public_header_facade_consumer PRIVATE {contracts_target})\n"
         f'add_executable(public_header_lower_level_consumer {json.dumps(lower_level_source.as_posix())})\n'
-        f"target_link_libraries(public_header_lower_level_consumer PRIVATE {contracts_target})\n",
+        f"target_link_libraries(public_header_lower_level_consumer PRIVATE {contracts_target})\n"
+        f'add_executable(public_header_provider_consumer {json.dumps(provider_source.as_posix())})\n'
+        f"target_link_libraries(public_header_provider_consumer PRIVATE {contracts_target})\n",
         encoding="utf-8",
     )
-    return cmake, facade_source, lower_level_source
+    return cmake, facade_source, lower_level_source, provider_source
 
 
 def _compile_database_entry_source(entry: object) -> Optional[Path]:
@@ -462,7 +532,7 @@ def _include_directory_arguments(tokens: Sequence[str], cwd: Path) -> Tuple[Path
 
 
 def _consumer_dependency_probe(
-    entry: object, source: Path, work_dir: Path, index: int
+    entry: object, source: Path, work_dir: Path, index: int, label: str = "facade"
 ) -> Tuple[CommandResult, Path]:
     """Re-run an exact CMake consumer command with an explicit depfile.
 
@@ -474,7 +544,7 @@ def _consumer_dependency_probe(
     """
 
     tokens, parse_errors = _compile_database_command(entry)
-    depfile = work_dir / f"facade_consumer_{index}.d"
+    depfile = work_dir / f"{label}_consumer_{index}.d"
     if parse_errors:
         return CommandResult(1, "; ".join(parse_errors)), depfile
     directory = entry.get("directory") if isinstance(entry, dict) else None
@@ -494,6 +564,37 @@ def _private_include_argument(path: Path, root: Path) -> Optional[str]:
     return None
 
 
+def _consumer_dependency_failures(
+    entries: Sequence[object],
+    source: Path,
+    label: str,
+    root: Path,
+    work_dir: Path,
+    extra_forbidden: DependencyRules = (),
+) -> List[str]:
+    failures: List[str] = []
+    for index, entry in enumerate(entries):
+        probe, depfile = _consumer_dependency_probe(entry, source, work_dir, index, label)
+        if probe.returncode != 0:
+            detail = probe.output[-3000:] if probe.output else "compiler failed"
+            failures.append(f"{label} consumer dependency probe compile failed: {detail}")
+            continue
+        if not depfile.is_file():
+            failures.append(f"{label} consumer dependency probe did not produce a dependency file")
+            continue
+        directory = entry.get("directory") if isinstance(entry, dict) else None
+        command_cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
+        dependencies = _dependency_paths(depfile, command_cwd)
+        if not dependencies:
+            failures.append(f"{label} consumer dependency output was empty or malformed")
+            continue
+        for dependency in dependencies:
+            category = _dependency_violation(dependency, root, extra_forbidden)
+            if category is not None:
+                failures.append(f"{category}: {_relative_name(dependency, root)}")
+    return list(dict.fromkeys(failures))
+
+
 def check_consumer_target(
     root: Path,
     cmake: str,
@@ -505,7 +606,7 @@ def check_consumer_target(
     probe_dir = work_dir / "cmake_probe"
     build_dir = work_dir / "cmake_build"
     probe_dir.mkdir()
-    _, facade_source, lower_level_source = _cmake_probe_files(probe_dir, root)
+    _, facade_source, lower_level_source, provider_source = _cmake_probe_files(probe_dir, root)
     configure = [cmake, "-S", str(probe_dir), "-B", str(build_dir), "-DBUILD_TESTING=OFF"]
     if len(compiler) == 1:
         configure.append(f"-DCMAKE_CXX_COMPILER={compiler[0]}")
@@ -527,6 +628,7 @@ def check_consumer_target(
             "--target",
             "public_header_facade_consumer",
             "public_header_lower_level_consumer",
+            "public_header_provider_consumer",
         ],
         cwd=root,
         timeout=120,
@@ -558,12 +660,17 @@ def check_consumer_target(
         for entry in entries
         if _compile_database_entry_source(entry) == lower_level_source.resolve()
     ]
-    if not facade_entries or not lower_level_entries:
-        failures.append("CMake consumer probe did not expose both consumer compile commands")
+    provider_entries = [
+        entry
+        for entry in entries
+        if _compile_database_entry_source(entry) == provider_source.resolve()
+    ]
+    if not facade_entries or not lower_level_entries or not provider_entries:
+        failures.append("CMake consumer probe did not expose every consumer compile command")
         print("FAIL CMake consumer target: consumer compile command missing")
         return failures
     forbidden: List[str] = []
-    for entry in [*facade_entries, *lower_level_entries]:
+    for entry in [*facade_entries, *lower_level_entries, *provider_entries]:
         tokens, parse_errors = _compile_database_command(entry)
         if parse_errors:
             detail = "; ".join(parse_errors)
@@ -576,43 +683,24 @@ def check_consumer_target(
             marker = _private_include_argument(include_dir, root)
             if marker is not None:
                 forbidden.append(marker)
-    facade_dependency_failures: List[str] = []
-    for index, entry in enumerate(facade_entries):
-        probe, depfile = _consumer_dependency_probe(entry, facade_source, work_dir, index)
-        if probe.returncode != 0:
-            detail = probe.output[-3000:] if probe.output else "compiler failed"
-            facade_dependency_failures.append(
-                f"facade consumer dependency probe compile failed: {detail}"
-            )
-            continue
-        if not depfile.is_file():
-            facade_dependency_failures.append(
-                "facade consumer dependency probe did not produce a dependency file"
-            )
-            continue
-        directory = entry.get("directory") if isinstance(entry, dict) else None
-        command_cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
-        dependencies = _dependency_paths(depfile, command_cwd)
-        if not dependencies:
-            facade_dependency_failures.append(
-                "facade consumer dependency output was empty or malformed"
-            )
-            continue
-        for dependency in dependencies:
-            category = _dependency_violation(dependency, root)
-            if category is not None:
-                facade_dependency_failures.append(
-                    f"{category}: {_relative_name(dependency, root)}"
-                )
-    if facade_dependency_failures:
-        unique = list(dict.fromkeys(facade_dependency_failures))
-        detail = "; ".join(unique)
-        failures.append(
-            "CMake facade consumer has a forbidden dependency under its actual compile flags: "
-            + detail
+    # The provider-only consumer is held to the provider header's stricter
+    # rules; the facade consumer legitimately reaches Mazda value types.
+    consumers = (
+        ("facade", facade_entries, facade_source, ()),
+        ("provider", provider_entries, provider_source, PROVIDER_FORBIDDEN_DEPENDENCIES),
+    )
+    for label, consumer_entries, source, extra_forbidden in consumers:
+        dependency_failures = _consumer_dependency_failures(
+            consumer_entries, source, label, root, work_dir, extra_forbidden
         )
-        print("FAIL CMake facade consumer: forbidden dependency under actual compile flags")
-        print(f"      {detail}")
+        if dependency_failures:
+            detail = "; ".join(dependency_failures)
+            failures.append(
+                f"CMake {label} consumer has a forbidden dependency under its actual compile "
+                "flags: " + detail
+            )
+            print(f"FAIL CMake {label} consumer: forbidden dependency under actual compile flags")
+            print(f"      {detail}")
     if forbidden:
         unique = list(dict.fromkeys(forbidden))
         detail = ", ".join(unique)
