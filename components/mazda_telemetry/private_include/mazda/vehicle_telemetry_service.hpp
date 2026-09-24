@@ -17,7 +17,9 @@
 #include "mazda/decoder.hpp"
 #include "mazda/internal_contracts.hpp"
 #include "mazda/publication_store.hpp"
+#include "mazda/signal_catalog.hpp"
 #include "vehicle_core/notification_channel.hpp"
+#include "vehicle_signals/types.hpp"
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
 #if defined(ESP_PLATFORM)
@@ -111,6 +113,7 @@ template <typename T> struct PollingDescriptor final {
   SignalMember signal{nullptr};
   std::uint32_t identifier{0};
   ValidationStatus validation{ValidationStatus::Reference};
+  vehicle_signals::SignalId signal_id{};
 };
 
 #if defined(ESP_PLATFORM)
@@ -118,20 +121,21 @@ using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescr
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{"speed_kph", &VehicleState::speed_kph, candidate::kEngineDataId,
-                             ValidationStatus::Reference},
+                             ValidationStatus::Reference, signals::kSpeedKph},
     PollingDescriptor<float>{"engine_rpm", &VehicleState::engine_rpm, candidate::kEngineDataId,
-                             ValidationStatus::Confirmed}};
+                             ValidationStatus::Confirmed, signals::kEngineRpm}};
 #else
 using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>,
                                           PollingDescriptor<FrontWiperPosition>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{"speed_kph", &VehicleState::speed_kph, candidate::kEngineDataId,
-                             ValidationStatus::Reference},
+                             ValidationStatus::Reference, signals::kSpeedKph},
     PollingDescriptor<float>{"engine_rpm", &VehicleState::engine_rpm, candidate::kEngineDataId,
-                             ValidationStatus::Confirmed},
+                             ValidationStatus::Confirmed, signals::kEngineRpm},
     PollingDescriptor<FrontWiperPosition>{"test_front_wiper", &VehicleState::front_wiper,
-                                          candidate::kTurnSwitchId, ValidationStatus::Observed}};
+                                          candidate::kTurnSwitchId, ValidationStatus::Observed,
+                                          vehicle_signals::SignalId{}}};
 #endif
 
 template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor final {
@@ -144,6 +148,7 @@ template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor fin
   SignalMember signal{nullptr};
   std::uint32_t identifier{0};
   ValidationStatus validation{ValidationStatus::Reference};
+  vehicle_signals::SignalId signal_id{};
 };
 
 #if defined(ESP_PLATFORM)
@@ -260,6 +265,8 @@ public:
   // public facade contract.
   [[nodiscard]] static const PollingDescriptorTuple &polling_descriptors() noexcept;
   [[nodiscard]] static const NotificationDescriptorTuple &notification_descriptors() noexcept;
+  [[nodiscard]] vehicle_signals::SignalReadResult
+  read_signal(vehicle_signals::SignalId signal_id) const noexcept;
 
   template <typename T>
   [[nodiscard]] Reading<T>
@@ -466,8 +473,8 @@ SubscriptionToken VehicleTelemetryService::register_subscription(
 template <typename T>
 Reading<T> VehicleTelemetryService::read_polling_descriptor(
     const PollingDescriptor<T> &descriptor) const noexcept {
-  return publication_.read_test_signal(descriptor.signal, descriptor.identifier,
-                                       descriptor.validation);
+  return publication_.read_descriptor(descriptor.signal, descriptor.identifier,
+                                      descriptor.validation);
 }
 
 template <typename T, std::uint16_t ChannelId>

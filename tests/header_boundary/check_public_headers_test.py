@@ -47,6 +47,33 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         shutil.copytree(FIXTURE, destination)
         return destination
 
+    def add_signal_provider_fixture(self, root: Path) -> Path:
+        signals_include = root / "lib/vehicle_signals/include/vehicle_signals"
+        signals_include.mkdir(parents=True)
+        (signals_include / "catalog.hpp").write_text(
+            "#pragma once\n"
+            '#include "vehicle_core/telemetry_contracts.hpp"\n'
+            "namespace vehicle_signals { struct CatalogView {}; }\n",
+            encoding="utf-8",
+        )
+        provider = root / "components/mazda_telemetry/include/mazda/signal_provider.hpp"
+        provider.parent.mkdir(parents=True, exist_ok=True)
+        provider.write_text(
+            "#pragma once\n"
+            '#include "vehicle_signals/catalog.hpp"\n'
+            "namespace mazda { using SignalCatalog = vehicle_signals::CatalogView; }\n",
+            encoding="utf-8",
+        )
+        cmake = root / "CMakeLists.txt"
+        cmake.write_text(
+            cmake.read_text(encoding="utf-8")
+            + "\ntarget_include_directories(vehicle_telemetry_contracts INTERFACE\n"
+            + "  ${CMAKE_CURRENT_SOURCE_DIR}/lib/vehicle_signals/include\n"
+            + "  ${CMAKE_CURRENT_SOURCE_DIR}/components/mazda_telemetry/include)\n",
+            encoding="utf-8",
+        )
+        return provider
+
     def test_clean_fixture_and_access_probes_pass(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
             result = run_checker(self.copy_fixture(Path(directory)))
@@ -54,6 +81,50 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("Header boundary check passed", result.stdout)
         self.assertIn("normal access failed as expected", result.stdout)
         self.assertIn("authorized access succeeded (internal include path)", result.stdout)
+
+    def test_signal_provider_is_checked_through_public_consumer_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            self.add_signal_provider_fixture(root)
+            result = run_checker(root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("mazda/signal_provider.hpp (Mazda signal provider)", result.stdout)
+        self.assertIn("CMake consumer target", result.stdout)
+
+    def test_signal_provider_rejects_transitive_service_state_driver_and_rtos_headers(self) -> None:
+        cases = (
+            (
+                "service",
+                "mazda/vehicle_telemetry_service.hpp",
+                "lib/mazda/include/mazda/vehicle_telemetry_service.hpp",
+            ),
+            ("state", "mazda/state.hpp", "lib/mazda/include/mazda/state.hpp"),
+            ("driver", "driver/twai.h", "lib/vehicle_signals/include/driver/twai.h"),
+            (
+                "RTOS",
+                "freertos/FreeRTOS.h",
+                "lib/vehicle_signals/include/freertos/FreeRTOS.h",
+            ),
+        )
+        for label, include, dependency in cases:
+            with self.subTest(boundary=label), tempfile.TemporaryDirectory(
+                prefix="header-boundary-test-"
+            ) as directory:
+                root = self.copy_fixture(Path(directory))
+                provider = self.add_signal_provider_fixture(root)
+                dependency_path = root / dependency
+                dependency_path.parent.mkdir(parents=True, exist_ok=True)
+                dependency_path.write_text("#pragma once\nstruct ForbiddenDependency {};\n", encoding="utf-8")
+                provider.write_text(
+                    provider.read_text(encoding="utf-8")
+                    + f'#include "{include}"\n',
+                    encoding="utf-8",
+                )
+                result = run_checker(root)
+            output = result.stdout + result.stderr
+            self.assertNotEqual(result.returncode, 0, output)
+            self.assertIn("forbidden transitive dependency", output)
+            self.assertIn(label.lower() if label != "RTOS" else "rtos", output.lower())
 
     def test_missing_internal_include_is_a_failure_not_a_skip(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:

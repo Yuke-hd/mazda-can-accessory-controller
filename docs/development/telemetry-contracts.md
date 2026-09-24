@@ -28,6 +28,10 @@ contracts remain usable without exposing their implementation handoffs.
   include path and is never re-exported from the public compatibility header.
 - `components/mazda_telemetry/include/mazda/vehicle_telemetry.hpp` declares
   the non-copyable façade and its fixed polling/notification channels.
+- `components/mazda_telemetry/include/mazda/signal_provider.hpp` provides the
+  provider-neutral catalog, read, and subscription API; its consumer example
+  and host parity evidence are in
+  [`mcan-72-generic-signal-consumer.md`](mcan-72-generic-signal-consumer.md).
 - `components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp`
   is the explicit implementation-only value-only lighting sink target;
   generic RGB/deadline data crosses it, not Mazda enums, decoder health, or

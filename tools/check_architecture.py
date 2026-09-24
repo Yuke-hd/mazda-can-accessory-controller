@@ -3,6 +3,7 @@
 
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
+the generic vehicle-signals catalog must expose only value-only dependencies,
 the vehicle binding must compile and exercise its project-owned listen-only
 contract, and retired capture code must stay absent. The
 existing source-safety validators are run here rather than duplicated in
@@ -280,6 +281,238 @@ def _check_core_only(
     print("OK   vehicle_core builds and links without Mazda/RTOS dependencies")
 
 
+def _write_vehicle_signals_probe(
+    probe_dir: Path,
+    root: Path,
+    core_root: Path,
+) -> Path:
+    """Create an isolated consumer for the generic vehicle-signals headers."""
+    signals_include = root / "lib/vehicle_signals/include"
+    headers = sorted(
+        path
+        for path in signals_include.rglob("*")
+        if path.is_file() and path.suffix in {".h", ".hpp"}
+    )
+    required = (
+        signals_include / "vehicle_signals/types.hpp",
+        signals_include / "vehicle_signals/catalog.hpp",
+    )
+    missing = [path.relative_to(root).as_posix() for path in required if not path.is_file()]
+    if missing:
+        raise ArchitectureFailure(
+            "vehicle_signals public headers are missing: " + ", ".join(missing)
+        )
+    if not headers:
+        raise ArchitectureFailure("vehicle_signals has no public headers")
+
+    source = probe_dir / "vehicle_signals_public_headers.cpp"
+    includes = []
+    for header in headers:
+        includes.append(f'#include "{header.relative_to(signals_include).as_posix()}"')
+    source.write_text("\n".join((*includes, "int main() { return 0; }", "")), encoding="utf-8")
+
+    cmake = probe_dir / "CMakeLists.txt"
+    cmake.write_text(
+        "cmake_minimum_required(VERSION 3.20)\n"
+        "project(vehicle_signals_architecture_probe LANGUAGES CXX)\n"
+        "set(CMAKE_CXX_STANDARD 17)\n"
+        "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
+        "set(CMAKE_CXX_EXTENSIONS OFF)\n"
+        "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
+        "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
+        "set(VEHICLE_CAN_CORE_BUILD_HOST_TESTS OFF CACHE BOOL \"\" FORCE)\n"
+        f"add_subdirectory({_quoted(core_root / 'components/vehicle_core')} vehicle_core)\n"
+        # These sentinel targets let the probe report an explicit boundary
+        # violation instead of failing first on an unknown target name.
+        "foreach(_forbidden_target mazda mazda_contracts mazda_telemetry_contracts "
+        "vehicle_lighting_policy vehicle_telemetry can_bus)\n"
+        "  if(NOT TARGET ${_forbidden_target})\n"
+        "    add_library(${_forbidden_target} INTERFACE IMPORTED GLOBAL)\n"
+        "  endif()\n"
+        "endforeach()\n"
+        f"add_subdirectory({_quoted(root / 'lib/vehicle_signals')} vehicle_signals)\n"
+        "if(NOT TARGET vehicle_signals)\n"
+        "  message(FATAL_ERROR \"vehicle_signals directory did not define vehicle_signals\")\n"
+        "endif()\n"
+        "function(_check_vehicle_signals_interface _target)\n"
+        "  get_property(_visited GLOBAL PROPERTY _vehicle_signals_checked_targets)\n"
+        "  if(_target IN_LIST _visited)\n"
+        "    return()\n"
+        "  endif()\n"
+        "  set_property(GLOBAL APPEND PROPERTY _vehicle_signals_checked_targets ${_target})\n"
+        "  get_target_property(_includes ${_target} INTERFACE_INCLUDE_DIRECTORIES)\n"
+        "  get_target_property(_links ${_target} INTERFACE_LINK_LIBRARIES)\n"
+        r'  string(REPLACE "\\" "/" _includes_normalized "${_includes}")' + "\n"
+        '  string(TOLOWER "${_includes_normalized}" _includes_lower)\n'
+        '  if(_includes_lower MATCHES "/lib/mazda/|/components/mazda_telemetry/|/components/vehicle_telemetry/|/freertos/|/esp-idf/|/driver/twai")\n'
+        '    message(FATAL_ERROR "${_target} exports a forbidden include directory: ${_includes}")\n'
+        "  endif()\n"
+        "  foreach(_link IN LISTS _links)\n"
+        '    string(TOLOWER "${_link}" _link_lower)\n'
+        '    if(_link_lower MATCHES "(^|[/:])mazda([_:.]|$)|vehicle_telemetry|vehicle_lighting_policy|can_bus|freertos|esp-idf")\n'
+        '      message(FATAL_ERROR "${_target} links forbidden target: ${_link}")\n'
+        "    endif()\n"
+        "    if(TARGET ${_link})\n"
+        "      _check_vehicle_signals_interface(${_link})\n"
+        "    endif()\n"
+        "  endforeach()\n"
+        "endfunction()\n"
+        "_check_vehicle_signals_interface(vehicle_signals)\n"
+        f"add_executable(vehicle_signals_public_headers {_quoted(source)})\n"
+        "target_link_libraries(vehicle_signals_public_headers PRIVATE vehicle_signals)\n"
+        "target_compile_features(vehicle_signals_public_headers PRIVATE cxx_std_17)\n",
+        encoding="utf-8",
+    )
+    return source
+
+
+def _vehicle_signals_dependency_violations(
+    dependencies: Sequence[Path],
+    root: Path,
+    signals_root: Path,
+    core_root: Path,
+    consumer_source: Path,
+) -> List[str]:
+    root = root.resolve()
+    signals_root = signals_root.resolve()
+    core_include = (core_root / "components/vehicle_core/include").resolve()
+    consumer_source = consumer_source.resolve()
+    allowed_core_headers = {
+        "vehicle_core/telemetry_contracts.hpp",
+        "vehicle_core/reading.hpp",
+        "vehicle_core/notification.hpp",
+    }
+    violations: List[str] = []
+    for dependency in dependencies:
+        dependency = dependency.resolve()
+        if dependency == consumer_source:
+            continue
+        try:
+            dependency.relative_to(signals_root)
+            continue
+        except ValueError:
+            pass
+        try:
+            core_relative = dependency.relative_to(core_include).as_posix()
+        except ValueError:
+            core_relative = None
+        if core_relative is not None:
+            if core_relative not in allowed_core_headers:
+                violations.append(
+                    f"non-value vehicle_core dependency: {core_relative}"
+                )
+            continue
+        try:
+            project_relative = dependency.relative_to(root).as_posix()
+        except ValueError:
+            # Compiler and C++ standard-library headers live outside the
+            # checkout and are the only other accepted dependency category.
+            continue
+        violations.append(f"unexpected project dependency: {project_relative}")
+    return list(dict.fromkeys(violations))
+
+
+def _check_vehicle_signals(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    core_root: Path,
+) -> None:
+    target_cmake = root / "lib/vehicle_signals/CMakeLists.txt"
+    if not target_cmake.is_file():
+        print("SKIP vehicle_signals architecture check (target files are not present)")
+        return
+
+    probe_dir = work_dir / "vehicle_signals_probe"
+    probe_dir.mkdir()
+    try:
+        source = _write_vehicle_signals_probe(probe_dir, root, core_root.resolve())
+    except ArchitectureFailure:
+        raise
+    configure = [
+        cmake,
+        "-S",
+        str(probe_dir),
+        "-B",
+        str(probe_dir / "build"),
+        "-G",
+        "Ninja",
+    ]
+    if len(compiler) == 1:
+        configure.append(f"-DCMAKE_CXX_COMPILER={compiler[0]}")
+    result = _run(configure, cwd=root)
+    if result[0] != 0:
+        raise ArchitectureFailure(
+            "vehicle_signals isolated configure failed\n" + result[1][-3000:]
+        )
+    build_dir = probe_dir / "build"
+    result = _run(
+        [cmake, "--build", str(build_dir), "--target", "vehicle_signals_public_headers"],
+        cwd=root,
+    )
+    if result[0] != 0:
+        raise ArchitectureFailure(
+            "vehicle_signals public-header consumer build failed\n" + result[1][-3000:]
+        )
+
+    try:
+        entries = json.loads((build_dir / "compile_commands.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ArchitectureFailure(f"vehicle_signals compile database is unreadable: {error}")
+    matching = [
+        entry
+        for entry in entries
+        if _compile_database_source(entry) == source.resolve()
+    ]
+    if len(matching) != 1:
+        raise ArchitectureFailure(
+            "vehicle_signals public-header compile command is missing or ambiguous"
+        )
+    tokens = _command_tokens(matching[0])
+    command_text = " ".join(tokens).replace("\\", "/").lower()
+    forbidden_markers = (
+        "/lib/mazda/",
+        "/components/mazda_telemetry/",
+        "/components/vehicle_telemetry/",
+        "/freertos/",
+        "/esp-idf/",
+        "/driver/twai",
+    )
+    command_violations = [marker for marker in forbidden_markers if marker in command_text]
+    if command_violations:
+        raise ArchitectureFailure(
+            "vehicle_signals consumer compile command contains forbidden dependencies: "
+            + ", ".join(command_violations)
+        )
+
+    depfile = work_dir / "vehicle_signals_public_headers.d"
+    directory = matching[0].get("directory")
+    cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
+    dependency_probe = _run(
+        [*tokens, "-MD", "-MF", str(depfile), "-MT", str(source)],
+        cwd=cwd,
+        timeout=120,
+    )
+    if dependency_probe[0] != 0:
+        raise ArchitectureFailure(
+            "vehicle_signals dependency probe failed\n" + dependency_probe[1][-3000:]
+        )
+    dependencies = _dependency_paths(depfile, cwd)
+    if not dependencies:
+        raise ArchitectureFailure("vehicle_signals dependency probe produced no dependency data")
+    violations = _vehicle_signals_dependency_violations(
+        dependencies,
+        root,
+        root / "lib/vehicle_signals",
+        core_root,
+        source,
+    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   vehicle_signals exposes only standard and value-only core dependencies")
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -447,6 +680,7 @@ def check(
         try:
             _check_dependency_layout(root)
             _check_core_only(root, cmake, compiler, work_dir, core_root)
+            _check_vehicle_signals(root, cmake, compiler, work_dir, core_root)
             _check_adapter(
                 root,
                 cmake,

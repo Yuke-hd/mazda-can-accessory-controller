@@ -132,8 +132,9 @@ int main() {
       mazda::ResultCode::Ok)
     return 6;
   if (!wait_for([&service, &test_polling_descriptor] {
-        return service.read_polling_descriptor(test_polling_descriptor).value ==
-               mazda::FrontWiperPosition::On;
+        const auto reading = service.read_polling_descriptor(test_polling_descriptor);
+        return reading.value == mazda::FrontWiperPosition::On &&
+               reading.availability == mazda::Availability::FreshnessUnverified;
       }))
     return 7;
   if (!wait_for([&recorder] {

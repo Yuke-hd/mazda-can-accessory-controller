@@ -60,24 +60,17 @@ public:
 
   [[nodiscard]] Reading<float> speed_kph() const noexcept;
   [[nodiscard]] Reading<float> engine_rpm() const noexcept;
-  // Test-only descriptor seam. It exercises the same bounded synchronized
-  // read path for an additional state member without adding a public facade
-  // channel or another synchronization loop.
+  // Module-private descriptor path used by typed polling descriptors. The
+  // member pointer preserves the signal value type; all publication-dependent
+  // inputs are copied under one lock and evaluated after the lock is released.
   template <typename T>
   [[nodiscard]] Reading<T>
-  read_test_signal(vehicle_core::Signal<T> VehicleState::*member, std::uint32_t identifier,
-                   ValidationStatus validation = ValidationStatus::Reference) const noexcept {
-    return read_signal(member, identifier, validation);
-  }
+  read_descriptor(vehicle_core::Signal<T> VehicleState::*member, std::uint32_t identifier,
+                  ValidationStatus validation = ValidationStatus::Reference) const noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   [[nodiscard]] PublishedSnapshot snapshot() const noexcept;
 
 private:
-  template <typename T>
-  [[nodiscard]] Reading<T> read_signal(vehicle_core::Signal<T> VehicleState::*member,
-                                       std::uint32_t identifier,
-                                       ValidationStatus validation) const noexcept;
-
   SteadyClock steady_clock_{};
   vehicle_core::MonotonicClock *clock_{nullptr};
   TelemetryConfig config_{};
@@ -86,9 +79,9 @@ private:
 };
 
 template <typename T>
-Reading<T> PublicationStore::read_signal(vehicle_core::Signal<T> VehicleState::*member,
-                                         const std::uint32_t identifier,
-                                         const ValidationStatus validation) const noexcept {
+Reading<T> PublicationStore::read_descriptor(vehicle_core::Signal<T> VehicleState::*member,
+                                             const std::uint32_t identifier,
+                                             const ValidationStatus validation) const noexcept {
   // Copy all publication-dependent inputs from one coherent handoff while
   // holding the lock. The clock is sampled only after unlocking so a blocked
   // injected clock cannot hold up a publisher or be paired with a later

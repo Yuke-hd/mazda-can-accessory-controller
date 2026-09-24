@@ -2,7 +2,7 @@
 """Check the public C++ header and target boundaries.
 
 The check is intentionally independent from the project's normal host test
-build.  Each public entry point is compiled in its own translation unit and
+build. Each public entry point is compiled in its own translation unit and
 the compiler's dependency file is inspected; this catches transitive
 dependencies even when a header happens to compile successfully.  A small
 CMake consumer project then exercises the exported interface of the real
@@ -46,6 +46,14 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
     PublicHeader("vehicle_core/telemetry_contracts.hpp", "public telemetry contracts"),
 )
 
+# The provider seam is introduced after the legacy application-facing
+# contracts. Keep the boundary check dormant until the public header exists so
+# the checker remains usable across staged migrations, then include it in
+# every run from that point onward.
+SIGNAL_PROVIDER_HEADER = PublicHeader(
+    "mazda/signal_provider.hpp", "Mazda signal provider"
+)
+
 
 # Match path names rather than source spellings.  These are the boundaries
 # that must remain outside every application-facing header's include closure.
@@ -57,6 +65,7 @@ FORBIDDEN_DEPENDENCIES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         ("vehicle_core/decoder_contracts.hpp", "mazda/decoder.hpp", "mazda/definitions.hpp"),
     ),
     ("mutable signal/state", ("vehicle_core/signal.hpp", "mazda/state.hpp")),
+    ("service implementation", ("service.hpp", "services.hpp")),
     ("notification implementation", ("vehicle_core/notification_channel.hpp",)),
     ("lighting implementation", ("lighting_sink.hpp",)),
     ("board dependency", ("board/board_config.h",)),
@@ -113,10 +122,21 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
         root / "components/mazda_telemetry/include",
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
         root / "lib/mazda/include",
+        root / "lib/vehicle_signals/include",
         resolved_core_root / "components/vehicle_core/include",
         root / "lib/vehicle_core/include",  # legacy isolated fixture
     )
     return tuple(path.resolve() for path in candidates if path.is_dir())
+
+
+def _public_headers(root: Path) -> Tuple[PublicHeader, ...]:
+    provider_paths = (
+        root / "components/mazda_telemetry/include/mazda/signal_provider.hpp",
+        root / "lib/mazda/include/mazda/signal_provider.hpp",
+    )
+    if any(path.is_file() for path in provider_paths):
+        return (*PUBLIC_HEADERS, SIGNAL_PROVIDER_HEADER)
+    return PUBLIC_HEADERS
 
 
 def _compiler_is_msvc(compiler: Sequence[str]) -> bool:
@@ -261,7 +281,7 @@ def check_public_headers(
     msvc = _compiler_is_msvc(compiler)
     if msvc:
         return _unsupported_msvc_failure()
-    for index, header in enumerate(PUBLIC_HEADERS):
+    for index, header in enumerate(_public_headers(root)):
         source = _header_source(header, work_dir)
         depfile = work_dir / f"header_{index}.d"
         result = _compile_translation_unit(
@@ -304,18 +324,21 @@ def check_public_headers(
 
 def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path]:
     facade_source = probe_dir / "facade_consumer.cpp"
+    facade_includes = [
+        '#include "mazda/vehicle_telemetry.hpp"',
+        '#include "mazda/facade_contracts.hpp"',
+        '#include "mazda/reading.hpp"',
+        '#include "mazda/notification.hpp"',
+        '#include "mazda/telemetry_contracts.hpp"',
+        '#include "vehicle_core/telemetry_contracts.hpp"',
+    ]
+    if _public_headers(root) != PUBLIC_HEADERS:
+        facade_includes.append('#include "mazda/signal_provider.hpp"')
     facade_source.write_text(
-        '#include "mazda/vehicle_telemetry.hpp"\n'
-        '#include "mazda/facade_contracts.hpp"\n'
-        '#include "mazda/reading.hpp"\n'
-        '#include "mazda/notification.hpp"\n'
-        '#include "mazda/telemetry_contracts.hpp"\n'
-        '#include "vehicle_core/telemetry_contracts.hpp"\n'
-        "int main() {\n"
-        "  mazda::VehicleTelemetry telemetry;\n"
-        "  (void)telemetry;\n"
-        "  return 0;\n"
-        "}\n",
+        "\n".join(
+            (*facade_includes, "int main() {", "  mazda::VehicleTelemetry telemetry;",
+             "  (void)telemetry;", "  return 0;", "}", "")
+        ),
         encoding="utf-8",
     )
     lower_level_source = probe_dir / "lower_level_consumer.cpp"

@@ -19,6 +19,29 @@ target_link_libraries(telemetry_contract_compile_tests PRIVATE mazda_telemetry_c
 target_compile_features(telemetry_contract_compile_tests PRIVATE cxx_std_17)
 doctest_discover_tests(telemetry_contract_compile_tests)
 
+add_executable(vehicle_signals_tests vehicle_signals_tests.cpp)
+target_link_libraries(vehicle_signals_tests PRIVATE vehicle_signals doctest::doctest)
+target_compile_features(vehicle_signals_tests PRIVATE cxx_std_17)
+doctest_discover_tests(vehicle_signals_tests)
+
+add_executable(mazda_signal_catalog_tests mazda_signal_catalog_tests.cpp)
+target_include_directories(mazda_signal_catalog_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(mazda_signal_catalog_tests PRIVATE mazda_telemetry doctest::doctest)
+target_compile_features(mazda_signal_catalog_tests PRIVATE cxx_std_17)
+doctest_discover_tests(mazda_signal_catalog_tests)
+
+add_executable(mazda_signal_consumer_tests mazda_signal_consumer_tests.cpp)
+target_include_directories(mazda_signal_consumer_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(mazda_signal_consumer_tests PRIVATE mazda_telemetry doctest::doctest)
+target_compile_features(mazda_signal_consumer_tests PRIVATE cxx_std_17)
+doctest_discover_tests(mazda_signal_consumer_tests)
+
 add_executable(telemetry_internal_contract_tests telemetry_internal_contract_tests.cpp)
 target_link_libraries(telemetry_internal_contract_tests PRIVATE doctest::doctest)
 target_include_directories(telemetry_internal_contract_tests PRIVATE

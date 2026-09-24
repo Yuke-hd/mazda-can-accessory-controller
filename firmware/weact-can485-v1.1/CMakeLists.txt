@@ -9,6 +9,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_can_rx"
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy")

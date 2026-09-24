@@ -141,10 +141,10 @@ void test_availability_and_reset() {
   EXPECT(rpm.validation == mazda::ValidationStatus::Confirmed);
   EXPECT(speed.value.has_value() && *speed.value == 42.5F);
   EXPECT(rpm.value.has_value() && *rpm.value == 2'000.0F);
-  const auto test_only_liftgate =
-      store.read_test_signal(&mazda::VehicleState::liftgate_open, mazda::candidate::kDoorsId);
-  EXPECT(test_only_liftgate.availability == mazda::Availability::FreshnessUnverified);
-  EXPECT(test_only_liftgate.value.has_value() && *test_only_liftgate.value);
+  const auto liftgate =
+      store.read_descriptor(&mazda::VehicleState::liftgate_open, mazda::candidate::kDoorsId);
+  EXPECT(liftgate.availability == mazda::Availability::FreshnessUnverified);
+  EXPECT(liftgate.value.has_value() && *liftgate.value);
 
   clock.set(111);
   EXPECT(store.speed_kph().availability == mazda::Availability::Stale);
@@ -242,17 +242,34 @@ void test_polling_copies_publication_before_sampling_clock() {
 
   mazda::Reading<float> observed{};
   clock.arm();
-  std::thread reader{[&] { observed = store.speed_kph(); }};
+  std::thread reader{[&] {
+    observed =
+        store.read_descriptor(&mazda::VehicleState::speed_kph, mazda::candidate::kEngineDataId,
+                              mazda::ValidationStatus::Reference);
+  }};
   clock.wait_until_entered();
 
   // The reader has captured t=0. Publishing at the later wall-clock value
   // must not make the old no-data copy appear to be a fresh observation.
   clock.set(1'000);
-  store.publish(
-      next, diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live), 0);
+  std::atomic<bool> publication_finished{false};
+  std::thread publisher{[&] {
+    store.publish(
+        next, diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live), 0);
+    publication_finished.store(true, std::memory_order_release);
+  }};
+  const auto publication_deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
+  while (!publication_finished.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < publication_deadline)
+    std::this_thread::yield();
+  const bool published_while_clock_blocked = publication_finished.load(std::memory_order_acquire);
+
   clock.release();
   reader.join();
+  publisher.join();
 
+  EXPECT(published_while_clock_blocked);
   EXPECT(observed.availability == mazda::Availability::NoData);
   EXPECT(!observed.value.has_value());
   EXPECT(store.speed_kph().availability == mazda::Availability::Stale);
@@ -295,9 +312,20 @@ void test_coherent_snapshot_under_concurrent_publication() {
         inconsistent.store(true, std::memory_order_release);
         break;
       }
-      store.publish(state,
-                    diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live,
-                                sequence),
+      vehicle_core::RawCanFrame health_frame{};
+      health_frame.identifier = mazda::candidate::kEngineDataId;
+      health_frame.timestamp_us = sequence;
+      health_frame.dlc = 8;
+      const auto health = state.observe_message(
+          health_frame, sequence % 3U == 1U ? vehicle_core::DecodeValidity::Malformed
+                                            : vehicle_core::DecodeValidity::Decoded);
+      if (health != mazda::MessageObservationResult::Accepted) {
+        inconsistent.store(true, std::memory_order_release);
+        break;
+      }
+      const auto transport = sequence % 3U == 2U ? vehicle_core::TransportHealth::Faulted
+                                                 : vehicle_core::TransportHealth::Live;
+      store.publish(state, diagnostics(mazda::LifecycleState::Running, transport, sequence),
                     sequence);
     }
     writer_done.store(true, std::memory_order_release);
@@ -306,12 +334,17 @@ void test_coherent_snapshot_under_concurrent_publication() {
   std::thread reader{[&] {
     while (!writer_done.load(std::memory_order_acquire)) {
       const auto snapshot = store.snapshot();
-      const auto test_channel =
-          store.read_test_signal(&mazda::VehicleState::liftgate_open, mazda::candidate::kDoorsId);
-      if (test_channel.value.has_value() &&
-          test_channel.availability != mazda::Availability::FreshnessUnverified) {
-        inconsistent.store(true, std::memory_order_release);
-        break;
+      const auto speed =
+          store.read_descriptor(&mazda::VehicleState::speed_kph, mazda::candidate::kEngineDataId,
+                                mazda::ValidationStatus::Reference);
+      if (speed.value.has_value()) {
+        const auto published_sequence = static_cast<std::uint64_t>(*speed.value);
+        const auto expected = published_sequence % 3U == 0U ? mazda::Availability::Fresh
+                                                            : mazda::Availability::Unavailable;
+        if (speed.availability != expected) {
+          inconsistent.store(true, std::memory_order_release);
+          break;
+        }
       }
       if (!snapshot.state.speed_kph.has_value || !snapshot.state.engine_rpm.has_value)
         continue;
