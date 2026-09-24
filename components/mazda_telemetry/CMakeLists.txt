@@ -3,6 +3,7 @@ if(COMMAND idf_component_register)
                          "src/public_contract_consumer.cpp"
                          "src/local_argb_binding.cpp"
                          "src/signal_provider.cpp"
+                         "src/signal_provider_read.cpp"
                          INCLUDE_DIRS "include"
                          PRIV_INCLUDE_DIRS "private_include"
                                          "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda/internal_include"
@@ -19,6 +20,7 @@ add_library(mazda_telemetry STATIC
   src/public_contract_consumer.cpp
   src/local_argb_binding.cpp
   src/signal_provider.cpp
+  src/signal_provider_read.cpp
 )
 find_package(Threads REQUIRED)
 target_include_directories(
@@ -119,5 +121,20 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   endif()
   add_test(NAME mazda_telemetry_signal_catalog_tests
            COMMAND mazda_telemetry_signal_catalog_tests)
+
+  add_executable(mazda_telemetry_signal_provider_read_tests
+    tests/signal_provider_read_tests.cpp
+  )
+  target_include_directories(mazda_telemetry_signal_provider_read_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
+  )
+  target_link_libraries(mazda_telemetry_signal_provider_read_tests PRIVATE
+    mazda_telemetry
+    Threads::Threads
+  )
+  target_compile_features(mazda_telemetry_signal_provider_read_tests PRIVATE cxx_std_17)
+  add_test(NAME mazda_telemetry_signal_provider_read_tests
+           COMMAND mazda_telemetry_signal_provider_read_tests)
 
 endif()

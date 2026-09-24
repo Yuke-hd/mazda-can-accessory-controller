@@ -1096,6 +1096,32 @@ internal::VehicleTelemetryAccess::bind_lighting_sink(VehicleTelemetry &facade,
   return service->bind_lighting_sink(sink);
 }
 
+internal::VehicleTelemetryService &
+internal::VehicleTelemetryAccess::service(VehicleTelemetry &facade) noexcept {
+  return *reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_);
+}
+
+const internal::VehicleTelemetryService &
+internal::VehicleTelemetryAccess::service(const VehicleTelemetry &facade) noexcept {
+  return *reinterpret_cast<const internal::VehicleTelemetryService *>(
+      facade.implementation_storage_);
+}
+
+#if !defined(ESP_PLATFORM)
+// Only valid on a stopped, quiescent facade: the current service is destroyed
+// and a new one is placement-constructed in the same fixed storage, so no
+// subscriptions, lifecycle owner or samples survive the replacement.
+void internal::VehicleTelemetryAccess::emplace_host_service(
+    VehicleTelemetry &facade, vehicle_core::MonotonicClock &clock,
+    vehicle_telemetry::AcquisitionSource &source, internal::LightingSink &lighting_sink,
+    const TelemetryConfig &config) noexcept {
+  reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_)
+      ->~VehicleTelemetryService();
+  ::new (static_cast<void *>(facade.implementation_storage_))
+      internal::VehicleTelemetryService{clock, source, lighting_sink, config};
+}
+#endif
+
 static_assert(sizeof(internal::VehicleTelemetryService) <= sizeof(VehicleTelemetry));
 static_assert(alignof(internal::VehicleTelemetryService) <= alignof(std::max_align_t));
 
