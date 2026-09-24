@@ -14,9 +14,12 @@ class VehicleTelemetry;
 // readings/notifications; Mazda state, CAN identifiers, enums, notification
 // channels and descriptors stay implementation-only.
 //
-// The provider does not own the facade. The facade must outlive the provider,
-// and the provider must outlive every generic subscription it issued (until a
-// successful facade stop). The provider shares the facade's lifecycle owner:
+// The provider does not own the facade, and the facade must outlive the
+// provider. Generic registrations stay on the facade's typed channels across
+// stop/start and point into this provider, so destruction releases every
+// registration the provider still holds: destroy the provider only while the
+// facade is stopped, on the facade's lifecycle-owner context and never from a
+// callback. The provider shares the facade's lifecycle owner:
 // subscribe() and unsubscribe() are lifecycle mutations of that facade, must
 // run on the facade's lifecycle-owner host thread or ESP-IDF task, and are
 // accepted only while the facade is stopped; otherwise they fail with
@@ -31,6 +34,9 @@ class VehicleTelemetry;
 class MazdaSignalProvider final {
 public:
   explicit MazdaSignalProvider(VehicleTelemetry &telemetry) noexcept;
+  // Unsubscribes every generic subscription still held (see the lifetime
+  // rules above). Bounded and allocation-free.
+  ~MazdaSignalProvider() noexcept;
 
   MazdaSignalProvider(const MazdaSignalProvider &) = delete;
   MazdaSignalProvider &operator=(const MazdaSignalProvider &) = delete;
