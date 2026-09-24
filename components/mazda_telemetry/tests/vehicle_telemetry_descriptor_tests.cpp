@@ -63,6 +63,12 @@ vehicle_core::RawCanFrame frame(const std::uint32_t identifier,
   return result;
 }
 
+template <typename T>
+bool same_reading(const mazda::Reading<T> &left, const mazda::Reading<T> &right) {
+  return left.value == right.value && left.availability == right.availability &&
+         left.validation == right.validation;
+}
+
 template <typename Predicate>
 bool wait_for(Predicate predicate,
               const std::chrono::milliseconds timeout = std::chrono::milliseconds{500}) {
@@ -132,7 +138,7 @@ int main() {
       mazda::ResultCode::Ok)
     return 6;
   if (!wait_for([&service, &test_polling_descriptor] {
-        return service.read_polling_descriptor(test_polling_descriptor).value ==
+        return service.read_descriptor(test_polling_descriptor).value ==
                mazda::FrontWiperPosition::On;
       }))
     return 7;
@@ -146,7 +152,37 @@ int main() {
     std::lock_guard<std::mutex> lock{recorder.mutex};
     if (recorder.last.current.value != mazda::FrontWiperPosition::On)
       return 9;
+    // The clock does not advance after the last frame, so the production
+    // descriptor read of a notification descriptor must equal the current
+    // reading carried by that descriptor's typed notification.
+    if (!same_reading(service.read_descriptor(test_notify_descriptor), recorder.last.current))
+      return 12;
   }
+
+  // Polling descriptors agree with the typed RPM/speed methods.
+  if (!same_reading(service.read_descriptor(std::get<0>(polling_descriptors)),
+                    service.speed_kph()) ||
+      !same_reading(service.read_descriptor(std::get<1>(polling_descriptors)),
+                    service.engine_rpm()) ||
+      !service.engine_rpm().value.has_value())
+    return 13;
+
+  // Every polling and notification descriptor is readable through the same
+  // production-private path, without subscribing to its channel.
+  const auto front_wiper = service.read_descriptor(std::get<15>(notification_descriptors));
+  if (front_wiper.value != mazda::FrontWiperPosition::On ||
+      front_wiper.validation != std::get<15>(notification_descriptors).validation)
+    return 14;
+  std::size_t readable = 0;
+  const auto count_readable = [&service, &readable](const auto &...descriptor) {
+    ((readable += service.read_descriptor(descriptor).validation == descriptor.validation ? 1 : 0),
+     ...);
+  };
+  std::apply(count_readable, polling_descriptors);
+  std::apply(count_readable, notification_descriptors);
+  if (readable != std::tuple_size_v<mazda::internal::PollingDescriptorTuple> +
+                      mazda::internal::kNotificationChannelCount)
+    return 15;
 
   if (!service.stop().ok())
     return 10;
