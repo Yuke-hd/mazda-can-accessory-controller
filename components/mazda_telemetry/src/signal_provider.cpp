@@ -4,9 +4,9 @@
 
 namespace mazda {
 
-// Only construction and the static catalog live here. read() belongs to the
+// Construction and the static catalog live here. read() belongs to the
 // generic read adapter and subscribe()/unsubscribe() to the notification
-// bridge; each is defined in its own source file and is not defined yet.
+// bridge; each is defined in its own source file.
 
 MazdaSignalProvider::MazdaSignalProvider(VehicleTelemetry &telemetry) noexcept
     : telemetry_(&telemetry) {}
