@@ -261,9 +261,17 @@ public:
   [[nodiscard]] static const PollingDescriptorTuple &polling_descriptors() noexcept;
   [[nodiscard]] static const NotificationDescriptorTuple &notification_descriptors() noexcept;
 
+  // Production-private descriptor reads for implementation-only consumers.
+  // Both descriptor kinds are evaluated by PublicationStore's coherent
+  // descriptor read, so a polling read matches typed RPM/speed polling and a
+  // notification-descriptor read matches the current value a typed
+  // notification would carry for the same publication and clock value.
+  // Neither overload subscribes, dispatches or touches lifecycle state.
   template <typename T>
+  [[nodiscard]] Reading<T> read_descriptor(const PollingDescriptor<T> &descriptor) const noexcept;
+  template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] Reading<T>
-  read_polling_descriptor(const PollingDescriptor<T> &descriptor) const noexcept;
+  read_descriptor(const NotificationDescriptor<T, ChannelId> &descriptor) const noexcept;
 
   template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] SubscriptionToken
@@ -464,10 +472,17 @@ SubscriptionToken VehicleTelemetryService::register_subscription(
 }
 
 template <typename T>
-Reading<T> VehicleTelemetryService::read_polling_descriptor(
-    const PollingDescriptor<T> &descriptor) const noexcept {
-  return publication_.read_test_signal(descriptor.signal, descriptor.identifier,
-                                       descriptor.validation);
+Reading<T>
+VehicleTelemetryService::read_descriptor(const PollingDescriptor<T> &descriptor) const noexcept {
+  return publication_.read_descriptor_signal(descriptor.signal, descriptor.identifier,
+                                             descriptor.validation);
+}
+
+template <typename T, std::uint16_t ChannelId>
+Reading<T> VehicleTelemetryService::read_descriptor(
+    const NotificationDescriptor<T, ChannelId> &descriptor) const noexcept {
+  return publication_.read_descriptor_signal(descriptor.signal, descriptor.identifier,
+                                             descriptor.validation);
 }
 
 template <typename T, std::uint16_t ChannelId>

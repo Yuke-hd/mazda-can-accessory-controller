@@ -247,13 +247,13 @@ void PublicationStore::reset(const Diagnostics &diagnostics) noexcept {
 }
 
 Reading<float> PublicationStore::speed_kph() const noexcept {
-  return read_signal(&VehicleState::speed_kph, candidate::kEngineDataId,
-                     ValidationStatus::Reference);
+  return read_descriptor_signal(&VehicleState::speed_kph, candidate::kEngineDataId,
+                                ValidationStatus::Reference);
 }
 
 Reading<float> PublicationStore::engine_rpm() const noexcept {
-  return read_signal(&VehicleState::engine_rpm, candidate::kEngineDataId,
-                     ValidationStatus::Confirmed);
+  return read_descriptor_signal(&VehicleState::engine_rpm, candidate::kEngineDataId,
+                                ValidationStatus::Confirmed);
 }
 
 Diagnostics PublicationStore::diagnostics() const noexcept {

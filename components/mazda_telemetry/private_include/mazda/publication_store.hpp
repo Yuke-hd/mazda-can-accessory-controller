@@ -58,26 +58,26 @@ public:
                std::optional<vehicle_core::MonotonicTimestamp> last_transport_receive_us) noexcept;
   void reset(const Diagnostics &diagnostics = {}) noexcept;
 
+  // Typed RPM/speed polling are fixed bindings onto read_descriptor_signal().
   [[nodiscard]] Reading<float> speed_kph() const noexcept;
   [[nodiscard]] Reading<float> engine_rpm() const noexcept;
-  // Test-only descriptor seam. It exercises the same bounded synchronized
-  // read path for an additional state member without adding a public facade
-  // channel or another synchronization loop.
+  // Production-private descriptor read for implementation-only consumers:
+  // typed polling and the service's polling/notification descriptor path.
+  // The signal, the message health for identifier and the transport health
+  // are copied from one publication under the mutex; the injected clock is
+  // sampled and freshness evaluated only after unlocking. A missing
+  // message-health record is treated as Healthy, as VehicleState::reading_at()
+  // does for typed notifications, so both paths agree for one publication
+  // and clock value. member must be non-null; the fixed descriptor
+  // registries supply it at compile time.
   template <typename T>
-  [[nodiscard]] Reading<T>
-  read_test_signal(vehicle_core::Signal<T> VehicleState::*member, std::uint32_t identifier,
-                   ValidationStatus validation = ValidationStatus::Reference) const noexcept {
-    return read_signal(member, identifier, validation);
-  }
+  [[nodiscard]] Reading<T> read_descriptor_signal(vehicle_core::Signal<T> VehicleState::*member,
+                                                  std::uint32_t identifier,
+                                                  ValidationStatus validation) const noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   [[nodiscard]] PublishedSnapshot snapshot() const noexcept;
 
 private:
-  template <typename T>
-  [[nodiscard]] Reading<T> read_signal(vehicle_core::Signal<T> VehicleState::*member,
-                                       std::uint32_t identifier,
-                                       ValidationStatus validation) const noexcept;
-
   SteadyClock steady_clock_{};
   vehicle_core::MonotonicClock *clock_{nullptr};
   TelemetryConfig config_{};
@@ -86,7 +86,8 @@ private:
 };
 
 template <typename T>
-Reading<T> PublicationStore::read_signal(vehicle_core::Signal<T> VehicleState::*member,
+Reading<T>
+PublicationStore::read_descriptor_signal(vehicle_core::Signal<T> VehicleState::*member,
                                          const std::uint32_t identifier,
                                          const ValidationStatus validation) const noexcept {
   // Copy all publication-dependent inputs from one coherent handoff while
@@ -94,7 +95,7 @@ Reading<T> PublicationStore::read_signal(vehicle_core::Signal<T> VehicleState::*
   // injected clock cannot hold up a publisher or be paired with a later
   // publication.
   vehicle_core::Signal<T> signal{};
-  vehicle_core::MessageHealth message = vehicle_core::MessageHealth::Unknown;
+  vehicle_core::MessageHealth message = vehicle_core::MessageHealth::Healthy;
   vehicle_core::TransportHealth transport = vehicle_core::TransportHealth::Stopped;
   {
     std::lock_guard<std::mutex> lock{mutex_};
