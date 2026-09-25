@@ -2,7 +2,22 @@
 # evaluates state/event rules on latest-state notices and fans commands out to
 # action sinks. It links only the portable vehicle_signals contracts; no make,
 # CAN, driver, RTOS, LED or transport component is reachable from this target.
-# Host-only for now; firmware composition registers it separately.
+# Only the firmware composition root combines it with a provider and sinks.
+if(COMMAND idf_component_register)
+  idf_component_register(SRCS "src/actionability.cpp"
+                              "src/condition.cpp"
+                              "src/engine.cpp"
+                              "src/range_rule.cpp"
+                              "src/range_rule_set.cpp"
+                              "src/rule_set.cpp"
+                              "src/rules.cpp"
+                              "src/sink_fan_out.cpp"
+                              "src/subscription_set.cpp"
+                         INCLUDE_DIRS "include"
+                         REQUIRES vehicle_signals)
+  return()
+endif()
+
 add_library(action_engine STATIC
   src/actionability.cpp
   src/condition.cpp

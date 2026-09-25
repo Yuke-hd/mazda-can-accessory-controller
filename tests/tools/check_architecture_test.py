@@ -352,6 +352,50 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             detail,
         )
 
+    def test_led_action_adapter_subscription_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
+            root = Path(directory)
+            write_led_actions_fixture(root)
+            source = root / "components/local_argb_actions/src/led_action_sink.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "// subscribe() in a comment is fine.\n"
+                + "int resp_value = 0; // Not an SDK name: esp_ follows 'r'.\n"
+                + "void probe(Provider &provider) { (void)provider.subscribe(); }\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_led_action_adapter(root)
+        detail = str(raised.exception)
+        self.assertIn("uses forbidden name subscribe", detail)
+        self.assertNotIn("uses forbidden name esp_", detail)
+
+    def test_led_action_adapter_component_lib_and_directory_scope_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
+            root = Path(directory)
+            write_led_actions_fixture(root)
+            cmake = root / "components/local_argb_actions/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8").replace(
+                    "  return()\n",
+                    "  target_link_libraries(${COMPONENT_LIB} PRIVATE mazda_telemetry)\n"
+                    "  target_include_directories(${COMPONENT_LIB} PRIVATE ../mazda/include)\n"
+                    "  include_directories(../vehicle_can_rx/include)\n"
+                    "  link_libraries(can_bus)\n"
+                    "  return()\n",
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_led_action_adapter(root)
+        detail = str(raised.exception)
+        self.assertIn("local_argb_actions links forbidden target mazda_telemetry", detail)
+        self.assertIn(
+            "local_argb_actions adds forbidden include directory ../mazda/include", detail
+        )
+        self.assertIn("local_argb_actions uses directory-scope include_directories()", detail)
+        self.assertIn("local_argb_actions uses directory-scope link_libraries()", detail)
+
     def test_led_action_adapter_without_cmake_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
             root = Path(directory)

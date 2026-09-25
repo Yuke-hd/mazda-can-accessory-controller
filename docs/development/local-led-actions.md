@@ -108,7 +108,63 @@ level change. This is fail-safe but visible.
 - `architecture_contracts` restricts the adapter to the engine action port,
   the renderer sink contract, core time values and standard headers. It
   rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,
-  and any other link target, include directory or ESP-IDF requirement.
+  a `subscribe` call, any other link target, include directory or ESP-IDF
+  requirement (including `${COMPONENT_LIB}`), and directory-scope
+  `include_directories()` or `link_libraries()`.
 
-Firmware composition-root wiring and migration of the current lighting
-binding are a separate step of #11.
+## Firmware composition
+
+`firmware/weact-can485-v1.1/main/main.cpp` is the only code that knows the
+Mazda provider, the engine and this adapter. In static storage it builds
+`mazda::MazdaSignalProvider` over the telemetry facade, an
+`action_engine::ActionEngine` over the provider, and a `LedActionSink` over
+the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
+
+1. binds the mirrored effects: `left` to `RightTurn`, `right` to `LeftTurn`,
+   and `hazard` to both;
+2. adds the sink and three state rules, `vehicle.turn_state Equal left`,
+   `right` and `hazard`, with the strict `Fresh` requirement;
+3. registers the typed turn notice log and attaches the engine. These are the
+   turn channel's two subscriber slots;
+4. starts the facade.
+
+Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
+The application never stops the facade or detaches the engine.
+
+This step is where the documented differences from the legacy binding reach
+the hardware: a hung dispatcher holds the strip lit, and a write fault stays
+dark until the next level change. See
+[Fail-off policy: held level](#fail-off-policy-held-level).
+
+The migration keeps the visible turn and hazard behavior of the legacy
+`mazda::application::bind_local_argb_sink()` binding. That binding also lit
+brake on a Fresh brake reading. Brake has no freshness timeout, so it is never
+Fresh and never lit. Brake is also not in the generic catalog, so the
+migration drops it with no visible change.
+
+The legacy binding is no longer bound in firmware. The renderer queue has one
+slot, so the LED sink must be its only publisher. The binding stays compiled
+in `mazda_telemetry` as a rollout fallback and is to be removed after rollout.
+The local ARGB boundary validator rejects it in the vehicle application. It
+checks `main.cpp` with comments and string contents removed, so neither a
+comment nor a log message can stand in for a call. It requires the wiring
+above:
+
+- the components;
+- the startup calls inside `app_main`, with attach before start. A call that
+  `app_main` does not make fails the check;
+- `fail_off()` in the block of every `return` between `local_argb::start()`
+  and `telemetry.start()`, after the last `case` or `default` label, and on
+  the success path after any `telemetry.stop()` or `engine.detach()`, before
+  any return;
+- exactly the mirrored `kTurnRules` and `kEffectBindings` entries, applied
+  by the only bind and rule loops, with no `continue` or `break`;
+- no `FreshOrUnverified`.
+
+`tests/tools/validate_local_argb_boundary_test.py` covers these rules,
+including braceless, commented-out, nested, decoy-string, switch-label and
+helper-wrapped bypasses.
+
+Hardware follow-up: engine evaluation and the LED publish now run on the
+4 KiB `mazda_notify` dispatcher stack. On a bench with debug logging
+enabled, check that task's `uxTaskGetStackHighWaterMark()`.
