@@ -68,10 +68,14 @@ class RecordingPixelSink final : public local_argb::PixelFrameSink {
 public:
   bool write(const PixelFrame &frame) noexcept override {
     frames.push_back(frame);
-    return true;
+    if (failures_remaining == 0)
+      return true;
+    --failures_remaining;
+    return false;
   }
 
   std::vector<PixelFrame> frames{};
+  unsigned failures_remaining{0};
 };
 
 // Stands in for the ESP-IDF queue worker: applies each command to the renderer
@@ -194,6 +198,7 @@ TEST_CASE("a fresh right turn renders only the right turn region") {
   const PixelFrame &frame = harness.frame_at(1'000);
   CHECK_FALSE(left_lit(frame));
   CHECK(right_lit(frame));
+  CHECK_FALSE(brake_lit(frame));
 }
 
 TEST_CASE("hazard renders both turn regions") {
@@ -225,6 +230,7 @@ TEST_CASE("an initial NoData notice keeps the strip black") {
 TEST_CASE("turn switched off returns the strip to black") {
   Harness harness{};
   harness.publish_at(1'000, initial(turn(kLeft)));
+  REQUIRE(left_lit(harness.frame_at(1'000)));
 
   harness.publish_at(2'000, turn(kOff));
 
@@ -234,6 +240,7 @@ TEST_CASE("turn switched off returns the strip to black") {
 TEST_CASE("Stale data fails the strip off") {
   Harness harness{};
   harness.publish_at(1'000, initial(turn(kHazard)));
+  REQUIRE(left_lit(harness.frame_at(1'000)));
 
   harness.publish_at(300'000, turn(kHazard, Availability::Stale));
 
@@ -243,6 +250,7 @@ TEST_CASE("Stale data fails the strip off") {
 TEST_CASE("Unavailable data fails the strip off and recovery relights it") {
   Harness harness{};
   harness.publish_at(1'000, initial(turn(kLeft)));
+  REQUIRE(left_lit(harness.frame_at(1'000)));
 
   SignalNotification lost = turn_without_value(Availability::Unavailable);
   lost.became_unavailable = true;
@@ -258,6 +266,7 @@ TEST_CASE("Unavailable data fails the strip off and recovery relights it") {
 TEST_CASE("a NoData notice after data fails the strip off") {
   Harness harness{};
   harness.publish_at(1'000, initial(turn(kRight)));
+  REQUIRE(right_lit(harness.frame_at(1'000)));
 
   harness.publish_at(2'000, turn_without_value(Availability::NoData));
 
@@ -278,4 +287,21 @@ TEST_CASE("unverified freshness lights the strip when the rule accepts it") {
   harness.publish_at(1'000, initial(turn(kLeft, Availability::FreshnessUnverified)));
 
   CHECK(left_lit(harness.frame_at(1'000)));
+}
+
+TEST_CASE("a pixel write fault fails off and stays dark until the next level change") {
+  Harness harness{};
+  harness.publish_at(1'000, initial(turn(kHazard)));
+  REQUIRE(left_lit(harness.frame_at(1'000)));
+
+  // One failed animation write: the renderer writes black and latches its
+  // fault. Held levels bring no refresh, so the strip stays dark.
+  harness.pixels.failures_remaining = 1;
+  CHECK_FALSE(harness.renderer.tick(40'000));
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+  CHECK(harness.frame_at(1'000'000) == local_argb::kBlackFrame);
+
+  // The next command is the renderer's recovery boundary.
+  harness.publish_at(1'001'000, turn(kLeft));
+  CHECK(left_lit(harness.frame_at(1'001'000)));
 }

@@ -32,7 +32,10 @@ regions. `bind()` returns:
 | `DuplicateBinding` | The same action already drives this effect. |
 | `CapacityExceeded` | `LedActionSink::kMaxBindings` (8) bindings exist. |
 
-Bind every action before the engine attaches.
+Bind every action before the engine attaches. `LedEffect` names strip
+regions, not vehicle sides: the WeAct strip is mounted mirrored, so the
+firmware binds the vehicle's left turn to `RightTurn`, as the legacy binding
+did.
 
 ## Commands
 
@@ -43,8 +46,14 @@ Bind every action before the engine attaches.
 - Commands for unbound actions are ignored and publish nothing.
 
 The engine's explicit initial `Deactivate` therefore publishes a black
-baseline on each provider start. If the lighting sink rejects a publish, the
-adapter does not retry: the next command republishes the full state.
+baseline on each provider start.
+
+The adapter must be the lighting sink's only publisher, and the sink must
+accept every publish while the renderer runs. The production sink is a
+one-slot overwrite queue that rejects only before `local_argb::start()`, when
+the strip is already black. A rejected publish is not retried, and the engine
+never resends a deduplicated level, so a rejected `Deactivate` would leave the
+effect lit.
 
 ## Fail-off policy: held level
 
@@ -58,19 +67,29 @@ Loss of data fails off through the engine, not through a renderer deadline:
 - The engine turns every NoData, Stale or Unavailable reading into
   `Deactivate` (see [action-engine.md](action-engine.md#availability-policy)).
   With the Mazda provider, the turn state becomes Stale after its 250 ms
-  freshness timeout. Transport silence, a stopped or faulted transport, and a
-  decoder fault make readings Unavailable. The provider publishes these
-  transitions without a new frame.
+  freshness timeout. Transport silence, a faulted transport and a decoder
+  fault on the turn message make it Unavailable. The running provider
+  publishes these transitions without a new frame.
 - A `FreshnessUnverified` reading lights an effect only if the rule opts in
   with `FreshnessRequirement::FreshOrUnverified`.
-- Renderer startup black, write-failure fail-off and its driver and worker
-  watchdogs are unchanged.
+- Renderer startup black and write-failure fail-off are unchanged.
 
-Residual risk: the legacy binding also receives a 100 ms heartbeat, from the
-telemetry service that publishes its deadlines. If notice delivery stops (a
-hung dispatcher), a held effect stays lit until the renderer's watchdogs, a
-reset or a later command intervene. This adapter does not detect that case.
-Closing it needs a provider liveness signal, which is outside #11.
+The composition root owns the cases the engine cannot see:
+
+- Stopping the provider publishes no Unavailable notice, and
+  `ActionEngine::detach()` sends no `Deactivate`. Call `local_argb::fail_off()`
+  whenever the provider is stopped or the engine is detached after attach.
+- If notice delivery stops while the provider runs (a hung dispatcher), a
+  held effect stays lit until a reset or a later command. The renderer's
+  watchdogs cover only a stuck LED driver or LED worker, not the provider.
+  The legacy binding's 100 ms heartbeat bounded this case; closing it again
+  needs a provider liveness signal, which is outside #11.
+
+Write-fault recovery also differs from the legacy binding. After a failed
+pixel write the renderer writes black and latches its fault until the next
+command. The legacy heartbeat re-applied its command every 100 ms and so
+relit the strip quickly. With held levels, the strip stays dark until the next
+level change. This is fail-safe but visible.
 
 ## Evidence
 
@@ -82,10 +101,11 @@ Closing it needs a provider liveness signal, which is outside #11.
   `RendererController` into a fake `PixelFrameSink`. It shows left, right and
   hazard turn states rendered as pixels, a held effect with no deadline, and
   black for off, NoData, Stale, Unavailable and rejected unverified readings,
-  plus recovery.
+  plus recovery and the latched write fault.
 - `architecture_contracts` restricts the adapter to the engine action port,
-  the renderer sink contract and standard headers. It rejects any provider,
-  Mazda, CAN, RTOS or WLED dependency and any other link target.
+  the renderer sink contract, core time values and standard headers. It
+  rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,
+  and any other link target, include directory or ESP-IDF requirement.
 
 Firmware composition-root wiring and migration of the current lighting
 binding are a separate step of #11.

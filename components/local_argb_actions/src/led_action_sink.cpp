@@ -3,6 +3,8 @@
 #include <limits>
 #include <optional>
 
+#include "vehicle_core/time.hpp"
+
 namespace local_argb_actions {
 namespace {
 
@@ -40,8 +42,8 @@ void LedActionSink::execute(const action_engine::ActionCommand &command) noexcep
   const auto active = on_off_level(command.kind);
   if (!active || !bindings_.hold(command.action, *active))
     return;
-  // A rejected publish is not retried here: the next command republishes the
-  // full effect state.
+  // A rejected publish is not retried; see the LightingSink precondition in
+  // the header.
   (void)lighting_->publish(held_command(bindings_.lit()));
 }
 

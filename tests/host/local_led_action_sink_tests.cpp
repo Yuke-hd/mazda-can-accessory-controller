@@ -18,6 +18,7 @@ using local_argb::internal::LightingCommand;
 using local_argb_actions::BindingStatus;
 using local_argb_actions::LedActionSink;
 using local_argb_actions::LedEffect;
+using Effects = local_argb_actions::LedEffects;
 
 constexpr ActionId kTurnLeft{1};
 constexpr ActionId kTurnRight{2};
@@ -42,12 +43,6 @@ ActionCommand trigger(ActionId action) { return {action, ActionCommandKind::Trig
 ActionCommand set_level(ActionId action, float level) {
   return {action, ActionCommandKind::SetLevel, level};
 }
-
-struct Effects {
-  bool left_turn{false};
-  bool right_turn{false};
-  bool brake{false};
-};
 
 void check_effects(const LightingCommand &command, const Effects expected) {
   CHECK(command.left_turn == expected.left_turn);

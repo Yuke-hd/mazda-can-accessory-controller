@@ -230,11 +230,19 @@ def write_led_actions_fixture(root: Path) -> None:
         encoding="utf-8",
     )
     (component / "src/led_action_sink.cpp").write_text(
-        '#include "local_argb_actions/led_action_sink.hpp"\n#include <limits>\n',
+        '#include "local_argb_actions/led_action_sink.hpp"\n#include <limits>\n'
+        '#include "vehicle_core/time.hpp"\n',
         encoding="utf-8",
     )
     (component / "CMakeLists.txt").write_text(
         "add_library(local_argb_actions STATIC src/led_action_sink.cpp)\n"
+        "if(COMMAND idf_component_register)\n"
+        "  idf_component_register(SRCS src/led_action_sink.cpp INCLUDE_DIRS include\n"
+        "                         REQUIRES action_engine local_argb_sink_contract\n"
+        "                         PRIV_REQUIRES vehicle_core)\n"
+        "  return()\n"
+        "endif()\n"
+        "target_include_directories(local_argb_actions PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
         "target_link_libraries(local_argb_actions PUBLIC action_engine local_argb_sink_contract)\n",
         encoding="utf-8",
     )
@@ -314,6 +322,44 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("uses forbidden name twai", detail)
         self.assertIn("links forbidden target mazda_telemetry", detail)
         self.assertNotIn("led_action_sink.hpp includes", detail)
+
+    def test_led_action_adapter_sdk_headers_and_build_escapes_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
+            root = Path(directory)
+            write_led_actions_fixture(root)
+            source = root / "components/local_argb_actions/src/led_action_sink.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "#include <FreeRTOS.h>\n#include <esp_timer.h>\n#include <led_strip.h>\n",
+                encoding="utf-8",
+            )
+            cmake = root / "components/local_argb_actions/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8")
+                .replace("PRIV_REQUIRES vehicle_core", "PRIV_REQUIRES vehicle_core mazda_telemetry")
+                + "target_include_directories(local_argb_actions PRIVATE ../mazda_telemetry/include)\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_led_action_adapter(root)
+        detail = str(raised.exception)
+        self.assertIn("includes forbidden header FreeRTOS.h", detail)
+        self.assertIn("includes forbidden header esp_timer.h", detail)
+        self.assertIn("includes forbidden header led_strip.h", detail)
+        self.assertIn("local_argb_actions requires forbidden component mazda_telemetry", detail)
+        self.assertIn(
+            "local_argb_actions adds forbidden include directory ../mazda_telemetry/include",
+            detail,
+        )
+
+    def test_led_action_adapter_without_cmake_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
+            root = Path(directory)
+            write_led_actions_fixture(root)
+            (root / "components/local_argb_actions/CMakeLists.txt").unlink()
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_led_action_adapter(root)
+        self.assertIn("local_argb_actions CMakeLists.txt is missing", str(raised.exception))
 
     def test_clean_vehicle_signals_fixture_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-signals-fixture-") as directory:
