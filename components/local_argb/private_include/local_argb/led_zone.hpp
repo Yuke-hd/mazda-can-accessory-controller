@@ -18,11 +18,12 @@ enum class FillDirection : std::uint8_t {
   // Lit pixels grow from `start + length - 1` toward `start`.
   EndToStart,
   // Lit pixels grow symmetrically from the zone centre toward both edges.
-  // An odd-length zone has one centre pixel (`start + length / 2`) and lights
-  // 1, 3, 5, ... pixels. An even-length zone has a centre pair
-  // (`start + length / 2 - 1` and `start + length / 2`) and lights 2, 4, 6, ...
-  // pixels. A rounded lit count whose parity does not match the zone length is
-  // rounded down by one more pixel so the fill always stays symmetric.
+  // An even-length zone splits L (see fill_zone) evenly: each half receives
+  // L / 2, filled outward from the centre pair (`start + length / 2 - 1` and
+  // `start + length / 2`). An odd-length zone lights its centre pixel
+  // (`start + length / 2`) at brightness min(L, 1) first; each side then
+  // receives (L - 1) / 2, when positive, filled outward from the centre.
+  // Both sides always carry the same brightness, so the fill stays symmetric.
   CenterOut,
 };
 
@@ -43,9 +44,10 @@ enum class ZoneValidity : std::uint8_t {
   UnknownDirection,
 };
 
-// A fill level in [0, 1] held as an exact ratio so rounding happens once, in
-// fill_zone. Construction clamps: numerator > denominator is full, and a zero
-// denominator is treated as empty (fail-off) rather than as a division fault.
+// A fill level in [0, 1] held as an exact ratio so no floating point is
+// involved and rounding happens only when fill_zone scales a colour channel. Construction clamps:
+// numerator > denominator is full, and a zero denominator is treated as empty (fail-off) rather
+// than as a division fault.
 class FillFraction {
 public:
   [[nodiscard]] static constexpr FillFraction of(const std::uint32_t numerator,
@@ -79,12 +81,22 @@ constexpr bool operator!=(const FillFraction &left, const FillFraction &right) n
 
 [[nodiscard]] ZoneValidity validate_zone(const LedZone &zone) noexcept;
 
-// Lights `fraction` of `zone` in `color`. The lit pixel count is
-// floor(length * fraction), so a partial fill never over-reports and only a
-// full fraction lights the whole zone; CenterOut then applies its parity rule
-// above. Only lit pixels are written: unlit zone pixels and pixels outside the
-// zone keep their current value, so callers compose onto a frame they cleared.
-// An invalid zone writes nothing and returns its validate_zone() result.
+// Lights `fraction` of `zone` in `color`, treating the fraction as brightness.
+// The lit amount L = length * fraction is kept as an exact rational. A run
+// filled with amount A lights floor(A) pixels at full `color` in fill order,
+// and the next pixel at the fractional remainder: e.g. L = 4.6 lights four
+// full pixels and a fifth at 60%. A zero remainder adds no partial pixel.
+// CenterOut splits L between its sides as described above.
+//
+// Partial brightness uses integer maths only: each channel becomes
+// channel * remainder_numerator / remainder_denominator, rounded down, with
+// every intermediate held in 64 bits for any uint32 fraction. A partial pixel
+// that rounds to black is not written.
+//
+// Only lit and partial pixels are written: unlit zone pixels and pixels outside
+// the zone keep their current value, so callers compose onto a frame they
+// cleared. An invalid zone writes nothing and returns its validate_zone()
+// result.
 ZoneValidity fill_zone(PixelFrame &frame, const LedZone &zone, FillFraction fraction,
                        Rgb color) noexcept;
 
