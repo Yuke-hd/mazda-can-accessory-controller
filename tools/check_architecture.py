@@ -801,6 +801,64 @@ _GENERIC_CONSUMER_ALLOWED_INCLUDE = re.compile(
 )
 
 
+def _include_violations(relative: str, code: str, allowed: "re.Pattern[str]") -> List[str]:
+    """Quoted includes must match `allowed`; angle includes must be standard headers."""
+
+    violations: List[str] = []
+    for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', code, re.M):
+        # Angle includes are limited to standard headers, which have no
+        # directory component.
+        permitted = "/" not in name if delimiter == "<" else allowed.fullmatch(name) is not None
+        if not permitted:
+            violations.append(f"{relative} includes forbidden header {name}")
+    return violations
+
+
+def _target_arguments(cmake_code: str, command: str, target: str) -> List[str]:
+    """Arguments after `target` of every `command(target ...)` call."""
+
+    arguments: List[str] = []
+    pattern = rf"\b{command}\s*\(\s*{target}\b([^)]*)\)"
+    for match in re.finditer(pattern, cmake_code):
+        arguments.extend(match.group(1).split())
+    return arguments
+
+
+# idf_component_register() keywords; a keyword's values run to the next one.
+_IDF_REGISTER_KEYWORDS = frozenset(
+    (
+        "SRCS",
+        "SRC_DIRS",
+        "EXCLUDE_SRCS",
+        "INCLUDE_DIRS",
+        "PRIV_INCLUDE_DIRS",
+        "REQUIRES",
+        "PRIV_REQUIRES",
+        "LDFRAGMENTS",
+        "REQUIRED_IDF_TARGETS",
+        "EMBED_FILES",
+        "EMBED_TXTFILES",
+        "KCONFIG",
+        "KCONFIG_PROJBUILD",
+        "WHOLE_ARCHIVE",
+    )
+)
+
+
+def _idf_arguments(cmake_code: str, keywords: Tuple[str, ...]) -> List[str]:
+    """Values of `keywords` in every idf_component_register() call."""
+
+    values: List[str] = []
+    for match in re.finditer(r"\bidf_component_register\s*\(([^)]*)\)", cmake_code):
+        current: Optional[str] = None
+        for token in match.group(1).replace('"', " ").split():
+            if token in _IDF_REGISTER_KEYWORDS:
+                current = token
+            elif current in keywords:
+                values.append(token)
+    return values
+
+
 def _check_generic_consumer(root: Path) -> None:
     """Keep the host generic consumer on the public provider interface."""
 
@@ -811,29 +869,91 @@ def _check_generic_consumer(root: Path) -> None:
             violations.append(f"generic consumer source is missing: {relative.as_posix()}")
             continue
         code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
-        for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', code, re.M):
-            # Angle includes are limited to standard headers, which have no
-            # directory component.
-            allowed = (
-                "/" not in name
-                if delimiter == "<"
-                else _GENERIC_CONSUMER_ALLOWED_INCLUDE.fullmatch(name) is not None
-            )
-            if not allowed:
-                violations.append(f"{relative.as_posix()} includes forbidden header {name}")
+        violations.extend(
+            _include_violations(relative.as_posix(), code, _GENERIC_CONSUMER_ALLOWED_INCLUDE)
+        )
     host_cmake = root / "tests/host/CMakeLists.txt"
     cmake_code = re.sub(r"#.*", "", host_cmake.read_text(encoding="utf-8"))
     if re.search(r"target_include_directories\s*\(\s*generic_signal_consumer\b", cmake_code):
         violations.append("generic_signal_consumer must not add include directories")
-    for match in re.finditer(
-        r"target_link_libraries\s*\(\s*generic_signal_consumer\b([^)]*)\)", cmake_code
-    ):
-        for item in match.group(1).split():
-            if item not in {"PUBLIC", "PRIVATE", "INTERFACE", "mazda_telemetry_contracts"}:
-                violations.append(f"generic_signal_consumer links forbidden target {item}")
+    for item in _target_arguments(cmake_code, "target_link_libraries", "generic_signal_consumer"):
+        if item not in {"PUBLIC", "PRIVATE", "INTERFACE", "mazda_telemetry_contracts"}:
+            violations.append(f"generic_signal_consumer links forbidden target {item}")
     if violations:
         raise ArchitectureFailure("\n".join(violations))
     print("OK   generic signal consumer uses only the public provider and vehicle_signals headers")
+
+
+LED_ACTIONS_COMPONENT = Path("components/local_argb_actions")
+# The adapter sees the engine's output port, the renderer's private handoff,
+# core time values and its own headers; never a provider, a vehicle make, CAN,
+# an LED driver or the RTOS.
+_LED_ACTIONS_ALLOWED_INCLUDE = re.compile(
+    r"action_engine/action\.hpp|local_argb/lighting_sink\.hpp|vehicle_core/time\.hpp"
+    r"|local_argb_actions/[\w/]+\.hpp"
+)
+_LED_ACTIONS_CMAKE_KEYWORDS = frozenset(("PUBLIC", "PRIVATE", "INTERFACE"))
+_LED_ACTIONS_ALLOWED_LINKS = frozenset(
+    ("action_engine", "local_argb_sink_contract", "vehicle_core")
+)
+_LED_ACTIONS_ALLOWED_REQUIRES = frozenset(
+    ("action_engine", "local_argb_sink_contract", "vehicle_core")
+)
+_LED_ACTIONS_ALLOWED_INCLUDE_DIRS = frozenset(("${CMAKE_CURRENT_SOURCE_DIR}/include", "include"))
+# Bare SDK headers such as <FreeRTOS.h> or <esp_timer.h> pass the standard
+# angle-include rule, so their names are rejected here as well.
+_LED_ACTIONS_FORBIDDEN_NAMES = re.compile(
+    r"mazda|twai|can_bus|freertos|wled|esp_|led_strip|sdkconfig", re.IGNORECASE
+)
+
+
+def _led_action_cmake_violations(cmake: Path) -> List[str]:
+    if not cmake.is_file():
+        return ["local_argb_actions CMakeLists.txt is missing"]
+    code = re.sub(r"#.*", "", cmake.read_text(encoding="utf-8"))
+    violations: List[str] = []
+    for item in _target_arguments(code, "target_link_libraries", "local_argb_actions"):
+        if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_LINKS:
+            violations.append(f"local_argb_actions links forbidden target {item}")
+    for item in _target_arguments(code, "target_include_directories", "local_argb_actions"):
+        if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
+            violations.append(f"local_argb_actions adds forbidden include directory {item}")
+    for item in _idf_arguments(code, ("REQUIRES", "PRIV_REQUIRES")):
+        if item not in _LED_ACTIONS_ALLOWED_REQUIRES:
+            violations.append(f"local_argb_actions requires forbidden component {item}")
+    for item in _idf_arguments(code, ("INCLUDE_DIRS", "PRIV_INCLUDE_DIRS")):
+        if item not in _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
+            violations.append(f"local_argb_actions adds forbidden include directory {item}")
+    return violations
+
+
+def _check_led_action_adapter(root: Path) -> None:
+    """Keep the local LED action sink a pure engine-to-renderer adapter."""
+
+    component = root / LED_ACTIONS_COMPONENT
+    violations: List[str] = []
+    sources = sorted(
+        path for path in component.rglob("*") if path.suffix in _CPP_SUFFIXES and path.is_file()
+    )
+    if not sources:
+        violations.append(f"local LED action adapter sources are missing: {LED_ACTIONS_COMPONENT}")
+    for path in sources:
+        relative = path.relative_to(root).as_posix()
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        violations.extend(_include_violations(relative, code, _LED_ACTIONS_ALLOWED_INCLUDE))
+        for name in re.findall(r'^\s*#\s*include\s*<([^>]+)>', code, re.M):
+            if "/" not in name and _LED_ACTIONS_FORBIDDEN_NAMES.search(name):
+                violations.append(f"{relative} includes forbidden header {name}")
+        body = re.sub(r"^\s*#\s*include[^\n]*", "", code, flags=re.M)
+        for name in sorted(set(m.lower() for m in _LED_ACTIONS_FORBIDDEN_NAMES.findall(body))):
+            violations.append(f"{relative} uses forbidden name {name}")
+    violations.extend(_led_action_cmake_violations(component / "CMakeLists.txt"))
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   local LED action adapter uses only the engine action port and the renderer "
+        "sink contract"
+    )
 
 
 def _check_dependency_layout(root: Path) -> None:
@@ -1006,6 +1126,7 @@ def check(
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
             _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
+            _check_led_action_adapter(root)
             _check_adapter(
                 root,
                 cmake,

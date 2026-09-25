@@ -183,3 +183,34 @@ add_test(
   COMMAND ${Python3_EXECUTABLE}
           ${CMAKE_SOURCE_DIR}/tests/tools/check_architecture_test.py
 )
+
+# Local LED action sink: engine commands to the renderer's private lighting
+# handoff. No Mazda target is reachable from this test.
+add_executable(local_led_action_sink_tests local_led_action_sink_tests.cpp)
+target_link_libraries(local_led_action_sink_tests PRIVATE local_argb_actions doctest::doctest)
+target_compile_features(local_led_action_sink_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(local_led_action_sink_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(local_led_action_sink_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(local_led_action_sink_tests)
+
+# Host composition proof: generic provider fake -> engine -> LED sink ->
+# production renderer state machine -> fake PixelFrameSink. The renderer is
+# reached through the component's private include root; no Mazda target is
+# reachable from this test.
+add_executable(local_led_action_composition_tests local_led_action_composition_tests.cpp)
+target_include_directories(local_led_action_composition_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/local_argb/private_include
+)
+target_link_libraries(local_led_action_composition_tests PRIVATE local_argb_actions local_argb
+                                                                 vehicle_signals_test_support
+                                                                 doctest::doctest)
+target_compile_features(local_led_action_composition_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(local_led_action_composition_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(local_led_action_composition_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(local_led_action_composition_tests)
