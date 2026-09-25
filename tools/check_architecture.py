@@ -4,7 +4,8 @@
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
 the portable ``vehicle_signals`` contracts must build against that core alone
-and reach only its value-only telemetry contracts, the host generic consumer
+and reach only its value-only telemetry contracts, the generic
+``action_engine`` must build on those contracts alone, the host generic consumer
 must include only the public provider and ``vehicle_signals`` headers, the
 vehicle binding must compile and exercise its project-owned listen-only
 contract, and retired capture code must stay absent. The
@@ -26,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 
@@ -283,11 +285,48 @@ def _check_core_only(
     print("OK   vehicle_core builds and links without Mazda/RTOS dependencies")
 
 
+@dataclass(frozen=True)
+class PortableLayer:
+    """A make-independent library that must build against the core alone.
+
+    Each layer is built in a generated probe project that adds only the core's
+    ``vehicle_core`` component and the listed repository directories. The
+    resolved CMake interface, a comment-stripped source scan and the real
+    compile commands' dependency closure must stay inside the layer.
+    """
+
+    name: str
+    # Repository directories added to the probe, dependencies first.
+    directories: Tuple[str, ...]
+    # Public headers the probe consumer includes.
+    headers: Tuple[str, ...]
+    # C++ probe body after the includes; it must define main() returning 0.
+    probe_body: str
+    # Allowed resolved link items of the layer target and the probe consumer.
+    target_links: Tuple[str, ...]
+    # Repository include roots the target may export (the core root is implied).
+    include_roots: Tuple[str, ...]
+    # Repository directory whose compiled sources are checked, if any.
+    source_dir: Optional[str] = None
+
+
 VEHICLE_SIGNALS_HEADERS = (
     "vehicle_signals/signal_contracts.hpp",
     "vehicle_signals/signal_catalog.hpp",
+    "vehicle_signals/signal_provider.hpp",
 )
-# The only companion-core header the portable signal contracts may reach.
+ACTION_ENGINE_HEADERS = (
+    "action_engine/action.hpp",
+    "action_engine/condition.hpp",
+    "action_engine/config_status.hpp",
+    "action_engine/engine.hpp",
+    "action_engine/rule_config.hpp",
+    "action_engine/rule_set.hpp",
+    "action_engine/rules.hpp",
+    "action_engine/sink_fan_out.hpp",
+    "action_engine/subscription_set.hpp",
+)
+# The only companion-core header the portable layers may reach.
 VEHICLE_SIGNALS_CORE_ALLOWED = ("vehicle_core/telemetry_contracts.hpp",)
 # Path segments that identify a make-specific, RTOS, SDK, or CAN-driver input.
 _FORBIDDEN_SIGNALS_SEGMENTS = frozenset(
@@ -296,56 +335,149 @@ _FORBIDDEN_SIGNALS_SEGMENTS = frozenset(
 _FORBIDDEN_SIGNALS_DEFINITION = re.compile(
     r"mazda|freertos|esp_platform|esp_idf|sdkconfig|twai", re.IGNORECASE
 )
+# Output, transport, CAN-driver and RTOS names a portable layer never uses.
+_FORBIDDEN_LAYER_TOKENS = re.compile(r"wled|argb|twai|can_bus|freertos", re.IGNORECASE)
 _CPP_SUFFIXES = frozenset((".c", ".cc", ".cpp", ".h", ".hpp", ".inl", ".ipp"))
 
+_VEHICLE_SIGNALS_PROBE_BODY = (
+    "#include <string_view>\n"
+    "namespace {\n"
+    "using vehicle_signals::SignalCapability;\n"
+    "using vehicle_signals::SignalId;\n"
+    "using vehicle_signals::SignalMetadata;\n"
+    "constexpr SignalMetadata kProbeCatalog[] = {\n"
+    "    {SignalId{1}, \"probe.number\", vehicle_signals::SignalType::Number,\n"
+    "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
+    "     SignalCapability::Read},\n"
+    "    {SignalId{2}, \"probe.flag\", vehicle_signals::SignalType::Boolean,\n"
+    "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
+    "     SignalCapability::Read},\n"
+    "};\n"
+    "constexpr vehicle_signals::SignalCatalogView kProbeView{kProbeCatalog};\n"
+    "static_assert(kProbeView.well_formed());\n"
+    "} // namespace\n"
+    "int main() {\n"
+    "  const SignalMetadata *by_key = kProbeView.find(std::string_view{\"probe.flag\"});\n"
+    "  const SignalMetadata *by_id = kProbeView.find(SignalId{2});\n"
+    "  const vehicle_signals::SignalReading reading{};\n"
+    "  return by_key != nullptr && by_key == by_id && !reading.value.has_value() ? 0 : 1;\n"
+    "}\n"
+)
 
-def _write_vehicle_signals_probe(probe_dir: Path, root: Path, core_root: Path) -> Path:
-    source = probe_dir / "vehicle_signals_consumer.cpp"
-    includes = "".join(f'#include "{header}"\n' for header in VEHICLE_SIGNALS_HEADERS)
-    source.write_text(
-        includes + "#include <string_view>\n"
-        "namespace {\n"
-        "using vehicle_signals::SignalCapability;\n"
-        "using vehicle_signals::SignalId;\n"
-        "using vehicle_signals::SignalMetadata;\n"
-        "constexpr SignalMetadata kProbeCatalog[] = {\n"
-        "    {SignalId{1}, \"probe.number\", vehicle_signals::SignalType::Number,\n"
-        "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
-        "     SignalCapability::Read},\n"
-        "    {SignalId{2}, \"probe.flag\", vehicle_signals::SignalType::Boolean,\n"
-        "     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,\n"
-        "     SignalCapability::Read},\n"
-        "};\n"
-        "constexpr vehicle_signals::SignalCatalogView kProbeView{kProbeCatalog};\n"
-        "static_assert(kProbeView.well_formed());\n"
-        "} // namespace\n"
-        "int main() {\n"
-        "  const SignalMetadata *by_key = kProbeView.find(std::string_view{\"probe.flag\"});\n"
-        "  const SignalMetadata *by_id = kProbeView.find(SignalId{2});\n"
-        "  const vehicle_signals::SignalReading reading{};\n"
-        "  return by_key != nullptr && by_key == by_id && !reading.value.has_value() ? 0 : 1;\n"
-        "}\n",
-        encoding="utf-8",
+# Drives one state rule through a probe-local provider and sink, so the probe
+# links and runs the engine's compiled sources.
+_ACTION_ENGINE_PROBE_BODY = (
+    "namespace {\n"
+    "using namespace vehicle_signals;\n"
+    "constexpr SignalMetadata kProbeCatalog[] = {\n"
+    "    {SignalId{1}, \"probe.flag\", SignalType::Boolean, SignalUnit::None,\n"
+    "     ValidationStatus::Reference, SignalCapability::Read | SignalCapability::Notify},\n"
+    "};\n"
+    "class ProbeProvider final : public SignalProvider {\n"
+    "public:\n"
+    "  SignalCatalogView catalog() const noexcept override { return kProbeCatalog; }\n"
+    "  SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback callback,\n"
+    "                                             void *context) noexcept override {\n"
+    "    callback_ = callback;\n"
+    "    context_ = context;\n"
+    "    return SignalResult<SignalSubscription>::success(\n"
+    "        SignalSubscription::from_provider_bits(1));\n"
+    "  }\n"
+    "  SignalStatusResult unsubscribe(SignalSubscription) noexcept override {\n"
+    "    return SignalStatusResult::success();\n"
+    "  }\n"
+    "  void publish(const SignalNotification &notice) const noexcept {\n"
+    "    callback_(context_, notice);\n"
+    "  }\n"
+    "private:\n"
+    "  SignalCallback callback_{nullptr};\n"
+    "  void *context_{nullptr};\n"
+    "};\n"
+    "class ProbeSink final : public action_engine::ActionSink {\n"
+    "public:\n"
+    "  void execute(const action_engine::ActionCommand &command) noexcept override {\n"
+    "    last = command;\n"
+    "  }\n"
+    "  action_engine::ActionCommand last{};\n"
+    "};\n"
+    "} // namespace\n"
+    "int main() {\n"
+    "  ProbeProvider provider{};\n"
+    "  ProbeSink sink{};\n"
+    "  action_engine::ActionEngine engine{provider};\n"
+    "  const action_engine::StateRuleConfig rule{\n"
+    "      {\"probe.flag\", action_engine::Comparison::Equal,\n"
+    "       action_engine::RuleOperand::boolean(true)},\n"
+    "      action_engine::ActionId{1}};\n"
+    "  if (engine.add_sink(sink) != action_engine::ConfigStatus::Ok ||\n"
+    "      engine.add_state_rule(rule) != action_engine::ConfigStatus::Ok ||\n"
+    "      engine.attach() != SignalStatus::Ok) {\n"
+    "    return 1;\n"
+    "  }\n"
+    "  SignalNotification notice{};\n"
+    "  notice.id = SignalId{1};\n"
+    "  notice.current.value = SignalValue::boolean(true);\n"
+    "  notice.current.availability = Availability::Fresh;\n"
+    "  notice.initial = true;\n"
+    "  provider.publish(notice);\n"
+    "  const bool activated = sink.last.kind == action_engine::ActionCommandKind::Activate;\n"
+    "  return activated && engine.detach() == SignalStatus::Ok ? 0 : 1;\n"
+    "}\n"
+)
+
+VEHICLE_SIGNALS_LAYER = PortableLayer(
+    name="vehicle_signals",
+    directories=("lib/vehicle_signals",),
+    headers=VEHICLE_SIGNALS_HEADERS,
+    probe_body=_VEHICLE_SIGNALS_PROBE_BODY,
+    target_links=("vehicle_core",),
+    include_roots=("lib/vehicle_signals/include",),
+)
+ACTION_ENGINE_LAYER = PortableLayer(
+    name="action_engine",
+    directories=("lib/vehicle_signals", "lib/action_engine"),
+    headers=ACTION_ENGINE_HEADERS,
+    probe_body=_ACTION_ENGINE_PROBE_BODY,
+    target_links=("vehicle_signals",),
+    include_roots=("lib/action_engine/include", "lib/vehicle_signals/include"),
+    source_dir="lib/action_engine/src",
+)
+
+
+def _consumer_name(layer: PortableLayer) -> str:
+    return f"{layer.name}_consumer"
+
+
+def _write_layer_probe(
+    probe_dir: Path, root: Path, core_root: Path, layer: PortableLayer
+) -> Path:
+    consumer = _consumer_name(layer)
+    source = probe_dir / f"{consumer}.cpp"
+    includes = "".join(f'#include "{header}"\n' for header in layer.headers)
+    source.write_text(includes + layer.probe_body, encoding="utf-8")
+    subdirectories = "".join(
+        "add_subdirectory(" + _quoted(root / directory) + f" {Path(directory).name})\n"
+        for directory in layer.directories
     )
     (probe_dir / "CMakeLists.txt").write_text(
         "cmake_minimum_required(VERSION 3.20)\n"
-        "project(vehicle_signals_only_consumer LANGUAGES CXX)\n"
+        f"project({layer.name}_only_consumer LANGUAGES CXX)\n"
         "set(CMAKE_CXX_STANDARD 17)\n"
         "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
         "set(CMAKE_CXX_EXTENSIONS OFF)\n"
         "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
         "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
         "add_subdirectory(" + _quoted(core_root / "components/vehicle_core") + " vehicle_core)\n"
-        "add_subdirectory(" + _quoted(root / "lib/vehicle_signals") + " vehicle_signals)\n"
-        "add_executable(vehicle_signals_consumer " + _quoted(source) + ")\n"
-        "target_link_libraries(vehicle_signals_consumer PRIVATE vehicle_signals)\n"
-        "target_compile_features(vehicle_signals_consumer PRIVATE cxx_std_17)\n"
+        + subdirectories
+        + f"add_executable({consumer} " + _quoted(source) + ")\n"
+        f"target_link_libraries({consumer} PRIVATE {layer.name})\n"
+        f"target_compile_features({consumer} PRIVATE cxx_std_17)\n"
         # Record the evaluated target interface so link targets and exported
         # include directories are checked as CMake resolved them.
-        "file(GENERATE OUTPUT \"${CMAKE_BINARY_DIR}/vehicle_signals_interface.txt\" CONTENT\n"
-        "  \"include=$<TARGET_PROPERTY:vehicle_signals,INTERFACE_INCLUDE_DIRECTORIES>\\n"
-        "link=$<TARGET_PROPERTY:vehicle_signals,INTERFACE_LINK_LIBRARIES>\\n"
-        "consumer_link=$<TARGET_PROPERTY:vehicle_signals_consumer,LINK_LIBRARIES>\\n\")\n",
+        f"file(GENERATE OUTPUT \"${{CMAKE_BINARY_DIR}}/{layer.name}_interface.txt\" CONTENT\n"
+        f"  \"include=$<TARGET_PROPERTY:{layer.name},INTERFACE_INCLUDE_DIRECTORIES>\\n"
+        f"link=$<TARGET_PROPERTY:{layer.name},INTERFACE_LINK_LIBRARIES>\\n"
+        f"consumer_link=$<TARGET_PROPERTY:{consumer},LINK_LIBRARIES>\\n\")\n",
         encoding="utf-8",
     )
     return source
@@ -388,21 +520,24 @@ def _has_forbidden_signals_segment(path: Path) -> bool:
     return False
 
 
-def _vehicle_signals_interface_violations(
-    interface_file: Path, root: Path, core_root: Path
+def _layer_include_roots(root: Path, core_root: Path, layer: PortableLayer) -> Tuple[Path, ...]:
+    # CMake evaluates INTERFACE_INCLUDE_DIRECTORIES transitively, so the core's
+    # include root legitimately appears through the vehicle_core link.
+    return tuple((root / include).resolve() for include in layer.include_roots) + (
+        (core_root / "components/vehicle_core/include").resolve(),
+    )
+
+
+def _layer_interface_violations(
+    interface_file: Path, root: Path, core_root: Path, layer: PortableLayer
 ) -> List[str]:
     try:
         lines = interface_file.read_text(encoding="utf-8").splitlines()
     except OSError as error:
-        return [f"vehicle_signals interface properties are unreadable: {error}"]
-    # CMake evaluates INTERFACE_INCLUDE_DIRECTORIES transitively, so the core's
-    # include root legitimately appears through the vehicle_core link.
-    allowed_includes = (
-        (root / "lib/vehicle_signals/include").resolve(),
-        (core_root / "components/vehicle_core/include").resolve(),
-    )
-    allowed_links = {"link": {"vehicle_core"}, "consumer_link": {"vehicle_signals"}}
-    labels = {"link": "vehicle_signals target", "consumer_link": "vehicle_signals consumer"}
+        return [f"{layer.name} interface properties are unreadable: {error}"]
+    allowed_includes = _layer_include_roots(root, core_root, layer)
+    allowed_links = {"link": set(layer.target_links), "consumer_link": {layer.name}}
+    labels = {"link": f"{layer.name} target", "consumer_link": f"{layer.name} consumer"}
     violations: List[str] = []
     for line in lines:
         key, _, value = line.partition("=")
@@ -412,7 +547,7 @@ def _vehicle_signals_interface_violations(
                 include_dir = Path(item).resolve()
                 if include_dir not in allowed_includes:
                     violations.append(
-                        f"forbidden vehicle_signals target include directory: {include_dir}"
+                        f"forbidden {layer.name} target include directory: {include_dir}"
                     )
         elif key in allowed_links:
             for item in items:
@@ -462,11 +597,11 @@ def _mazda_type_names(root: Path) -> Tuple[str, ...]:
     return tuple(sorted(set(re.findall(pattern, code))))
 
 
-def _vehicle_signals_source_violations(root: Path) -> List[str]:
-    signals_root = root / "lib/vehicle_signals"
+def _layer_source_violations(root: Path, layer: PortableLayer) -> List[str]:
+    layer_root = root / layer.directories[-1]
     type_names = _mazda_type_names(root)
     violations: List[str] = []
-    for path in sorted(signals_root.rglob("*")):
+    for path in sorted(layer_root.rglob("*")):
         if not path.is_file():
             continue
         label = path.relative_to(root).as_posix()
@@ -485,61 +620,133 @@ def _vehicle_signals_source_violations(root: Path) -> List[str]:
             continue
         if re.search("mazda", code, re.IGNORECASE):
             violations.append(f"{label} references Mazda outside comments")
+        for token in sorted({match.lower() for match in _FORBIDDEN_LAYER_TOKENS.findall(code)}):
+            violations.append(f"{label} references forbidden {token} outside comments")
     return violations
 
 
-def _vehicle_signals_dependency_violations(
+def _layer_compile_entries(
+    entries: object, consumer_source: Path, root: Path, layer: PortableLayer
+) -> Tuple[List[Tuple[str, object, Path]], List[str]]:
+    consumer: List[Tuple[str, object, Path]] = []
+    target: List[Tuple[str, object, Path]] = []
+    source_dir = (root / layer.source_dir).resolve() if layer.source_dir else None
+    for entry in entries if isinstance(entries, list) else []:
+        source = _compile_database_source(entry)
+        if source is None:
+            continue
+        if source == consumer_source:
+            consumer.append((f"{layer.name} consumer", entry, source))
+        elif source_dir is not None and _is_within(source, source_dir):
+            target.append((f"{layer.name} target ({source.name})", entry, source))
+    missing: List[str] = []
+    if not consumer:
+        missing.append(f"{layer.name} consumer compile command is missing")
+    if source_dir is not None and not target:
+        missing.append(f"{layer.name} target compile command is missing")
+    return consumer + target, missing
+
+
+def _layer_dependency_violations(
     compile_database: Path,
     consumer_source: Path,
     root: Path,
     work_dir: Path,
     core_root: Path,
+    layer: PortableLayer,
 ) -> List[str]:
     try:
         entries = json.loads(compile_database.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
-        return [f"vehicle_signals compile database is unreadable: {error}"]
+        return [f"{layer.name} compile database is unreadable: {error}"]
     consumer_source = consumer_source.resolve()
-    matching = [entry for entry in entries if _compile_database_source(entry) == consumer_source]
-    if not matching:
-        return ["vehicle_signals consumer compile command is missing"]
-    signals_include = (root / "lib/vehicle_signals/include").resolve()
-    core_include = (core_root / "components/vehicle_core/include").resolve()
+    matching, missing = _layer_compile_entries(entries, consumer_source, root, layer)
+    if missing:
+        return missing
+    include_roots = _layer_include_roots(root, core_root, layer)
+    core_include = include_roots[-1]
     allowed_core = {(core_include / name).resolve() for name in VEHICLE_SIGNALS_CORE_ALLOWED}
     violations: List[str] = []
-    for index, entry in enumerate(matching):
+    for index, (label, entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
         cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
         tokens = _command_tokens(entry)
         for include_dir in _include_directories(tokens, cwd):
-            if include_dir not in (signals_include, core_include):
-                violations.append(
-                    f"forbidden vehicle_signals consumer include directory: {include_dir}"
-                )
+            if include_dir not in include_roots:
+                violations.append(f"forbidden {label} include directory: {include_dir}")
         for token in tokens:
             if token.startswith(("-D", "/D")) and _FORBIDDEN_SIGNALS_DEFINITION.search(token):
-                violations.append(f"forbidden vehicle_signals consumer definition: {token}")
+                violations.append(f"forbidden {label} definition: {token}")
         # -MD rather than -MMD: a header reached through -isystem must not be
         # hidden from the closure.
-        depfile = work_dir / f"vehicle_signals_dependency_{index}.d"
-        probe = _run([*tokens, "-MD", "-MF", str(depfile), "-MT", str(consumer_source)], cwd=cwd)
+        depfile = work_dir / f"{layer.name}_dependency_{index}.d"
+        probe = _run([*tokens, "-MD", "-MF", str(depfile), "-MT", str(source)], cwd=cwd)
         if probe[0] != 0:
-            violations.append("vehicle_signals dependency probe failed\n" + probe[1][-3000:])
+            violations.append(f"{label} dependency probe failed\n" + probe[1][-3000:])
             continue
         dependencies = _dependency_paths(depfile, cwd)
         if not dependencies:
-            violations.append("vehicle_signals dependency probe produced no dependency data")
+            violations.append(f"{label} dependency probe produced no dependency data")
             continue
         for dependency in dependencies:
-            if dependency == consumer_source or _is_within(dependency, signals_include):
+            if dependency == source or any(
+                _is_within(dependency, include) for include in include_roots[:-1]
+            ):
                 continue
             if _is_within(dependency, core_root):
                 if dependency not in allowed_core:
-                    violations.append(f"forbidden vehicle_signals core dependency: {dependency}")
+                    violations.append(f"forbidden {layer.name} core dependency: {dependency}")
                 continue
             if _is_within(dependency, root) or _has_forbidden_signals_segment(dependency):
-                violations.append(f"forbidden vehicle_signals dependency: {dependency}")
+                violations.append(f"forbidden {layer.name} dependency: {dependency}")
     return list(dict.fromkeys(violations))
+
+
+def _check_portable_layer(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    layer: PortableLayer,
+    core_root: Optional[Path] = None,
+) -> None:
+    root = root.resolve()
+    core_root = (core_root or root / "third_party/esp32-vehicle-can-core").resolve()
+    for directory in layer.directories:
+        if not (root / directory / "CMakeLists.txt").is_file():
+            raise ArchitectureFailure(f"{Path(directory).name} component is missing")
+    probe_dir = work_dir / f"{layer.name}_probe"
+    probe_dir.mkdir()
+    source = _write_layer_probe(probe_dir, root, core_root, layer)
+    build_dir = probe_dir / "build"
+    configure = [cmake, "-S", str(probe_dir), "-B", str(build_dir), "-G", "Ninja"]
+    if len(compiler) == 1:
+        configure.append(f"-DCMAKE_CXX_COMPILER={compiler[0]}")
+    result = _run(configure, cwd=root)
+    if result[0] != 0:
+        raise ArchitectureFailure(f"{layer.name}-only configure failed\n" + result[1][-3000:])
+    # Report the resolved interface and source scan alongside any build
+    # failure: a Mazda link target otherwise surfaces only as a linker error.
+    violations = _layer_interface_violations(
+        build_dir / f"{layer.name}_interface.txt", root, core_root, layer
+    )
+    violations.extend(_layer_source_violations(root, layer))
+    consumer = _consumer_name(layer)
+    result = _run([cmake, "--build", str(build_dir), "--target", consumer], cwd=root)
+    if result[0] != 0:
+        violations.append(f"{layer.name}-only build failed\n" + result[1][-3000:])
+        raise ArchitectureFailure("\n".join(violations))
+    result = _run([str(build_dir / consumer)], cwd=root)
+    if result[0] != 0:
+        violations.append(f"{layer.name}-only consumer execution failed\n" + result[1][-3000:])
+        raise ArchitectureFailure("\n".join(violations))
+    violations.extend(
+        _layer_dependency_violations(
+            build_dir / "compile_commands.json", source, root, work_dir, core_root, layer
+        )
+    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
 
 
 def _check_vehicle_signals_only(
@@ -549,46 +756,24 @@ def _check_vehicle_signals_only(
     work_dir: Path,
     core_root: Optional[Path] = None,
 ) -> None:
-    root = root.resolve()
-    core_root = (core_root or root / "third_party/esp32-vehicle-can-core").resolve()
-    if not (root / "lib/vehicle_signals/CMakeLists.txt").is_file():
-        raise ArchitectureFailure("vehicle_signals component is missing")
-    probe_dir = work_dir / "vehicle_signals_probe"
-    probe_dir.mkdir()
-    source = _write_vehicle_signals_probe(probe_dir, root, core_root)
-    build_dir = probe_dir / "build"
-    configure = [cmake, "-S", str(probe_dir), "-B", str(build_dir), "-G", "Ninja"]
-    if len(compiler) == 1:
-        configure.append(f"-DCMAKE_CXX_COMPILER={compiler[0]}")
-    result = _run(configure, cwd=root)
-    if result[0] != 0:
-        raise ArchitectureFailure("vehicle_signals-only configure failed\n" + result[1][-3000:])
-    # Report the resolved interface and source scan alongside any build
-    # failure: a Mazda link target otherwise surfaces only as a linker error.
-    violations = _vehicle_signals_interface_violations(
-        build_dir / "vehicle_signals_interface.txt", root, core_root
-    )
-    violations.extend(_vehicle_signals_source_violations(root))
-    result = _run(
-        [cmake, "--build", str(build_dir), "--target", "vehicle_signals_consumer"], cwd=root
-    )
-    if result[0] != 0:
-        violations.append("vehicle_signals-only build failed\n" + result[1][-3000:])
-        raise ArchitectureFailure("\n".join(violations))
-    result = _run([str(build_dir / "vehicle_signals_consumer")], cwd=root)
-    if result[0] != 0:
-        violations.append("vehicle_signals-only consumer execution failed\n" + result[1][-3000:])
-        raise ArchitectureFailure("\n".join(violations))
-    violations.extend(
-        _vehicle_signals_dependency_violations(
-            build_dir / "compile_commands.json", source, root, work_dir, core_root
-        )
-    )
-    if violations:
-        raise ArchitectureFailure("\n".join(violations))
+    _check_portable_layer(root, cmake, compiler, work_dir, VEHICLE_SIGNALS_LAYER, core_root)
     print(
         "OK   vehicle_signals builds without Mazda/RTOS dependencies and reaches only "
         "value-only core contracts"
+    )
+
+
+def _check_action_engine_only(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    core_root: Optional[Path] = None,
+) -> None:
+    _check_portable_layer(root, cmake, compiler, work_dir, ACTION_ENGINE_LAYER, core_root)
+    print(
+        "OK   action_engine builds on vehicle_signals alone without Mazda, CAN, RTOS or "
+        "output dependencies"
     )
 
 
@@ -804,6 +989,7 @@ def check(
             _check_dependency_layout(root)
             _check_core_only(root, cmake, compiler, work_dir, core_root)
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
+            _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
             _check_adapter(
                 root,

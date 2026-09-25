@@ -24,13 +24,16 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
   that is safe to destroy at any time, including while the facade runs.
 - The typed `mazda::VehicleTelemetry` API and local ARGB behavior are
   unchanged.
+- `vehicle_signals::SignalProvider` is the generic provider port that
+  `MazdaSignalProvider` implements. The generic action engine consumes only
+  this port; see [action-engine.md](action-engine.md).
 
 ## Enforced boundaries
 
 | Gate | What it proves |
 | --- | --- |
-| `architecture_contracts` | `vehicle_signals` builds against only the core's `vehicle_core` component. It has no Mazda include directories or link targets, and its compiler dependency closure reaches only standard headers and `vehicle_core/telemetry_contracts.hpp`. Its sources hold no Mazda key literal or type. The host generic consumer includes only the provider and `vehicle_signals` headers. |
-| `public_header_boundary` | `mazda/signal_provider.hpp` and both `vehicle_signals` headers are compiled in isolation. The provider may not reach the service, publication store, private catalog, `mazda/state.hpp`, `mazda/types.hpp`, `mazda/definitions.hpp`, or driver/RTOS headers. A provider-only CMake consumer repeats this under the real target's compile flags. |
+| `architecture_contracts` | `vehicle_signals` builds against only the core's `vehicle_core` component. It has no Mazda include directories or link targets, and its compiler dependency closure reaches only standard headers and `vehicle_core/telemetry_contracts.hpp`. Its sources hold no Mazda key literal or type. The host generic consumer includes only the provider and `vehicle_signals` headers. `action_engine` builds on `vehicle_signals` alone under the same checks. |
+| `public_header_boundary` | `mazda/signal_provider.hpp` and the three `vehicle_signals` headers are compiled in isolation. The provider may not reach the service, publication store, private catalog, `mazda/state.hpp`, `mazda/types.hpp`, `mazda/definitions.hpp`, or driver/RTOS headers. A provider-only CMake consumer repeats this under the real target's compile flags. |
 | `architecture_checker_regression`, `public_header_checker_regression` | Each rule fails on a planted violation in a temporary fixture. |
 
 ## Parity evidence

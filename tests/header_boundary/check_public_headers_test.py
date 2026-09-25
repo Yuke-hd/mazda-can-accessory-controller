@@ -57,6 +57,9 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("OK   mazda/signal_provider.hpp (generic signal provider)", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_contracts.hpp", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_catalog.hpp", result.stdout)
+        self.assertIn("OK   vehicle_signals/signal_provider.hpp", result.stdout)
+        self.assertIn("OK   action_engine/engine.hpp (generic action engine)", result.stdout)
+        self.assertIn("OK   action_engine/action.hpp (generic action engine)", result.stdout)
 
     def test_provider_reaching_telemetry_service_is_detected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
@@ -131,6 +134,45 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, output)
         self.assertIn("FAIL vehicle_signals/signal_catalog.hpp", output)
         self.assertIn("mutable signal/state: lib/vehicle_core/include/vehicle_core/signal.hpp", output)
+
+    def test_action_engine_header_reaching_mazda_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            # A public Mazda header: only the engine-specific rule applies.
+            rules = root / "lib/action_engine/include/action_engine/rules.hpp"
+            rules.write_text(
+                '#include "mazda/signal_provider.hpp"\n' + rules.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL action_engine/rules.hpp (generic action engine)", output)
+        self.assertIn("FAIL action_engine/engine.hpp (generic action engine)", output)
+        self.assertIn(
+            "Mazda dependency: components/vehicle_telemetry/include/mazda/signal_provider.hpp",
+            output,
+        )
+        self.assertIn("OK   action_engine/action.hpp (generic action engine)", output)
+        self.assertIn("OK   mazda/signal_provider.hpp (generic signal provider)", output)
+
+    def test_action_engine_header_reaching_an_output_adapter_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            adapter = root / "lib/vehicle_signals/include/local_argb/sink.hpp"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("#pragma once\nnamespace local_argb { class Sink; }\n", encoding="utf-8")
+            action = root / "lib/action_engine/include/action_engine/action.hpp"
+            action.write_text(
+                '#include "local_argb/sink.hpp"\n' + action.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL action_engine/action.hpp (generic action engine)", output)
+        self.assertIn("output adapter dependency", output)
+        self.assertIn("OK   vehicle_signals/signal_provider.hpp", output)
 
     def test_missing_internal_include_is_a_failure_not_a_skip(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:

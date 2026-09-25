@@ -9,6 +9,7 @@
 
 #include "vehicle_signals/signal_catalog.hpp"
 #include "vehicle_signals/signal_contracts.hpp"
+#include "vehicle_signals/signal_provider.hpp"
 
 namespace {
 
@@ -21,6 +22,7 @@ using vehicle_signals::SignalEnumChoice;
 using vehicle_signals::SignalId;
 using vehicle_signals::SignalMetadata;
 using vehicle_signals::SignalNotification;
+using vehicle_signals::SignalProvider;
 using vehicle_signals::SignalReading;
 using vehicle_signals::SignalResult;
 using vehicle_signals::SignalStatus;
@@ -71,6 +73,29 @@ static_assert(std::is_nothrow_copy_constructible_v<SignalNotification>);
 static_assert(
     std::is_same_v<SignalCallback, void (*)(void *, const SignalNotification &) noexcept>);
 
+// The provider port is an abstract, non-owning interface: it cannot be
+// copied, moved, or destroyed through the base.
+static_assert(std::is_abstract_v<SignalProvider>);
+static_assert(!std::is_copy_constructible_v<SignalProvider>);
+static_assert(!std::is_copy_assignable_v<SignalProvider>);
+static_assert(!std::is_move_constructible_v<SignalProvider>);
+static_assert(!std::is_destructible_v<SignalProvider>);
+static_assert(!std::has_virtual_destructor_v<SignalProvider>);
+
+// A minimal provider over the fixture catalog proves the port is
+// implementable without any make-specific type.
+class CatalogOnlyProvider final : public SignalProvider {
+public:
+  [[nodiscard]] SignalCatalogView catalog() const noexcept override { return kView; }
+  [[nodiscard]] SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback,
+                                                           void *) noexcept override {
+    return SignalResult<SignalSubscription>::failure(SignalStatus::UnsupportedCapability);
+  }
+  [[nodiscard]] SignalStatusResult unsubscribe(SignalSubscription) noexcept override {
+    return SignalStatusResult::failure(SignalStatus::InvalidSubscription);
+  }
+};
+
 struct CallbackProbe {
   int calls{0};
   SignalNotification last{};
@@ -92,6 +117,17 @@ TEST_CASE("signal ids reserve zero as invalid") {
   CHECK(SignalId{5} == SignalId{5});
   CHECK(SignalId{5} != SignalId{6});
   CHECK(SignalId{5} < SignalId{6});
+}
+
+TEST_CASE("a consumer resolves transmission.gear through the provider port") {
+  CatalogOnlyProvider concrete{};
+  const SignalProvider &provider = concrete;
+  const SignalMetadata *gear = provider.catalog().find(std::string_view{"transmission.gear"});
+  REQUIRE(gear != nullptr);
+  CHECK(gear->id == SignalId{3});
+  CHECK(concrete.subscribe(gear->id, &record_notification, nullptr).status ==
+        SignalStatus::UnsupportedCapability);
+  CHECK(concrete.unsubscribe(SignalSubscription{}).status == SignalStatus::InvalidSubscription);
 }
 
 TEST_CASE("catalog view looks up metadata by runtime id") {
