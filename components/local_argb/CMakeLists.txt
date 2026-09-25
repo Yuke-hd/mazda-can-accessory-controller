@@ -1,6 +1,6 @@
 if(COMMAND idf_component_register)
   idf_component_register(
-    SRCS "src/local_argb.cpp" "src/local_argb_idf.cpp"
+    SRCS "src/local_argb.cpp" "src/led_zone.cpp" "src/local_argb_idf.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "private_include"
     REQUIRES board vehicle_core esp_timer led_strip esp_driver_spi
@@ -9,7 +9,7 @@ if(COMMAND idf_component_register)
   return()
 endif()
 
-add_library(local_argb STATIC src/local_argb.cpp)
+add_library(local_argb STATIC src/local_argb.cpp src/led_zone.cpp)
 target_include_directories(
   local_argb
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -37,6 +37,14 @@ if(BUILD_TESTING)
   target_link_libraries(local_argb_rendering_tests PRIVATE local_argb local_argb_sink_contract)
   target_compile_features(local_argb_rendering_tests PRIVATE cxx_std_17)
   add_test(NAME local_argb_rendering_tests COMMAND local_argb_rendering_tests)
+
+  add_executable(local_argb_zone_tests tests/zone_tests.cpp)
+  target_include_directories(
+    local_argb_zone_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+  )
+  target_link_libraries(local_argb_zone_tests PRIVATE local_argb)
+  target_compile_features(local_argb_zone_tests PRIVATE cxx_std_17)
+  add_test(NAME local_argb_zone_tests COMMAND local_argb_zone_tests)
 
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(
