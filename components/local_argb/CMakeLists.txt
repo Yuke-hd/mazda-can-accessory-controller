@@ -42,7 +42,7 @@ if(BUILD_TESTING)
   target_include_directories(
     local_argb_zone_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_include
   )
-  target_link_libraries(local_argb_zone_tests PRIVATE local_argb)
+  target_link_libraries(local_argb_zone_tests PRIVATE local_argb local_argb_sink_contract)
   target_compile_features(local_argb_zone_tests PRIVATE cxx_std_17)
   add_test(NAME local_argb_zone_tests COMMAND local_argb_zone_tests)
 

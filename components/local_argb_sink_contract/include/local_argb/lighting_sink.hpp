@@ -1,7 +1,11 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <type_traits>
 
+#include "local_argb/lighting_zone.hpp"
 #include "vehicle_core/time.hpp"
 
 namespace local_argb::internal {
@@ -10,6 +14,39 @@ struct LightingRgb {
   std::uint8_t red{0};
   std::uint8_t green{0};
   std::uint8_t blue{0};
+};
+
+// One level-driven fill: `level` of `zone` lit in `color`. The renderer caps
+// each colour channel at its brightness ceiling and draws nothing for an
+// invalid zone.
+struct LightingFill {
+  LedZone zone{};
+  FillFraction level{FillFraction::empty()};
+  LightingRgb color{};
+};
+
+// Fixed-capacity, trivially copyable list of fills, in drawing order. It never
+// allocates, so a LightingCommand still crosses the renderer queue by copy.
+class LightingFills {
+public:
+  static constexpr std::size_t kCapacity = 8;
+
+  // Appends `fill`; returns false, and changes nothing, when full.
+  [[nodiscard]] bool add(const LightingFill &fill) noexcept {
+    if (count_ == kCapacity)
+      return false;
+    fills_[count_++] = fill;
+    return true;
+  }
+
+  [[nodiscard]] const LightingFill *begin() const noexcept { return fills_.data(); }
+  [[nodiscard]] const LightingFill *end() const noexcept { return fills_.data() + count_; }
+  [[nodiscard]] std::size_t size() const noexcept { return count_; }
+  [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
+
+private:
+  std::array<LightingFill, kCapacity> fills_{};
+  std::size_t count_{0};
 };
 
 struct LightingCommand {
@@ -21,7 +58,13 @@ struct LightingCommand {
   bool brake{false};
   vehicle_core::MonotonicTimestamp valid_until_us{0};
   bool actionable{false};
+  // Level-driven zone fills. With no fills, no brake and no turn, the
+  // renderer paints the generic colour instead.
+  LightingFills fills{};
 };
+
+// The renderer queue copies commands byte-wise.
+static_assert(std::is_trivially_copyable_v<LightingCommand>);
 
 // Private, value-only sink between the portable lighting policy and the
 // renderer. Mazda enums, decoder health, and driver handles do not cross it.
@@ -36,12 +79,11 @@ public:
 // are populated by the explicit firmware binding instead.
 template <typename GenericCommand>
 [[nodiscard]] inline LightingCommand adapt_command(const GenericCommand &source) noexcept {
-  return LightingCommand{{source.color.red, source.color.green, source.color.blue},
-                         false,
-                         false,
-                         false,
-                         source.valid_until_us,
-                         source.actionable};
+  LightingCommand command{};
+  command.color = {source.color.red, source.color.green, source.color.blue};
+  command.valid_until_us = source.valid_until_us;
+  command.actionable = source.actionable;
+  return command;
 }
 
 // The service obtains this implementation-only handoff explicitly. Ordinary

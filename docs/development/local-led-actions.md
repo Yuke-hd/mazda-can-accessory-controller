@@ -32,6 +32,22 @@ regions. `bind()` returns:
 | `DuplicateBinding` | The same action already drives this effect. |
 | `CapacityExceeded` | `LedActionSink::kMaxBindings` (8) bindings exist. |
 
+### Fill effects
+
+`LedActionSink::bind(ActionId, FillEffect)` binds an action to a
+level-capable fill (#29). A `FillEffect` names a configured `LedZone` (start,
+length and fill direction; see `local_argb/lighting_zone.hpp`) and a colour.
+The zone lights in proportion to the action's level, growing from its fill
+direction: `StartToEnd`, `EndToStart` or `CenterOut`. One action may drive
+several zones, and one action may drive both a fill and on/off effects.
+`bind()` returns the same statuses as above. `DuplicateBinding` means the same
+action already drives the same zone (in any colour), and `CapacityExceeded`
+means `LedActionSink::kMaxFillBindings` (8) fill bindings exist.
+
+The adapter does not validate the zone. The renderer draws nothing for an
+empty, out-of-range or unknown-direction zone and caps each colour channel at
+its brightness ceiling.
+
 Bind every action before the engine attaches. `LedEffect` names strip
 regions, not vehicle sides: the WeAct strip is mounted mirrored, so the
 firmware binds the vehicle's left turn to `RightTurn`, as the legacy binding
@@ -39,11 +55,24 @@ did.
 
 ## Commands
 
-- `Activate` and `Deactivate` set the level of every binding of the action.
-  Each one publishes the full effect state, not a delta.
-- `Trigger` and `SetLevel` are ignored. LED effects are on/off levels, and
-  the renderer has no progress effect yet.
+- `Activate` and `Deactivate` set the level of every binding of the action:
+  on/off effects light or clear, fills become full or empty. Each command
+  publishes the full effect state, not a delta.
+- `SetLevel` sets the level of the action's fills and leaves its on/off
+  effects unchanged. Levels are normalized to 0.0..1.0:
+  - a level at or below 0.0, and NaN, is empty (fail-off);
+  - a level at or above 1.0, including +infinity, is full;
+  - a level in between is rounded to the nearest 1/65536.
+- `Trigger` is ignored. It carries no level.
 - Commands for unbound actions are ignored and publish nothing.
+
+A command lists every non-empty fill in binding order, up to
+`LightingFills::kCapacity` (8). The renderer draws the fills first and then
+brake and the turn animation on top, so a fixed effect wins wherever it
+overlaps a fill. A command with fills does not paint the generic
+compatibility colour. The fill list makes `LightingCommand` larger, and the
+renderer queue still copies it by value; a `static_assert` keeps it trivially
+copyable.
 
 The engine's explicit initial `Deactivate` therefore publishes a black
 baseline on each provider start.
@@ -59,8 +88,8 @@ retried, and the engine never resends a deduplicated level, so a rejected
 
 Engine levels carry no deadline and are deduplicated, so the adapter publishes
 every lit command as *held*: `valid_until_us` is the maximum timestamp and the
-renderer keeps animating until a later command turns the effect off. An
-all-off command is non-actionable and renders black.
+renderer keeps animating until a later command turns the effect off. A
+command with no lit effect and no fill is non-actionable and renders black.
 
 Loss of data fails off through the engine, not through a renderer deadline:
 
@@ -98,13 +127,21 @@ level change. This is fail-safe but visible.
 
 - `tests/host/local_led_action_sink_tests.cpp` covers bindings, OR-ed effects,
   the explicit black baseline, ignored Trigger/SetLevel/unbound commands, a
-  rejected publish, and the binding errors.
+  rejected publish, and the binding errors. For fills it covers levels 0,
+  0.25, 0.5 and 1.0, clamping of out-of-range and infinite levels, NaN
+  fail-off, Deactivate, Activate, Trigger, fills published together with
+  on/off effects, and the fill binding errors.
+- `components/local_argb/tests/rendering_tests.cpp` covers a fill under the
+  brightness ceiling, the generic colour without fills, and the bounded fill
+  list.
 - `tests/host/local_led_action_composition_tests.cpp` runs a make-independent
   fake provider, the engine, the adapter and the production
   `RendererController` into a fake `PixelFrameSink`. It shows left, right and
   hazard turn states rendered as pixels, a held effect with no deadline, and
   black for off, NoData, Stale, Unavailable and rejected unverified readings,
-  plus recovery and the latched write fault.
+  plus recovery and the latched write fault. It also renders a fill in every
+  direction at levels 0, 0.25, 0.5 and 1.0, and drives one from an engine
+  range rule on a generic numeric signal, which fails off on Stale data.
 - `architecture_contracts` restricts the adapter to the engine action port,
   the renderer sink contract, core time values and standard headers. It
   rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,

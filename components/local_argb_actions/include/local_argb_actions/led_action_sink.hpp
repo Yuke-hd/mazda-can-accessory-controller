@@ -5,6 +5,7 @@
 #include "action_engine/action.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb_actions/effect_bindings.hpp"
+#include "local_argb_actions/fill_bindings.hpp"
 
 namespace local_argb_actions {
 
@@ -23,9 +24,11 @@ namespace local_argb_actions {
 // it does either. See docs/development/local-led-actions.md.
 //
 // Every command for a bound action publishes the full effect state, so the
-// engine's explicit initial Deactivate sets a black baseline. LED effects are
-// on/off levels, so Trigger and SetLevel are ignored, as are commands for
-// unbound actions.
+// engine's explicit initial Deactivate sets a black baseline. On/off effects
+// follow Activate and Deactivate and ignore SetLevel. Fill effects take
+// SetLevel as a fill level (see fill_level()); Activate fills the zone and
+// Deactivate empties it. Trigger carries no level and is ignored, as are
+// commands for unbound actions.
 //
 // Precondition: while the engine is attached, this adapter is the lighting
 // sink's only publisher and the sink accepts every publish, so start the
@@ -38,6 +41,7 @@ namespace local_argb_actions {
 class LedActionSink final : public action_engine::ActionSink {
 public:
   static constexpr std::size_t kMaxBindings = EffectBindings::kCapacity;
+  static constexpr std::size_t kMaxFillBindings = FillBindings::kCapacity;
 
   explicit LedActionSink(local_argb::internal::LightingSink &lighting) noexcept
       : lighting_(&lighting) {}
@@ -51,12 +55,17 @@ public:
   [[nodiscard]] BindingStatus bind(action_engine::ActionId action, LedEffect effect) noexcept {
     return bindings_.bind(action, effect);
   }
+  [[nodiscard]] BindingStatus bind(action_engine::ActionId action,
+                                   const FillEffect &effect) noexcept {
+    return fills_.bind(action, effect);
+  }
 
   void execute(const action_engine::ActionCommand &command) noexcept override;
 
 private:
   local_argb::internal::LightingSink *lighting_;
   EffectBindings bindings_{};
+  FillBindings fills_{};
 };
 
 } // namespace local_argb_actions
