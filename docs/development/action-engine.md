@@ -184,5 +184,5 @@ A `RangeRuleConfig` is `{signal_key, input, output, action, freshness}`, where
   TWAI, `can_bus` or FreeRTOS names. `public_header_boundary` compiles each
   engine header in isolation and forbids any Mazda or output-adapter header.
 
-Out of scope: firmware wiring and the local LED sink (#11), and WLED
-transport (#12).
+The local LED sink is documented in [local-led-actions.md](local-led-actions.md).
+Out of scope: firmware wiring (#11) and WLED transport (#12).

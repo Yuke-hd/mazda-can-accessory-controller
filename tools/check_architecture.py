@@ -836,6 +836,60 @@ def _check_generic_consumer(root: Path) -> None:
     print("OK   generic signal consumer uses only the public provider and vehicle_signals headers")
 
 
+LED_ACTIONS_COMPONENT = Path("components/local_argb_actions")
+# The adapter sees the engine's output port, the renderer's private handoff and
+# its own headers; never a provider, a vehicle make, CAN or the RTOS.
+_LED_ACTIONS_ALLOWED_INCLUDE = re.compile(
+    r"action_engine/action\.hpp|local_argb/lighting_sink\.hpp|local_argb_actions/[\w/]+\.hpp"
+)
+_LED_ACTIONS_ALLOWED_LINKS = frozenset(
+    ("PUBLIC", "PRIVATE", "INTERFACE", "action_engine", "local_argb_sink_contract")
+)
+_LED_ACTIONS_FORBIDDEN_NAMES = re.compile(r"mazda|twai|can_bus|freertos|wled", re.IGNORECASE)
+
+
+def _check_led_action_adapter(root: Path) -> None:
+    """Keep the local LED action sink a pure engine-to-renderer adapter."""
+
+    component = root / LED_ACTIONS_COMPONENT
+    violations: List[str] = []
+    sources = sorted(
+        path for path in component.rglob("*") if path.suffix in _CPP_SUFFIXES and path.is_file()
+    )
+    if not sources:
+        violations.append(f"local LED action adapter sources are missing: {LED_ACTIONS_COMPONENT}")
+    for path in sources:
+        relative = path.relative_to(root).as_posix()
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        for delimiter, name in re.findall(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', code, re.M):
+            # Angle includes are limited to standard headers, which have no
+            # directory component.
+            allowed = (
+                "/" not in name
+                if delimiter == "<"
+                else _LED_ACTIONS_ALLOWED_INCLUDE.fullmatch(name) is not None
+            )
+            if not allowed:
+                violations.append(f"{relative} includes forbidden header {name}")
+        body = re.sub(r'^\s*#\s*include[^\n]*', "", code, flags=re.M)
+        for name in sorted(set(m.lower() for m in _LED_ACTIONS_FORBIDDEN_NAMES.findall(body))):
+            violations.append(f"{relative} uses forbidden name {name}")
+    cmake = component / "CMakeLists.txt"
+    cmake_code = re.sub(r"#.*", "", cmake.read_text(encoding="utf-8")) if cmake.is_file() else ""
+    for match in re.finditer(
+        r"target_link_libraries\s*\(\s*local_argb_actions\b([^)]*)\)", cmake_code
+    ):
+        for item in match.group(1).split():
+            if item not in _LED_ACTIONS_ALLOWED_LINKS:
+                violations.append(f"local_argb_actions links forbidden target {item}")
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   local LED action adapter uses only the engine action port and the renderer "
+        "sink contract"
+    )
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -1006,6 +1060,7 @@ def check(
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
             _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
+            _check_led_action_adapter(root)
             _check_adapter(
                 root,
                 cmake,
