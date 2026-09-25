@@ -18,6 +18,7 @@
 #include "mazda/internal_contracts.hpp"
 #include "mazda/publication_store.hpp"
 #include "mazda/signal_catalog.hpp"
+#include "mazda/signal_subscription_record.hpp"
 #include "vehicle_core/notification_channel.hpp"
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
@@ -317,7 +318,23 @@ public:
   [[nodiscard]] SubscriptionToken subscribe_front_wiper(Callback<FrontWiperPosition> callback,
                                                         void *context) noexcept;
 
+  // Typed unsubscribe. It removes only typed registrations; a token that
+  // matches a generic registration is InvalidSubscription.
   [[nodiscard]] StatusResult unsubscribe(const SubscriptionToken &token) noexcept;
+
+  // Generic (vehicle_signals) subscriptions on the same typed channels and
+  // shared per-channel capacity. The service owns the trampoline records, so
+  // a registration and its record share the service lifetime exactly like a
+  // typed callback. Both calls are stopped-only lifecycle-owner mutations
+  // with the same rejection rules as the typed calls. Record allocation, fill,
+  // channel registration and rollback all happen inside one critical section.
+  template <typename T, std::uint16_t ChannelId>
+  [[nodiscard]] SubscriptionToken
+  subscribe_generic_descriptor(const NotificationDescriptor<T, ChannelId> &descriptor,
+                               vehicle_signals::SignalCallback callback, void *context) noexcept;
+  // Removes only a live generic registration whose token matches exactly; a
+  // typed registration's token is InvalidSubscription.
+  [[nodiscard]] StatusResult unsubscribe_generic(const SubscriptionToken &token) noexcept;
 
   // vehicle_telemetry owns receive, lifecycle and transport diagnostics. The
   // Mazda adapter only decodes frames and publishes Mazda-specific state.
@@ -335,6 +352,8 @@ private:
     std::uint8_t slot{0xffU};
     std::uint16_t generation{0};
     bool active{false};
+    // Owned by a generic trampoline record rather than a typed caller.
+    bool generic{false};
   };
 
   [[nodiscard]] static bool valid_config(const TelemetryConfig &config) noexcept;
@@ -363,7 +382,9 @@ private:
   template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] SubscriptionToken
   register_subscription(vehicle_core::NotificationChannel<T, ChannelId> &channel,
-                        Callback<T> callback, void *context) noexcept;
+                        Callback<T> callback, void *context, bool generic = false) noexcept;
+  // Must be called while lifecycle_mutex_ is held, after the lifecycle checks.
+  [[nodiscard]] StatusResult unsubscribe_registration(Registration &registration) noexcept;
 
   [[nodiscard]] bool start_channels() noexcept;
   [[nodiscard]] bool stop_channels() noexcept;
@@ -427,6 +448,7 @@ private:
   TestFrontWiperNotificationChannel test_front_wiper_channel_{};
 #endif
   std::array<Registration, kSubscriptionCapacity> registrations_{};
+  std::array<SignalSubscriptionRecord, kGenericSubscriptionCapacity> generic_records_{};
 
   mutable std::mutex lifecycle_mutex_{};
   // The first lifecycle mutation establishes the owner. That owner remains
@@ -460,8 +482,8 @@ private:
 
 template <typename T, std::uint16_t ChannelId>
 SubscriptionToken VehicleTelemetryService::register_subscription(
-    vehicle_core::NotificationChannel<T, ChannelId> &channel, Callback<T> callback,
-    void *context) noexcept {
+    vehicle_core::NotificationChannel<T, ChannelId> &channel, Callback<T> callback, void *context,
+    const bool generic) noexcept {
   Registration *registration = free_registration(ChannelId);
   if (registration == nullptr)
     return {ResultCode::CapacityExceeded, ChannelId, 0xffU, 0};
@@ -471,6 +493,7 @@ SubscriptionToken VehicleTelemetryService::register_subscription(
     return {map_notification_status(result.status), ChannelId, registration->slot, 0};
 
   registration->active = true;
+  registration->generic = generic;
   ++registration->generation;
   if (registration->generation == 0)
     registration->generation = 1;
@@ -504,6 +527,52 @@ SubscriptionToken VehicleTelemetryService::subscribe_notification_descriptor(
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
   return register_subscription(this->*descriptor.channel, callback, context);
+}
+
+template <typename T, std::uint16_t ChannelId>
+SubscriptionToken VehicleTelemetryService::subscribe_generic_descriptor(
+    const NotificationDescriptor<T, ChannelId> &descriptor,
+    const vehicle_signals::SignalCallback callback, void *const context) noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
+  std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
+  if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
+    return {ResultCode::InvalidState, 0xffffU, 0xffU, 0};
+  // Callers validate the catalog id and callback first; this only guards the
+  // record invariants.
+  if (callback == nullptr || !descriptor.id.valid())
+    return {ResultCode::InvalidState, ChannelId, 0xffU, 0};
+
+  SignalSubscriptionRecord *record = nullptr;
+  for (auto &candidate : generic_records_) {
+    if (!candidate.active) {
+      record = &candidate;
+      break;
+    }
+  }
+  // Every active record holds one shared typed slot, so no free record means
+  // every generic-capable channel is already full.
+  if (record == nullptr)
+    return {ResultCode::CapacityExceeded, ChannelId, 0xffU, 0};
+
+  // Fill before registering: the channel dispatches to the record from the
+  // next start() after a successful registration.
+  record->id = descriptor.id;
+  record->callback = callback;
+  record->context = context;
+  const auto token = register_subscription(this->*descriptor.channel,
+                                           &signal_subscription_trampoline<T>, record, true);
+  if (!token.ok()) {
+    *record = {};
+    return token;
+  }
+  record->channel = token.channel;
+  record->slot = token.slot;
+  record->generation = token.generation;
+  record->active = true;
+  return token;
 }
 
 } // namespace mazda::internal

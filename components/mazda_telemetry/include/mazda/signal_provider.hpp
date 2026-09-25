@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstddef>
-
 #include "vehicle_signals/signal_catalog.hpp"
 #include "vehicle_signals/signal_contracts.hpp"
 
@@ -14,29 +12,28 @@ class VehicleTelemetry;
 // readings/notifications; Mazda state, CAN identifiers, enums, notification
 // channels and descriptors stay implementation-only.
 //
-// The provider does not own the facade, and the facade must outlive the
-// provider. Generic registrations stay on the facade's typed channels across
-// stop/start and point into this provider, so destruction releases every
-// registration the provider still holds: destroy the provider only while the
-// facade is stopped, on the facade's lifecycle-owner context and never from a
-// callback. The provider shares the facade's lifecycle owner:
-// subscribe() and unsubscribe() are lifecycle mutations of that facade, must
-// run on the facade's lifecycle-owner host thread or ESP-IDF task, and are
-// accepted only while the facade is stopped; otherwise they fail with
+// The provider is a stateless, non-owning view: the facade must outlive it,
+// and destroying the provider is safe at any time, including while the facade
+// is running. Generic registrations belong to the facade exactly like typed
+// ones: they share the facade's fixed per-channel subscriber capacity and are
+// released by unsubscribe() or by destroying the facade, never by destroying
+// the provider. Subscription tokens are facade-scoped, so any provider over
+// the same facade may unsubscribe a token another one issued.
+//
+// subscribe() and unsubscribe() are lifecycle mutations of the facade: they
+// must run on the facade's lifecycle-owner host thread or ESP-IDF task and
+// are accepted only while the facade is stopped; otherwise they fail with
 // SignalStatus::InvalidState. read() and catalog() are safe from any context.
 //
 // Callbacks receive value-only SignalNotification copies on the facade's
-// dispatcher context. The callback context pointer and any pointed-to storage
-// are borrowed until the facade's stop() returns successfully; after a failed
-// or timed-out stop, callbacks can still be active. A callback must not start,
-// stop, subscribe or unsubscribe on the facade or this provider. Generic and
-// typed subscribers share the facade's fixed per-channel subscriber capacity.
+// dispatcher context. As with the typed API, the callback context pointer and
+// any pointed-to storage are borrowed until unsubscribe() succeeds, a facade
+// stop() returns successfully, or the facade is destroyed; after a failed or
+// timed-out stop, callbacks can still be active. A callback must not start,
+// stop, subscribe or unsubscribe on the facade or any provider over it.
 class MazdaSignalProvider final {
 public:
   explicit MazdaSignalProvider(VehicleTelemetry &telemetry) noexcept;
-  // Unsubscribes every generic subscription still held (see the lifetime
-  // rules above). Bounded and allocation-free.
-  ~MazdaSignalProvider() noexcept;
 
   MazdaSignalProvider(const MazdaSignalProvider &) = delete;
   MazdaSignalProvider &operator=(const MazdaSignalProvider &) = delete;
@@ -61,13 +58,6 @@ public:
 
 private:
   VehicleTelemetry *telemetry_{nullptr};
-
-  // Fixed opaque storage for the notification bridge's callback trampoline
-  // records (one per typed notification subscriber slot). The implementation
-  // owns it with placement construction and checks its record array fits, so
-  // this header stays value-only and subscribing performs no heap allocation.
-  static constexpr std::size_t kSubscriptionStorageBytes = 2048;
-  alignas(std::max_align_t) std::byte subscription_storage_[kSubscriptionStorageBytes]{};
 };
 
 } // namespace mazda

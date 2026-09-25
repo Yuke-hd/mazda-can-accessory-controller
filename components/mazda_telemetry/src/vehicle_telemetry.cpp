@@ -1064,14 +1064,46 @@ StatusResult VehicleTelemetryService::unsubscribe(const SubscriptionToken &token
   if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
     return {ResultCode::InvalidState};
   Registration *registration = find_registration(token);
-  if (registration == nullptr)
+  // A generic registration belongs to its trampoline record and is removed
+  // only through unsubscribe_generic().
+  if (registration == nullptr || registration->generic)
     return {ResultCode::InvalidSubscription};
+  return unsubscribe_registration(*registration);
+}
 
+StatusResult VehicleTelemetryService::unsubscribe_generic(const SubscriptionToken &token) noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState};
+  std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+  if (!claim_or_validate_lifecycle_owner())
+    return {ResultCode::InvalidState};
+  if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Stopped)
+    return {ResultCode::InvalidState};
+  SignalSubscriptionRecord *record = nullptr;
+  for (auto &candidate : generic_records_) {
+    if (candidate.active && candidate.channel == token.channel && candidate.slot == token.slot &&
+        candidate.generation == token.generation) {
+      record = &candidate;
+      break;
+    }
+  }
+  Registration *registration = record == nullptr ? nullptr : find_registration(token);
+  if (registration == nullptr || !registration->generic)
+    return {ResultCode::InvalidSubscription};
+  const auto result = unsubscribe_registration(*registration);
+  // The record is released only once its channel can no longer dispatch to it.
+  if (result.ok())
+    *record = {};
+  return result;
+}
+
+StatusResult
+VehicleTelemetryService::unsubscribe_registration(Registration &registration) noexcept {
   vehicle_core::NotificationStatus status = vehicle_core::NotificationStatus::InvalidSubscription;
   std::apply(
-      [this, &token, &status, &registration](const auto &...descriptor) {
-        (((token.channel == std::decay_t<decltype(descriptor)>::Channel::channel_id())
-              ? status = (this->*descriptor.channel).unsubscribe(registration->handle)
+      [this, &status, &registration](const auto &...descriptor) {
+        (((registration.channel == std::decay_t<decltype(descriptor)>::Channel::channel_id())
+              ? status = (this->*descriptor.channel).unsubscribe(registration.handle)
               : status),
          ...);
       },
@@ -1080,7 +1112,8 @@ StatusResult VehicleTelemetryService::unsubscribe(const SubscriptionToken &token
     return {ResultCode::InvalidSubscription};
   if (status != vehicle_core::NotificationStatus::Ok)
     return {map_notification_status(status)};
-  registration->active = false;
+  registration.active = false;
+  registration.generic = false;
   return {ResultCode::Ok};
 }
 

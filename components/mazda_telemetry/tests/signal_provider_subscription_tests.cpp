@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -89,6 +90,8 @@ struct Recorder final {
   mutable std::condition_variable changed{};
   std::array<SignalNotification, 256> notices{};
   std::size_t count{0};
+  // Every delivery, including those beyond the fixed log.
+  std::size_t delivered{0};
   std::size_t context_mismatches{0};
   std::optional<SignalValue> block_on{};
   bool entered_block{false};
@@ -98,6 +101,11 @@ struct Recorder final {
   [[nodiscard]] std::size_t size() const {
     std::lock_guard<std::mutex> lock{mutex};
     return count;
+  }
+
+  [[nodiscard]] std::size_t total() const {
+    std::lock_guard<std::mutex> lock{mutex};
+    return delivered;
   }
 
   [[nodiscard]] std::size_t count_for(const SignalId id) const {
@@ -157,6 +165,7 @@ void record_notice(void *context, const SignalNotification &notice) noexcept {
   recorder.active_callbacks.fetch_add(1, std::memory_order_acq_rel);
   {
     std::unique_lock<std::mutex> lock{recorder.mutex};
+    ++recorder.delivered;
     if (notice.id != tagged.expected)
       ++recorder.context_mismatches;
     if (recorder.count < recorder.notices.size())
@@ -660,56 +669,157 @@ void test_callback_originated_mutations_are_rejected() {
   EXPECT(harness.provider.unsubscribe(probe.own).ok());
 }
 
-void test_provider_destruction_releases_generic_registrations() {
+// Keeps injecting alternating Left/Right TURN_SWITCH frames until stopped, so
+// the dispatcher is actively delivering while a test destroys objects.
+class TurnFeeder final {
+public:
+  TurnFeeder(FakeClock &clock, mazda::internal::HostAcquisitionSource &source)
+      : clock_(clock), source_(source), thread_([this] { run(); }) {}
+  ~TurnFeeder() { stop(); }
+  TurnFeeder(const TurnFeeder &) = delete;
+  TurnFeeder &operator=(const TurnFeeder &) = delete;
+
+  void stop() {
+    stop_.store(true, std::memory_order_release);
+    if (thread_.joinable())
+      thread_.join();
+  }
+
+private:
+  void run() {
+    vehicle_core::MonotonicTimestamp timestamp_us = 1'000;
+    bool left = true;
+    while (!stop_.load(std::memory_order_acquire)) {
+      clock_.set(timestamp_us);
+      const auto request = static_cast<std::uint8_t>(left ? 0x20U : 0x10U);
+      (void)source_.inject(
+          frame(mazda::candidate::kTurnSwitchId, timestamp_us, {0, request, 0, 0, 0, 0, 0, 0}));
+      ++timestamp_us;
+      left = !left;
+      std::this_thread::sleep_for(std::chrono::microseconds{500});
+    }
+  }
+
+  FakeClock &clock_;
+  mazda::internal::HostAcquisitionSource &source_;
+  std::atomic<bool> stop_{false};
+  std::thread thread_;
+};
+
+void test_provider_reset_while_running_keeps_facade_registration() {
+  Recorder recorder{};
+  Tagged context{&recorder, ids::kTurnState};
+  Harness harness{};
+  auto provider = std::make_unique<mazda::MazdaSignalProvider>(harness.telemetry);
+  const auto subscription = provider->subscribe(ids::kTurnState, &record_notice, &context);
+  EXPECT(subscription.ok());
+  EXPECT(harness.telemetry.start().ok());
+  {
+    TurnFeeder feeder{harness.clock, harness.source};
+    EXPECT(wait_for_flag([&] { return recorder.total() >= 5; }));
+    // The provider is only a view: destroying it mid-stream leaves the
+    // facade-owned registration and record in place.
+    provider.reset();
+    const auto after_reset = recorder.total();
+    EXPECT(wait_for_flag([&] { return recorder.total() >= after_reset + 5; }));
+  }
+  EXPECT(harness.telemetry.stop().ok());
+  {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    EXPECT(recorder.context_mismatches == 0);
+  }
+
+  // Tokens are facade-scoped: another provider over the same facade releases
+  // the registration and frees its slot.
+  mazda::MazdaSignalProvider second{harness.telemetry};
+  EXPECT(second.unsubscribe(*subscription.value).ok());
+  EXPECT(second.unsubscribe(*subscription.value).status == SignalStatus::InvalidSubscription);
+  const auto first_slot = second.subscribe(ids::kTurnState, &record_notice, &context);
+  const auto second_slot = second.subscribe(ids::kTurnState, &record_notice, &context);
+  EXPECT(first_slot.ok() && second_slot.ok());
+  EXPECT(second.unsubscribe(*first_slot.value).ok());
+  EXPECT(second.unsubscribe(*second_slot.value).ok());
+}
+
+struct App final {
+  mazda::VehicleTelemetry telemetry{};
+  mazda::MazdaSignalProvider provider{telemetry};
+};
+
+void test_app_destroyed_while_running_quiesces_generic_callbacks() {
+  Recorder recorder{};
+  Tagged context{&recorder, ids::kTurnState};
+  FakeClock clock{};
+  mazda::internal::HostAcquisitionSource source{};
+  mazda::internal::NullLightingSink lighting{};
+  auto app = std::make_unique<App>();
+  mazda::internal::VehicleTelemetryAccess::emplace_host_service(app->telemetry, clock, source,
+                                                                lighting, Harness::test_config());
+  EXPECT(app->provider.subscribe(ids::kTurnState, &record_notice, &context).ok());
+  EXPECT(app->telemetry.start().ok());
+
+  TurnFeeder feeder{clock, source};
+  EXPECT(wait_for_flag([&] { return recorder.total() >= 5; }));
+  // Members are destroyed in reverse order: the provider first while the
+  // facade is still running, then the facade stops and joins its dispatcher.
+  app.reset();
+  const auto delivered = recorder.total();
+  EXPECT(recorder.active_callbacks.load(std::memory_order_acquire) == 0);
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  feeder.stop();
+  EXPECT(recorder.total() == delivered);
+  EXPECT(recorder.active_callbacks.load(std::memory_order_acquire) == 0);
+}
+
+void test_generic_and_typed_tokens_are_not_interchangeable() {
   Recorder recorder{};
   Tagged context{&recorder, ids::kTurnState};
   TypedTurnRecorder typed{};
-  TypedTurnRecorder replacement{};
   Harness harness{};
-  auto &telemetry = harness.telemetry;
-  const auto typed_subscription = telemetry.on_turn_state_changed(&record_typed_turn, &typed);
-  EXPECT(typed_subscription.ok());
+  auto &service = mazda::internal::VehicleTelemetryAccess::service(harness.telemetry);
+  const auto typed_subscription =
+      harness.telemetry.on_turn_state_changed(&record_typed_turn, &typed);
+  const auto generic = harness.provider.subscribe(ids::kTurnState, &record_notice, &context);
+  EXPECT(typed_subscription.ok() && generic.ok());
 
-  {
-    mazda::MazdaSignalProvider scoped{telemetry};
-    const auto generic = scoped.subscribe(ids::kTurnState, &record_notice, &context);
-    EXPECT(generic.ok());
-    EXPECT(telemetry.on_turn_state_changed(&record_typed_turn, &replacement).status ==
-           mazda::ResultCode::CapacityExceeded);
-    EXPECT(telemetry.start().ok());
-    EXPECT(harness.inject(mazda::candidate::kTurnSwitchId, 10, {0, 0x20, 0, 0, 0, 0, 0, 0}));
-    EXPECT(wait_for_flag([&] {
-      return typed_latest(typed) == mazda::TurnState::Left &&
-             recorder.latest_value_is(ids::kTurnState, enum_value(mazda::TurnState::Left));
-    }));
-    EXPECT(telemetry.stop().ok());
-    // The provider ends with its generic registration still live; its
-    // destructor must release the typed slot that points into its storage.
-  }
-  const auto delivered = recorder.size();
-  const auto typed_before_restart = typed_count(typed);
+  // The generic token carries the typed channel/slot/generation fields.
+  const auto bits = generic.value->provider_bits();
+  const auto channel = static_cast<std::uint16_t>(bits >> 32U);
+  const auto generic_slot = static_cast<std::uint8_t>((bits >> 16U) & 0xffU);
+  const auto generation = static_cast<std::uint16_t>(bits & 0xffffU);
+  EXPECT(channel == mazda::internal::kTurnNotificationChannel);
+  EXPECT(generic_slot <= 1U && generation == 1U);
+  const mazda::internal::SubscriptionToken generic_token{mazda::ResultCode::Ok, channel,
+                                                         generic_slot, generation};
+  // On this fresh service the typed registration holds the other slot with
+  // its first generation.
+  const auto typed_slot = static_cast<std::uint8_t>(1U - generic_slot);
+  const mazda::internal::SubscriptionToken typed_token{mazda::ResultCode::Ok, channel, typed_slot,
+                                                       1U};
 
-  // The freed slot is available again: the channel holds exactly the
-  // surviving typed subscriber plus the new one.
-  const auto replacement_subscription =
-      telemetry.on_turn_state_changed(&record_typed_turn, &replacement);
-  EXPECT(replacement_subscription.ok());
-  EXPECT(telemetry.on_turn_state_changed(&record_typed_turn, &replacement).status ==
-         mazda::ResultCode::CapacityExceeded);
+  // A typed unsubscribe cannot remove the generic registration, and a
+  // generic unsubscribe (service or provider) cannot remove the typed one.
+  EXPECT(service.unsubscribe(generic_token).status == mazda::ResultCode::InvalidSubscription);
+  EXPECT(service.unsubscribe_generic(typed_token).status == mazda::ResultCode::InvalidSubscription);
+  EXPECT(harness.provider
+             .unsubscribe(SignalSubscription::from_provider_bits(
+                 (std::uint64_t{channel} << 32U) | (std::uint64_t{typed_slot} << 16U) | 1U))
+             .status == SignalStatus::InvalidSubscription);
 
-  // A restart delivers only to the typed subscribers; nothing reaches the
-  // destroyed provider's trampoline records or the generic callback.
-  EXPECT(telemetry.start().ok());
-  EXPECT(harness.inject(mazda::candidate::kTurnSwitchId, 20, {0, 0x10, 0, 0, 0, 0, 0, 0}));
-  EXPECT(wait_for_flag([&] {
-    return typed_latest(typed) == mazda::TurnState::Right &&
-           typed_latest(replacement) == mazda::TurnState::Right;
-  }));
-  EXPECT(telemetry.stop().ok());
-  EXPECT(typed_count(typed) > typed_before_restart);
-  EXPECT(recorder.size() == delivered);
-  EXPECT(telemetry.unsubscribe(*replacement_subscription.value).ok());
-  EXPECT(telemetry.unsubscribe(*typed_subscription.value).ok());
+  // Both registrations are intact and both still deliver.
+  EXPECT(harness.provider.subscribe(ids::kTurnState, &record_notice, &context).status ==
+         SignalStatus::CapacityExceeded);
+  EXPECT(harness.telemetry.start().ok());
+  EXPECT(wait_for_flag([&] { return typed_count(typed) >= 1 && recorder.total() >= 1; }));
+  EXPECT(harness.telemetry.stop().ok());
+
+  // Each kind is still removed through its own path; the typed token above
+  // was the typed registration's exact token.
+  EXPECT(service.unsubscribe_generic(generic_token).ok());
+  EXPECT(service.unsubscribe(typed_token).ok());
+  EXPECT(harness.telemetry.unsubscribe(*typed_subscription.value).status ==
+         mazda::ResultCode::InvalidSubscription);
+  EXPECT(harness.provider.unsubscribe(*generic.value).status == SignalStatus::InvalidSubscription);
 }
 
 } // namespace
@@ -723,6 +833,8 @@ int main() {
   test_coalesced_unavailable_and_recovered_notices();
   test_callback_context_is_borrowed_until_successful_stop();
   test_callback_originated_mutations_are_rejected();
-  test_provider_destruction_releases_generic_registrations();
+  test_provider_reset_while_running_keeps_facade_registration();
+  test_app_destroyed_while_running_quiesces_generic_callbacks();
+  test_generic_and_typed_tokens_are_not_interchangeable();
   return failures == 0 ? 0 : 1;
 }
