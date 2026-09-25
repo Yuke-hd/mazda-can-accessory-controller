@@ -336,6 +336,59 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
             "vehicle application does not require the local_argb_actions component"
         )
 
+    def test_missing_rpm_level_fill_apply_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "controller_config::apply(kRpmLevelFill, led_actions, engine)",
+            "controller_config::RpmLevelFillStatus{}",
+        )
+        self.assert_rejected(
+            "vehicle integration must call "
+            "controller_config::apply(kRpmLevelFill,led_actions,engine)) exactly 1 time(s)"
+        )
+
+    def test_direct_range_rule_in_main_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_range_rule(controller_config::range_rule(kRpmLevelFill));\n"
+            "  return true;\n}\n} // namespace",
+        )
+        self.assert_rejected("vehicle integration must call engine.add_range_rule() exactly 0 time(s)")
+
+    def test_missing_polled_sampling_is_rejected(self) -> None:
+        self.edit(MAIN, "    (void)engine.sample_polled_rules();\n", "")
+        self.assert_rejected("the runtime loop after telemetry startup does not call")
+
+    def test_commented_out_polled_sampling_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "    (void)engine.sample_polled_rules();\n",
+            "    // (void)engine.sample_polled_rules();\n",
+        )
+        self.assert_rejected("the runtime loop after telemetry startup does not call")
+
+    def test_polled_sampling_outside_the_runtime_loop_is_rejected(self) -> None:
+        self.edit(MAIN, "    (void)engine.sample_polled_rules();\n", "")
+        self.edit(
+            MAIN,
+            "  for (;;) {\n",
+            "  (void)engine.sample_polled_rules();\n  for (;;) {\n",
+        )
+        self.assert_rejected("the runtime loop after telemetry startup does not call")
+
+    def test_missing_controller_config_project_component_is_rejected(self) -> None:
+        self.edit(
+            PROJECT_CMAKE, '    "${CMAKE_CURRENT_LIST_DIR}/../../components/controller_config"\n', ""
+        )
+        self.assert_rejected(
+            "vehicle project does not select the components/controller_config component"
+        )
+
+    def test_missing_controller_config_requirement_is_rejected(self) -> None:
+        self.edit(MAIN_CMAKE, " controller_config", "")
+        self.assert_rejected("vehicle application does not require the controller_config component")
+
 
 if __name__ == "__main__":
     unittest.main()
