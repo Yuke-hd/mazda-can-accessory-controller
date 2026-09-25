@@ -19,8 +19,9 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 - `MazdaSignalProvider` exposes the Mazda-owned 18-row catalog. Reads use the
   same coherent publication as the typed polling API. Subscriptions share the
   typed notification channels and their two-slot capacity. Subscriptions are
-  stopped-only mutations on the facade's lifecycle owner, and a provider must
-  be destroyed only while its facade is stopped.
+  stopped-only mutations on the facade's lifecycle owner. The facade owns
+  every registration, typed or generic, so the provider is a stateless view
+  that is safe to destroy at any time, including while the facade runs.
 - The typed `mazda::VehicleTelemetry` API and local ARGB behavior are
   unchanged.
 

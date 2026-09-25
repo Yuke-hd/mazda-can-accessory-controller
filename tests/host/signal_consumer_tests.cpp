@@ -101,7 +101,8 @@ bool wait_for(Predicate predicate,
 
 // The facade runs the production runtime, Mazda decoder and publication path
 // over the injected seams. The destructor stops the facade before the
-// consumer (its callback context) and the provider are destroyed.
+// consumer, which is a borrowed callback context, is destroyed. The provider
+// is a stateless view and needs no stopped facade.
 struct Harness final {
   explicit Harness(const mazda::TelemetryConfig &config = test_config()) noexcept {
     mazda::internal::VehicleTelemetryAccess::emplace_host_service(telemetry, clock, source,

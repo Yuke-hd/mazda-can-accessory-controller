@@ -29,8 +29,10 @@ inline constexpr std::string_view kTurnStateKey{"vehicle.turn_state"};
 
 // Resolves engine RPM for reads and subscribes to turn state. attach() and
 // detach() are provider subscription mutations: call them on the facade's
-// lifecycle owner while it is stopped. The consumer is the callback context,
-// so it must outlive a successful facade stop.
+// lifecycle owner while it is stopped. The facade owns the registration and
+// the consumer is its callback context: keep the consumer alive until a
+// successful facade stop, and detach() before destroying it unless the facade
+// is destroyed first.
 class GenericSignalConsumer final {
 public:
   explicit GenericSignalConsumer(mazda::MazdaSignalProvider &provider) noexcept;
