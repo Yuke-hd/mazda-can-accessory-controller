@@ -317,9 +317,12 @@ VEHICLE_SIGNALS_HEADERS = (
 )
 ACTION_ENGINE_HEADERS = (
     "action_engine/action.hpp",
+    "action_engine/actionability.hpp",
     "action_engine/condition.hpp",
     "action_engine/config_status.hpp",
     "action_engine/engine.hpp",
+    "action_engine/range_rule.hpp",
+    "action_engine/range_rule_set.hpp",
     "action_engine/rule_config.hpp",
     "action_engine/rule_set.hpp",
     "action_engine/rules.hpp",
@@ -364,18 +367,24 @@ _VEHICLE_SIGNALS_PROBE_BODY = (
     "}\n"
 )
 
-# Drives one state rule through a probe-local provider and sink, so the probe
-# links and runs the engine's compiled sources.
+# Drives one state rule and one range rule through a probe-local provider and
+# sink, so the probe links and runs the engine's compiled sources.
 _ACTION_ENGINE_PROBE_BODY = (
     "namespace {\n"
     "using namespace vehicle_signals;\n"
     "constexpr SignalMetadata kProbeCatalog[] = {\n"
     "    {SignalId{1}, \"probe.flag\", SignalType::Boolean, SignalUnit::None,\n"
     "     ValidationStatus::Reference, SignalCapability::Read | SignalCapability::Notify},\n"
+    "    {SignalId{2}, \"probe.number\", SignalType::Number, SignalUnit::None,\n"
+    "     ValidationStatus::Reference, SignalCapability::Read},\n"
     "};\n"
     "class ProbeProvider final : public SignalProvider {\n"
     "public:\n"
     "  SignalCatalogView catalog() const noexcept override { return kProbeCatalog; }\n"
+    "  SignalResult<SignalReading> read(SignalId) const noexcept override {\n"
+    "    return SignalResult<SignalReading>::success(\n"
+    "        SignalReading{SignalValue::number(50.0F), Availability::Fresh});\n"
+    "  }\n"
     "  SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback callback,\n"
     "                                             void *context) noexcept override {\n"
     "    callback_ = callback;\n"
@@ -409,8 +418,11 @@ _ACTION_ENGINE_PROBE_BODY = (
     "      {\"probe.flag\", action_engine::Comparison::Equal,\n"
     "       action_engine::RuleOperand::boolean(true)},\n"
     "      action_engine::ActionId{1}};\n"
+    "  const action_engine::RangeRuleConfig range{\"probe.number\", {0.0F, 100.0F},\n"
+    "                                              {0.0F, 1.0F}, action_engine::ActionId{2}};\n"
     "  if (engine.add_sink(sink) != action_engine::ConfigStatus::Ok ||\n"
     "      engine.add_state_rule(rule) != action_engine::ConfigStatus::Ok ||\n"
+    "      engine.add_range_rule(range) != action_engine::ConfigStatus::Ok ||\n"
     "      engine.attach() != SignalStatus::Ok) {\n"
     "    return 1;\n"
     "  }\n"
@@ -421,7 +433,10 @@ _ACTION_ENGINE_PROBE_BODY = (
     "  notice.initial = true;\n"
     "  provider.publish(notice);\n"
     "  const bool activated = sink.last.kind == action_engine::ActionCommandKind::Activate;\n"
-    "  return activated && engine.detach() == SignalStatus::Ok ? 0 : 1;\n"
+    "  const bool sampled = engine.sample_range_rules() == SignalStatus::Ok &&\n"
+    "                       sink.last.kind == action_engine::ActionCommandKind::SetLevel &&\n"
+    "                       sink.last.level == 0.5F;\n"
+    "  return activated && sampled && engine.detach() == SignalStatus::Ok ? 0 : 1;\n"
     "}\n"
 )
 

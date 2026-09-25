@@ -28,16 +28,20 @@ private:
   std::uint16_t value_{0};
 };
 
-// Activate/Deactivate carry a state rule's level; Trigger is an event rule's
-// one-shot edge.
-enum class ActionCommandKind : std::uint8_t { Activate, Deactivate, Trigger };
+// Activate/Deactivate carry a state rule's on/off level; Trigger is an event
+// rule's one-shot edge; SetLevel carries a range rule's mapped level.
+// Deactivate is also every level rule's fail-off command.
+enum class ActionCommandKind : std::uint8_t { Activate, Deactivate, Trigger, SetLevel };
 
+// `level` is meaningful only for SetLevel (always finite there) and is 0
+// otherwise. Equality compares the level too.
 struct ActionCommand {
   ActionId action{};
   ActionCommandKind kind{ActionCommandKind::Deactivate};
+  float level{0.0F};
 
   friend constexpr bool operator==(const ActionCommand &left, const ActionCommand &right) noexcept {
-    return left.action == right.action && left.kind == right.kind;
+    return left.action == right.action && left.kind == right.kind && left.level == right.level;
   }
   friend constexpr bool operator!=(const ActionCommand &left, const ActionCommand &right) noexcept {
     return !(left == right);
@@ -45,10 +49,12 @@ struct ActionCommand {
 };
 
 // Output port. Every registered sink receives every command; a sink ignores
-// ActionIds it does not handle. execute() runs on the provider's dispatcher
-// context: it must not block, must not call back into the engine or provider,
-// and owns any bounded queueing or overflow policy of its own. The engine
-// does not own sinks; the destructor is protected and non-virtual.
+// ActionIds it does not handle. The engine serializes execute() calls, but a
+// call may run on the provider's dispatcher context (notified rules) or on the
+// context that samples range rules. execute() must not block, must not call
+// back into the engine or provider, and owns any bounded queueing or overflow
+// policy of its own. The engine does not own sinks; the destructor is
+// protected and non-virtual.
 class ActionSink {
 public:
   virtual void execute(const ActionCommand &command) noexcept = 0;

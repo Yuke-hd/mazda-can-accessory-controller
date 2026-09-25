@@ -6,9 +6,10 @@
 namespace vehicle_signals {
 
 // Generic provider port: the minimal surface a make-independent consumer
-// needs to resolve catalog keys and receive latest-state notices. Concrete
-// providers bind it to their own telemetry; consumers depend only on this
-// interface, so they never learn the make, CAN identifiers or channels.
+// needs to resolve catalog keys, read latest state, and receive latest-state
+// notices. Concrete providers bind it to their own telemetry; consumers depend
+// only on this interface, so they never learn the make, CAN identifiers or
+// channels.
 //
 // The port inherits the callback contract from signal_contracts.hpp:
 // - subscribe() and unsubscribe() are lifecycle mutations accepted only while
@@ -33,6 +34,12 @@ public:
 
   // Non-owning view over the provider's static catalog.
   [[nodiscard]] virtual SignalCatalogView catalog() const noexcept = 0;
+
+  // Latest-state read of one Read-capable catalog signal, safe from any
+  // context. InvalidSignal and UnsupportedCapability (and provider faults
+  // such as Faulted or Timeout) are request failures, distinct from a
+  // successful reading whose availability is NoData, Stale or Unavailable.
+  [[nodiscard]] virtual SignalResult<SignalReading> read(SignalId id) const noexcept = 0;
 
   // Stopped-only subscription to a Notify-capable catalog signal.
   [[nodiscard]] virtual SignalResult<SignalSubscription>

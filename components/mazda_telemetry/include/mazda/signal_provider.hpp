@@ -52,7 +52,7 @@ public:
   // UnsupportedCapability are request failures, distinct from a successful
   // reading whose availability is NoData.
   [[nodiscard]] vehicle_signals::SignalResult<vehicle_signals::SignalReading>
-  read(vehicle_signals::SignalId id) const noexcept;
+  read(vehicle_signals::SignalId id) const noexcept override;
 
   // Stopped-only subscription to a Notify-capable catalog signal.
   [[nodiscard]] vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>

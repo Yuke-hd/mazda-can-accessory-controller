@@ -25,8 +25,8 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 - The typed `mazda::VehicleTelemetry` API and local ARGB behavior are
   unchanged.
 - `vehicle_signals::SignalProvider` is the generic provider port that
-  `MazdaSignalProvider` implements. The generic action engine consumes only
-  this port; see [action-engine.md](action-engine.md).
+  `MazdaSignalProvider` implements (`catalog()`, `read()`, `subscribe()`,
+  `unsubscribe()`). The generic action engine consumes only this port; see [action-engine.md](action-engine.md).
 
 ## Enforced boundaries
 

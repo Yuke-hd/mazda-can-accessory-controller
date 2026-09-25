@@ -33,6 +33,18 @@ ConfigStatus ActionEngine::add_event_rule(const EventRuleConfig &config) noexcep
   return rules_.add(EventRule{*resolution.condition, config.edge, config.action});
 }
 
+ConfigStatus ActionEngine::add_range_rule(const RangeRuleConfig &config) noexcept {
+  const auto status = check_action(config.action, RuleOutput::Level);
+  if (status != ConfigStatus::Ok) {
+    return status;
+  }
+  const auto resolution = resolve_range_rule(provider_->catalog(), config);
+  if (!resolution.rule.has_value()) {
+    return resolution.status;
+  }
+  return range_rules_.add(*resolution.rule);
+}
+
 ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) const noexcept {
   if (attached_) {
     return ConfigStatus::InvalidState;
@@ -40,7 +52,7 @@ ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) cons
   if (!action.valid()) {
     return ConfigStatus::InvalidAction;
   }
-  if (output == RuleOutput::Level && rules_.drives_level(action)) {
+  if (output == RuleOutput::Level && (rules_.drives_level(action) || range_rules_.drives(action))) {
     return ConfigStatus::DuplicateAction;
   }
   return ConfigStatus::Ok;
@@ -60,7 +72,7 @@ SignalStatus ActionEngine::attach() noexcept {
   if (attached_) {
     return SignalStatus::InvalidState;
   }
-  rules_.reset();
+  reset_rules();
   for (std::size_t index = 0; index < rules_.size(); ++index) {
     const auto status =
         subscriptions_.subscribe(*provider_, rules_.signal(index), &on_notice, this);
@@ -83,8 +95,28 @@ SignalStatus ActionEngine::detach() noexcept {
   return status;
 }
 
+SignalStatus ActionEngine::sample_range_rules() noexcept {
+  if (!attached_) {
+    return SignalStatus::InvalidState;
+  }
+  for (std::size_t index = 0; index < range_rules_.size(); ++index) {
+    // Read outside the lock: a provider read must never wait on a sink.
+    const auto read = provider_->read(range_rules_.signal(index));
+    const std::lock_guard<std::mutex> lock{evaluation_};
+    range_rules_.on_sample(index, read, sinks_);
+  }
+  return SignalStatus::Ok;
+}
+
+void ActionEngine::reset_rules() noexcept {
+  const std::lock_guard<std::mutex> lock{evaluation_};
+  rules_.reset();
+  range_rules_.reset();
+}
+
 void ActionEngine::on_notice(void *context, const SignalNotification &notice) noexcept {
   auto &engine = *static_cast<ActionEngine *>(context);
+  const std::lock_guard<std::mutex> lock{engine.evaluation_};
   engine.rules_.dispatch(notice, engine.sinks_);
 }
 

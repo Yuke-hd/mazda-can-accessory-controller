@@ -4,8 +4,11 @@
 # CAN, driver, RTOS, LED or transport component is reachable from this target.
 # Host-only for now; firmware composition registers it separately.
 add_library(action_engine STATIC
+  src/actionability.cpp
   src/condition.cpp
   src/engine.cpp
+  src/range_rule.cpp
+  src/range_rule_set.cpp
   src/rule_set.cpp
   src/rules.cpp
   src/sink_fan_out.cpp
