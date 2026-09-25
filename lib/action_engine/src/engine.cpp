@@ -16,7 +16,8 @@ ConfigStatus ActionEngine::add_sink(ActionSink &sink) noexcept {
 }
 
 ConfigStatus ActionEngine::add_state_rule(const StateRuleConfig &config) noexcept {
-  const auto resolution = resolve_rule(config.condition, config.action, config.freshness);
+  const auto resolution =
+      resolve_rule(config.condition, config.action, config.freshness, RuleOutput::Level);
   if (!resolution.condition.has_value()) {
     return resolution.status;
   }
@@ -24,20 +25,33 @@ ConfigStatus ActionEngine::add_state_rule(const StateRuleConfig &config) noexcep
 }
 
 ConfigStatus ActionEngine::add_event_rule(const EventRuleConfig &config) noexcept {
-  const auto resolution = resolve_rule(config.condition, config.action, config.freshness);
+  const auto resolution =
+      resolve_rule(config.condition, config.action, config.freshness, RuleOutput::OneShot);
   if (!resolution.condition.has_value()) {
     return resolution.status;
   }
   return rules_.add(EventRule{*resolution.condition, config.edge, config.action});
 }
 
-ConditionResolution ActionEngine::resolve_rule(const SignalCondition &condition, ActionId action,
-                                               FreshnessRequirement freshness) const noexcept {
+ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) const noexcept {
   if (attached_) {
-    return ConditionResolution{ConfigStatus::InvalidState, std::nullopt};
+    return ConfigStatus::InvalidState;
   }
   if (!action.valid()) {
-    return ConditionResolution{ConfigStatus::InvalidAction, std::nullopt};
+    return ConfigStatus::InvalidAction;
+  }
+  if (output == RuleOutput::Level && rules_.drives_level(action)) {
+    return ConfigStatus::DuplicateAction;
+  }
+  return ConfigStatus::Ok;
+}
+
+ConditionResolution ActionEngine::resolve_rule(const SignalCondition &condition, ActionId action,
+                                               FreshnessRequirement freshness,
+                                               RuleOutput output) const noexcept {
+  const auto status = check_action(action, output);
+  if (status != ConfigStatus::Ok) {
+    return ConditionResolution{status, std::nullopt};
   }
   return resolve_condition(provider_->catalog(), condition, freshness);
 }

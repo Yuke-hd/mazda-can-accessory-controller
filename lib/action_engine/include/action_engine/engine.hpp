@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 #include "action_engine/action.hpp"
 #include "action_engine/condition.hpp"
@@ -19,10 +20,14 @@ namespace action_engine {
 // chooses the concrete provider at construction and it cannot be swapped.
 //
 // Setup: add_sink(), add_state_rule() and add_event_rule() are accepted only
-// while detached (InvalidState otherwise). Rules are resolved through the
-// provider catalog when added; runtime rules keep only SignalIds and compact
-// values. Capacities are fixed (kMaxSinks, kMaxRules) and evaluation never
-// allocates.
+// while detached (InvalidState otherwise). A sink is registered at most once
+// (DuplicateSink). A state rule is a level output, so each ActionId is driven
+// by at most one state rule (DuplicateAction); otherwise the sink's level
+// would depend on rule order. Event rules emit one-shot Triggers and may share
+// an ActionId with each other and with a state rule. Rules are resolved
+// through the provider catalog when added; runtime rules keep only SignalIds
+// and compact values. Capacities are fixed (kMaxSinks, kMaxRules) and
+// evaluation never allocates.
 //
 // Lifecycle: attach() and detach() are provider subscription mutations, so
 // they run on the provider's lifecycle owner while the provider is stopped.
@@ -53,7 +58,7 @@ public:
   ActionEngine(ActionEngine &&) = delete;
   ActionEngine &operator=(ActionEngine &&) = delete;
 
-  // Registers a borrowed sink that receives every command.
+  // Registers a borrowed sink that receives every command once.
   [[nodiscard]] ConfigStatus add_sink(ActionSink &sink) noexcept;
   [[nodiscard]] ConfigStatus add_state_rule(const StateRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_event_rule(const EventRuleConfig &config) noexcept;
@@ -67,9 +72,16 @@ public:
 private:
   static void on_notice(void *context, const vehicle_signals::SignalNotification &notice) noexcept;
 
-  // Checks the detached state and the action, then resolves the condition.
+  // Level outputs (Activate/Deactivate) own their ActionId; one-shot
+  // Triggers may share one.
+  enum class RuleOutput : std::uint8_t { Level, OneShot };
+
+  // InvalidState, InvalidAction or DuplicateAction, else Ok.
+  [[nodiscard]] ConfigStatus check_action(ActionId action, RuleOutput output) const noexcept;
+  // Checks the action, then resolves the condition through the catalog.
   [[nodiscard]] ConditionResolution resolve_rule(const SignalCondition &condition, ActionId action,
-                                                 FreshnessRequirement freshness) const noexcept;
+                                                 FreshnessRequirement freshness,
+                                                 RuleOutput output) const noexcept;
 
   vehicle_signals::SignalProvider *provider_{nullptr};
   SinkFanOut sinks_{};

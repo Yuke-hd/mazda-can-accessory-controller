@@ -231,13 +231,79 @@ TEST_CASE("configuration errors surface from add_state_rule and add_event_rule")
   CHECK(engine.detach() == SignalStatus::Ok);
 }
 
+TEST_CASE("registering the same sink twice is DuplicateSink and delivers once") {
+  Bench bench{};
+  CHECK(bench.engine.add_sink(bench.sink) == ConfigStatus::DuplicateSink);
+  REQUIRE(bench.engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+  REQUIRE(bench.engine.add_event_rule(reverse_chime()) == ConfigStatus::Ok);
+  bench.start();
+
+  CHECK(bench.publish(door(true)) == Commands{activate(kCourtesyLight)});
+  CHECK(bench.publish(gear(kDrive)) == Commands{});
+  CHECK(bench.publish(gear(kReverse)) == Commands{trigger(kReverseChime)});
+}
+
+TEST_CASE("a duplicate sink does not use one of the four sink slots") {
+  FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+  std::array<RecordingActionSink, ActionEngine::kMaxSinks> sinks{};
+  REQUIRE(engine.add_sink(sinks[0]) == ConfigStatus::Ok);
+  CHECK(engine.add_sink(sinks[0]) == ConfigStatus::DuplicateSink);
+  for (std::size_t index = 1; index < ActionEngine::kMaxSinks; ++index) {
+    CHECK(engine.add_sink(sinks[index]) == ConfigStatus::Ok);
+  }
+}
+
+TEST_CASE("a second state rule driving the courtesy light is DuplicateAction") {
+  Bench bench{};
+  REQUIRE(bench.engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+
+  // Same level action from another signal and from the same signal.
+  StateRuleConfig speed_on_light = speed_warning();
+  speed_on_light.action = ActionId{kCourtesyLight};
+  CHECK(bench.engine.add_state_rule(speed_on_light) == ConfigStatus::DuplicateAction);
+  CHECK(bench.engine.add_state_rule(door_open_light(FreshnessRequirement::FreshOrUnverified)) ==
+        ConfigStatus::DuplicateAction);
+
+  // The action is checked before the catalog resolves the condition.
+  StateRuleConfig unknown_on_light = speed_on_light;
+  unknown_on_light.condition.signal_key = "body.sunroof_open";
+  CHECK(bench.engine.add_state_rule(unknown_on_light) == ConfigStatus::DuplicateAction);
+
+  // Rejected rules leave the engine unchanged: one level output, no speed
+  // subscription.
+  bench.start();
+  CHECK(bench.provider.subscriber_count(kSpeed) == 0);
+  CHECK(bench.publish(speed(90.0F)) == Commands{});
+  CHECK(bench.publish(door(true)) == Commands{activate(kCourtesyLight)});
+}
+
+TEST_CASE("event rules may share an action id with each other and with a state rule") {
+  Bench bench{};
+  EventRuleConfig chime_on_open{
+      SignalCondition{"body.door_open", Comparison::Equal, RuleOperand::boolean(true)},
+      EventEdge::BecomesTrue, ActionId{kReverseChime}};
+  REQUIRE(bench.engine.add_event_rule(reverse_chime()) == ConfigStatus::Ok);
+  REQUIRE(bench.engine.add_event_rule(chime_on_open) == ConfigStatus::Ok);
+  StateRuleConfig chime_level = reverse_lamp();
+  chime_level.action = ActionId{kReverseChime};
+  REQUIRE(bench.engine.add_state_rule(chime_level) == ConfigStatus::Ok);
+  EventRuleConfig after_level = reverse_chime();
+  after_level.edge = EventEdge::BecomesFalse;
+  CHECK(bench.engine.add_event_rule(after_level) == ConfigStatus::Ok);
+}
+
 TEST_CASE("the seventeenth rule and the fifth sink exceed capacity") {
   FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   for (std::size_t index = 0; index < ActionEngine::kMaxRules; ++index) {
-    REQUIRE(engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+    StateRuleConfig rule = door_open_light();
+    rule.action = ActionId{static_cast<std::uint16_t>(100 + index)};
+    REQUIRE(engine.add_state_rule(rule) == ConfigStatus::Ok);
   }
-  CHECK(engine.add_state_rule(door_open_light()) == ConfigStatus::CapacityExceeded);
+  StateRuleConfig seventeenth = door_open_light();
+  seventeenth.action = ActionId{200};
+  CHECK(engine.add_state_rule(seventeenth) == ConfigStatus::CapacityExceeded);
   CHECK(engine.add_event_rule(reverse_chime()) == ConfigStatus::CapacityExceeded);
 
   std::array<RecordingActionSink, ActionEngine::kMaxSinks + 1> sinks{};

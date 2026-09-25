@@ -14,6 +14,16 @@ vehicle_signals::SignalId RuleSet::signal(std::size_t index) const noexcept {
   return std::visit([](const auto &rule) noexcept { return rule.signal(); }, rules_[index]);
 }
 
+bool RuleSet::drives_level(ActionId action) const noexcept {
+  for (std::size_t index = 0; index < count_; ++index) {
+    const auto *state = std::get_if<StateRule>(&rules_[index]);
+    if (state != nullptr && state->action() == action) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void RuleSet::reset() noexcept {
   for (std::size_t index = 0; index < count_; ++index) {
     std::visit([](auto &rule) noexcept { rule.reset(); }, rules_[index]);

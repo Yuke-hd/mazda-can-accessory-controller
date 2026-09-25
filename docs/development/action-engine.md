@@ -46,6 +46,7 @@ operand is `boolean(bool)`, `number(float)` or `choice(key)`. For example,
 | --- | --- |
 | `InvalidState` | The engine is attached. |
 | `InvalidAction` | The `ActionId` is zero. |
+| `DuplicateAction` | A state rule already drives this `ActionId` (state rules only). |
 | `UnknownSignal` | The key is not in the catalog. |
 | `UnsupportedCapability` | The signal cannot notify. |
 | `TypeMismatch` | The operand type differs from the signal type. |
@@ -53,6 +54,15 @@ operand is `boolean(bool)`, `number(float)` or `choice(key)`. For example,
 | `UnsupportedComparison` | An ordered comparison is used on a Boolean or Enum signal. |
 | `UnknownChoice` | The choice key is not a choice of the Enum signal. |
 | `CapacityExceeded` | 16 rules (or 4 sinks) are already registered. |
+
+`add_sink()` returns `InvalidState` while attached, `DuplicateSink` for a sink
+that is already registered (it would otherwise receive every command twice),
+and `CapacityExceeded` after four sinks.
+
+A state rule is a level output, so it owns its `ActionId`. With two level
+rules on one action, the sink's final level would depend on rule order and on
+which signal notified last. Event rules emit one-shot `Trigger`s and may share
+an `ActionId` with each other and with one state rule.
 
 ## Availability policy
 

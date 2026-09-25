@@ -10,7 +10,9 @@ enum class ConfigStatus : std::uint8_t {
   Ok,
   InvalidState,          // Configuration is accepted only while detached.
   CapacityExceeded,      // The fixed sink or rule capacity is full.
+  DuplicateSink,         // The sink is already registered.
   InvalidAction,         // The rule's ActionId is zero.
+  DuplicateAction,       // A state (level) rule already drives the ActionId.
   UnknownSignal,         // The signal key is not in the provider catalog.
   UnsupportedCapability, // The signal cannot notify.
   TypeMismatch,          // The operand type differs from the signal type.

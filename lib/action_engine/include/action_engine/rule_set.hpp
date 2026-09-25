@@ -26,6 +26,8 @@ public:
   [[nodiscard]] std::size_t size() const noexcept { return count_; }
   // Signal of the rule at `index` (< size()).
   [[nodiscard]] vehicle_signals::SignalId signal(std::size_t index) const noexcept;
+  // True when a state (level) rule already drives `action`.
+  [[nodiscard]] bool drives_level(ActionId action) const noexcept;
 
   // Forgets every rule's runtime state.
   void reset() noexcept;

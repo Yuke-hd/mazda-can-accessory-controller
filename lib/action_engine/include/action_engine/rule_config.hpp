@@ -85,7 +85,8 @@ struct SignalCondition {
 };
 
 // Level rule: Activate while the condition holds on an actionable reading,
-// Deactivate otherwise (including every non-actionable reading).
+// Deactivate otherwise (including every non-actionable reading). A level rule
+// owns its ActionId: a second level rule on the same action is rejected.
 struct StateRuleConfig {
   SignalCondition condition{};
   ActionId action{};
@@ -96,7 +97,8 @@ struct StateRuleConfig {
 enum class EventEdge : std::uint8_t { BecomesTrue, BecomesFalse };
 
 // Edge rule: Trigger when the condition changes in the chosen direction
-// between two consecutive actionable readings.
+// between two consecutive actionable readings. Triggers are one-shot, so edge
+// rules may share an ActionId with each other and with one level rule.
 struct EventRuleConfig {
   SignalCondition condition{};
   EventEdge edge{EventEdge::BecomesTrue};

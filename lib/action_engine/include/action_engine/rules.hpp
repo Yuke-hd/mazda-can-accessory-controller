@@ -31,6 +31,7 @@ public:
   [[nodiscard]] constexpr vehicle_signals::SignalId signal() const noexcept {
     return condition_.signal();
   }
+  [[nodiscard]] constexpr ActionId action() const noexcept { return action_; }
   // Forgets the last emitted output.
   void reset() noexcept { last_output_.reset(); }
   [[nodiscard]] std::optional<ActionCommand>
