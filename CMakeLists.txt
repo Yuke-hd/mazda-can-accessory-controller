@@ -63,6 +63,7 @@ add_subdirectory(components/local_argb_compat)
 add_subdirectory(lib/vehicle_signals)
 add_subdirectory(lib/action_engine)
 add_subdirectory(components/local_argb_actions)
+add_subdirectory(components/controller_config)
 add_subdirectory(components/mazda_telemetry)
 
 if(MAZDA_BUILD_HOST_TESTS)

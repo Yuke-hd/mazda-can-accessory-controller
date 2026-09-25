@@ -1,5 +1,6 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
+#include "controller_config/rpm_level_fill.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -43,6 +44,19 @@ constexpr EffectBinding kEffectBindings[] = {
     {kHazardAction, local_argb_actions::LedEffect::LeftTurn},
     {kHazardAction, local_argb_actions::LedEffect::RightTurn},
 };
+
+// RPM level fill: engine speed over the configured range fills the whole
+// strip from its centre outward. The input range is controller configuration
+// (controller_config::RpmRange, 0..6500 rpm by default); the LED fill only
+// sees a 0.0..1.0 level. The fill ranks below the turn effects (default
+// priority 100), so an indicator always draws over the gauge.
+constexpr action_engine::ActionId kRpmLevelAction{4};
+constexpr controller_config::RpmLevelFillConfig kRpmLevelFill{
+    controller_config::RpmRange{}, kRpmLevelAction,
+    local_argb_actions::FillEffect{
+        local_argb::internal::LedZone{0, board::kWeActCan485V11.vehicle_light_strip.pixel_count,
+                                      local_argb::internal::FillDirection::CenterOut},
+        local_argb::internal::LightingRgb{0, 16, 32}, local_argb::internal::EffectPriority{50}}};
 
 struct ApplicationState {
   std::uint32_t turn_notifications{0};
@@ -101,9 +115,9 @@ static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 
-// Binds the LED effects and adds the LED sink and the turn-state rules. The
-// strict Fresh requirement fails off once the turn state goes Stale after its
-// 250 ms freshness timeout.
+// Binds the LED effects and adds the LED sink, the turn-state rules and the
+// RPM level fill. The strict Fresh turn requirement fails off once the turn
+// state goes Stale after its 250 ms freshness timeout.
 bool configure_engine_lighting() noexcept {
   for (const auto &binding : kEffectBindings) {
     const auto status = led_actions.bind(binding.action, binding.effect);
@@ -130,6 +144,13 @@ bool configure_engine_lighting() noexcept {
                static_cast<unsigned>(rule.action.value()), static_cast<unsigned>(status));
       return false;
     }
+  }
+  const auto rpm_status = controller_config::apply(kRpmLevelFill, led_actions, engine);
+  if (!rpm_status.ok()) {
+    ESP_LOGE(kTag, "RPM level fill setup failed: binding=%u rule=%d",
+             static_cast<unsigned>(rpm_status.binding),
+             rpm_status.rule.has_value() ? static_cast<int>(*rpm_status.rule) : -1);
+    return false;
   }
   return true;
 }
@@ -183,6 +204,9 @@ extern "C" void app_main(void) {
       ESP_LOGD(kTag, "telemetry poll: speed=%.2f kph engine_rpm=%.2f", *speed.value,
                *engine_rpm.value);
     }
+    // Polled rules, such as the RPM level fill, are sampled at this cadence;
+    // the engine serializes them with the turn notices.
+    (void)engine.sample_polled_rules();
     // The application chooses its own observation cadence. CAN receive,
     // decoding, freshness servicing, notification dispatch, and LED updates
     // remain owned by their background service tasks.

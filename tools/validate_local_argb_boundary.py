@@ -296,6 +296,9 @@ def _binding_failures(code: str, structure: str) -> List[str]:
     ):
         failures.append("turn-state rule loop does not add a strict rule for every kTurnRules entry")
     counts = {
+        # The RPM level fill binds and adds its range rule through
+        # controller_config::apply(), so main.cpp never calls them directly.
+        "controller_config::apply(kRpmLevelFill,led_actions,engine)": 1,
         "led_actions.bind(": 1,
         "engine.add_state_rule(": 1,
         "engine.add_sink(": 1,
@@ -309,6 +312,19 @@ def _binding_failures(code: str, structure: str) -> List[str]:
                 f"vehicle integration must call {needle}) exactly {expected_count} time(s)"
             )
     return failures
+
+
+def _polled_sampling_failures(structure: str) -> List[str]:
+    """Require the runtime loop to sample the polled rules after CAN starts."""
+
+    body = _app_main_body(structure) or ""
+    telemetry_start = body.find("telemetry.start()")
+    runtime_loop = _loop_body(body[max(telemetry_start, 0) :], r"\bfor\s*\(\s*;\s*;\s*\)")
+    if telemetry_start < 0 or runtime_loop is None or re.search(
+        r"\bengine\.sample_polled_rules\s*\(\s*\)", runtime_loop
+    ) is None:
+        return ["the runtime loop after telemetry startup does not call engine.sample_polled_rules()"]
+    return []
 
 
 def main() -> int:
@@ -398,6 +414,7 @@ def main() -> int:
         ("mazda/signal_provider.hpp", "generic signal provider include"),
         ("action_engine/engine.hpp", "generic action engine include"),
         ("local_argb_actions/led_action_sink.hpp", "local LED action sink include"),
+        ("controller_config/rpm_level_fill.hpp", "RPM level fill configuration include"),
     ):
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
             failures.append(f'{label} is missing from vehicle integration: #include "{header}"')
@@ -442,6 +459,7 @@ def main() -> int:
             failures.append(label)
     failures.extend(_fail_off_failures(structure))
     failures.extend(_binding_failures(code, structure))
+    failures.extend(_polled_sampling_failures(structure))
     for forbidden, label in (
         ("semantic_led_policy", "legacy semantic application adapter"),
         ("process_received_frame", "manual decoder loop"),
@@ -452,16 +470,26 @@ def main() -> int:
         # must be its only publisher.
         ("bind_local_argb_sink", "legacy telemetry lighting binding"),
         ("mazda/accessory_telemetry.hpp", "legacy telemetry lighting binding include"),
+        # RPM's FreshOrUnverified requirement lives in controller_config.
         ("FreshOrUnverified", "weakened turn freshness"),
     ):
         if forbidden in code:
             failures.append(f"vehicle application retains {label}: {forbidden}")
 
-    for component in ("lib/action_engine", "components/local_argb_actions"):
+    for component in (
+        "lib/action_engine",
+        "components/local_argb_actions",
+        "components/controller_config",
+    ):
         if f'/../../{component}"' not in vehicle_project_cmake:
             failures.append(f"vehicle project does not select the {component} component")
     requires = re.search(r"\bREQUIRES\b([^)]*)", vehicle_cmake)
-    for component in ("action_engine", "local_argb_actions", "local_argb_sink_contract"):
+    for component in (
+        "action_engine",
+        "local_argb_actions",
+        "local_argb_sink_contract",
+        "controller_config",
+    ):
         if requires is None or component not in requires.group(1).split():
             failures.append(f"vehicle application does not require the {component} component")
     if "local_argb_compat" in vehicle_cmake:

@@ -196,12 +196,43 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
    and `hazard` to both;
 2. adds the sink and three state rules, `vehicle.turn_state Equal left`,
    `right` and `hazard`, with the strict `Fresh` requirement;
-3. registers the typed turn notice log and attaches the engine. These are the
+3. applies the RPM level fill through `controller_config::apply()`: it binds
+   a `FillEffect` over the whole strip (`CenterOut`, priority 50, so the turn
+   effects at the default 100 draw over it) and adds a range rule on
+   `vehicle.engine_rpm`. See [RPM level fill](#rpm-level-fill);
+4. registers the typed turn notice log and attaches the engine. These are the
    turn channel's two subscriber slots;
-4. starts the facade.
+5. starts the facade, then calls `engine.sample_polled_rules()` on every
+   100 ms pass of its runtime loop.
 
 Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
 The application never stops the facade or detaches the engine.
+
+### RPM level fill
+
+`components/controller_config` owns the feature: which signal drives the fill,
+over which input range, and with which freshness requirement. Neither the
+engine nor this adapter learns about RPM; the fill only receives a 0.0..1.0
+`SetLevel`.
+
+- `controller_config::RpmLevelFillConfig` holds the input range
+  (`RpmRange{min_rpm, max_rpm}`, default 0..6500 rpm), the `ActionId` and the
+  `FillEffect`. `min_rpm` and below is an empty fill, `max_rpm` and above a
+  full fill, and speeds in between fill linearly. Changing the range changes
+  the mapping without any renderer change.
+- `range_rule()` builds the polled range rule. It uses `FreshOrUnverified`,
+  because the Mazda provider reports RPM as `FreshnessUnverified` and has no
+  RPM freshness timeout. Missing, stale or unavailable readings still empty
+  the fill.
+- `apply()` binds the fill, then adds the rule. A failed binding adds no rule;
+  a rejected rule, such as an empty or inverted range (`InvalidRange`), leaves
+  the binding, so firmware treats any failure as fatal setup and fails off.
+
+The turn rules in `main.cpp` keep the strict `Fresh` requirement, and
+`tools/validate_local_argb_boundary.py` still forbids `FreshOrUnverified` and
+direct `add_range_rule()` calls there. `tests/host/rpm_level_fill_tests.cpp`
+covers the defaults, endpoints, linear midpoints, clamping, a configured
+range, unverified and missing readings, and both failure paths.
 
 This step is where the documented differences from the legacy binding reach
 the hardware: a hung dispatcher holds the strip lit, and a write fault stays
