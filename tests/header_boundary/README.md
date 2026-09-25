@@ -33,7 +33,17 @@ python3 tests/header_boundary/check_public_headers_test.py --compiler c++ --cmak
 
 The checker builds separate facade-only and explicit lower-level consumers.
 It inspects the facade dependency file produced by the exact CMake consumer
-compile command, including target-controlled definitions. The checker also
+compile command, including target-controlled definitions.
+
+The generic `mazda/signal_provider.hpp` and the portable `vehicle_signals`
+headers are public entry points too, with stricter per-header rules on top of
+the shared forbidden list. The provider must not reach Mazda value types,
+state, definitions, the telemetry service, the publication store or the
+private signal catalog, even though the typed facade legitimately reaches
+`mazda/types.hpp`. A third, provider-only CMake consumer applies the same
+provider rules under the real target's compile flags. The `vehicle_signals`
+headers must not reach any Mazda header. The stricter isolated build of
+`vehicle_signals` against the core alone is part of `architecture_contracts`. The checker also
 runs two access probes. A normal consumer is expected to fail
 when it includes `mazda/internal_contracts.hpp`; an explicitly authorized
 consumer must be given the `lib/mazda/internal_include` directory and must

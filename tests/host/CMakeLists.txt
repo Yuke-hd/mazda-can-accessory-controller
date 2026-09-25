@@ -60,6 +60,32 @@ else()
 endif()
 doctest_discover_tests(vehicle_signals_tests)
 
+# The generic consumer sees only the public provider/facade interface: it has
+# no private include path, and architecture_contracts restricts its includes
+# to mazda/signal_provider.hpp and vehicle_signals headers.
+add_library(generic_signal_consumer STATIC generic_signal_consumer.cpp)
+target_link_libraries(generic_signal_consumer PUBLIC mazda_telemetry_contracts)
+target_compile_features(generic_signal_consumer PUBLIC cxx_std_17)
+
+# The test harness alone uses the private host-service seam to drive generated
+# frames through the production runtime, Mazda decoder and publication path.
+add_executable(signal_consumer_tests signal_consumer_tests.cpp)
+target_include_directories(signal_consumer_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(signal_consumer_tests PRIVATE generic_signal_consumer mazda_telemetry
+                                                    doctest::doctest)
+target_compile_features(signal_consumer_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(generic_signal_consumer PRIVATE /W4 /permissive-)
+  target_compile_options(signal_consumer_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(generic_signal_consumer PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(signal_consumer_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(signal_consumer_tests)
+
 add_executable(board_config_tests board_config_tests.cpp)
 target_include_directories(board_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/components/board/include)
 target_compile_features(board_config_tests PRIVATE cxx_std_17)

@@ -54,6 +54,83 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("Header boundary check passed", result.stdout)
         self.assertIn("normal access failed as expected", result.stdout)
         self.assertIn("authorized access succeeded (internal include path)", result.stdout)
+        self.assertIn("OK   mazda/signal_provider.hpp (generic signal provider)", result.stdout)
+        self.assertIn("OK   vehicle_signals/signal_contracts.hpp", result.stdout)
+        self.assertIn("OK   vehicle_signals/signal_catalog.hpp", result.stdout)
+
+    def test_provider_reaching_telemetry_service_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            # A public location, so only the provider-specific rule applies.
+            include = root / "components/vehicle_telemetry/include/mazda"
+            (include / "vehicle_telemetry_service.hpp").write_text(
+                "#pragma once\nnamespace mazda::internal { class VehicleTelemetryService; }\n",
+                encoding="utf-8",
+            )
+            provider = include / "signal_provider.hpp"
+            provider.write_text(
+                '#include "mazda/vehicle_telemetry_service.hpp"\n'
+                + provider.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL mazda/signal_provider.hpp (generic signal provider)", output)
+        self.assertIn("provider service/state/publication/catalog", output)
+        self.assertIn("vehicle_telemetry_service.hpp", output)
+        self.assertIn("CMake provider consumer has a forbidden dependency", output)
+        self.assertNotIn("CMake facade consumer has a forbidden dependency", output)
+
+    def test_provider_rules_do_not_apply_to_the_typed_facade(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            provider = root / "components/vehicle_telemetry/include/mazda/signal_provider.hpp"
+            provider.write_text(
+                '#include "mazda/types.hpp"\n' + provider.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL mazda/signal_provider.hpp (generic signal provider)", output)
+        self.assertIn("lib/mazda/include/mazda/types.hpp", output)
+        # The facade reaches the same Mazda value types legitimately.
+        self.assertIn("OK   mazda/facade_contracts.hpp (facade contracts)", output)
+        self.assertIn("OK   mazda/vehicle_telemetry.hpp (vehicle telemetry facade)", output)
+
+    def test_vehicle_signals_header_reaching_mazda_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            contracts = root / "lib/vehicle_signals/include/vehicle_signals/signal_contracts.hpp"
+            contracts.write_text(
+                '#include "mazda/types.hpp"\n' + contracts.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL vehicle_signals/signal_contracts.hpp", output)
+        self.assertIn("FAIL vehicle_signals/signal_catalog.hpp", output)
+        self.assertIn("Mazda dependency: lib/mazda/include/mazda/types.hpp", output)
+
+    def test_vehicle_signals_header_reaching_mutable_core_signal_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            (root / "lib/vehicle_core/include/vehicle_core/signal.hpp").write_text(
+                "#pragma once\nnamespace vehicle_core { template <typename T> class Signal {}; }\n",
+                encoding="utf-8",
+            )
+            catalog = root / "lib/vehicle_signals/include/vehicle_signals/signal_catalog.hpp"
+            catalog.write_text(
+                '#include "vehicle_core/signal.hpp"\n' + catalog.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("FAIL vehicle_signals/signal_catalog.hpp", output)
+        self.assertIn("mutable signal/state: lib/vehicle_core/include/vehicle_core/signal.hpp", output)
 
     def test_missing_internal_include_is_a_failure_not_a_skip(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
