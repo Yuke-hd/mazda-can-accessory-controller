@@ -6,27 +6,35 @@ order is:
 ```text
 board::initialize_safe_defaults()
     -> local_argb::start()          # physical black frame and supervised worker
+    -> engine LED setup             # LED bindings, sink and turn-state rules
+    -> typed turn subscription, ActionEngine::attach()
     -> VehicleTelemetry::start()    # facade starts strict vehicle CAN
     -> application polling cadence
 ```
 
-The application registers a typed `on_turn_state_changed` callback while the
-facade is stopped, then polls `speed_kph()` and `engine_rpm()` every 100 ms.
-It does not call `can_bus::receive`, a decoder, `update()`, `tick()`, or
+The application registers a typed `on_turn_state_changed` callback and
+attaches the action engine while the facade is stopped. It then polls
+`speed_kph()` and `engine_rpm()` every 100 ms. It does not call
+`can_bus::receive`, a decoder, `update()`, `tick()`, or
 `local_argb::submit()`. CAN acquisition, decoding, freshness servicing,
 notification dispatch, and LED publication remain owned by background tasks.
+Every setup failure after `local_argb::start()` calls `local_argb::fail_off()`
+and refuses to start CAN.
 
-The service's private semantic handoff is translated by the WeAct composition
-adapter through `vehicle_lighting_policy::command_for()` and
-`local_argb::internal::sink()`. Only generic RGB bytes, an absolute deadline,
-and an actionable bit cross the renderer boundary. Public facade headers still
-contain no CAN, decoder, board, lighting, or RTOS dependency.
+Strip lighting runs on the generic engine path: `MazdaSignalProvider` ->
+`ActionEngine` -> `LedActionSink` -> `local_argb::internal::sink()`. Only
+effect flags, a held deadline and an actionable bit cross the renderer
+boundary. The
+composition root, its mirrored turn bindings and the brake migration are
+described in [local-led-actions.md](local-led-actions.md#firmware-composition).
+The legacy `bind_local_argb_sink()` telemetry binding is no longer bound in
+firmware. Public facade headers still contain no CAN, decoder, board,
+lighting, or RTOS dependency.
 
 The ordinary application API is intentionally this small:
 
 ```cpp
 #include "mazda/vehicle_telemetry.hpp"
-#include "mazda/accessory_telemetry.hpp"
 
 mazda::VehicleTelemetry telemetry{};
 auto turn = telemetry.on_turn_state_changed(&on_turn_state_changed, context);
@@ -40,7 +48,8 @@ does not receive frames or invoke decoder, freshness, dispatcher, publication,
 or renderer operations.
 
 The vehicle project selects `vehicle_can_rx`, `mazda_telemetry`,
-`vehicle_lighting_policy`, `local_argb_sink_contract`, and `local_argb`. No
+`vehicle_lighting_policy`, `vehicle_signals`, `action_engine`,
+`local_argb_actions`, `local_argb_sink_contract`, and `local_argb`. No
 normal-mode or acknowledgement-capable CAN binding is part of this repository.
 
 ## Verification evidence

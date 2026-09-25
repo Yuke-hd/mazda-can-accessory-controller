@@ -1,8 +1,15 @@
 # Local LED action sink: adapts generic action_engine commands to the local
 # renderer's private LightingCommand handoff. It links the engine's action port
 # and the authorized sink contract only; no vehicle make, signal provider, CAN
-# or RTOS target is reachable from it. Host-only for now; firmware composition
-# registers it separately.
+# or RTOS target is reachable from it. Only the firmware composition root binds
+# it to the renderer's queue sink.
+if(COMMAND idf_component_register)
+  idf_component_register(SRCS "src/effect_bindings.cpp" "src/led_action_sink.cpp"
+                         INCLUDE_DIRS "include"
+                         REQUIRES action_engine local_argb_sink_contract vehicle_core)
+  return()
+endif()
+
 add_library(local_argb_actions STATIC
   src/effect_bindings.cpp
   src/led_action_sink.cpp

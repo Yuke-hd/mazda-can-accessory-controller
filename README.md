@@ -156,15 +156,17 @@ CAN transceiver (listen-only)
         -> vehicle_can_rx / can_bus
         -> vehicle_telemetry service
         -> Mazda candidate decoder + freshness/health state
-        -> private LightingUpdate
+        -> MazdaSignalProvider -> ActionEngine turn-state rules
+        -> LedActionSink private lighting command
         -> local_argb bounded mailbox
         -> 100-pixel GPIO16 strip + GPIO4 status projection
 ```
 
 The vehicle target selects `vehicle_can_rx`; no bench ACK target is part of
-this repository. Decoder and policy libraries are hardware independent. A
-stale or faulted semantic state expires to black, and driver failure attempts
-an immediate black frame before retrying under the worker watchdog.
+this repository. Decoder and policy libraries are hardware independent. The
+engine turns a stale or unavailable turn state into black, and driver failure
+attempts an immediate black frame before retrying under the worker watchdog.
+See [`docs/development/local-led-actions.md`](docs/development/local-led-actions.md).
 
 ## Actions and Animations
 
@@ -175,8 +177,10 @@ an immediate black frame before retrying under the worker watchdog.
   center toward the corresponding outer edge. The preserved center-out-fill
   strategy fills each region from the center outward and is the current WeAct
   runtime strategy.
-- **Brake:** the center 30-pixel region is solid red when a brake sample is
-  fresh and valid. Unverified brake freshness fails off by design.
+- **Brake:** the renderer can light the center 30-pixel region solid red, but
+  the firmware binds no brake action. Brake has no freshness timeout and no
+  generic catalog signal yet, so it stays off, as it did before the engine
+  migration.
 - **Overlap:** turn animation and the brake region may coexist; the single
   GPIO4 status pixel prioritizes red brake status, otherwise amber turn status,
   otherwise black.
