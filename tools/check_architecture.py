@@ -893,7 +893,9 @@ _LED_ACTIONS_ALLOWED_INCLUDE = re.compile(
     r"|local_argb_actions/[\w/]+\.hpp"
 )
 _LED_ACTIONS_CMAKE_KEYWORDS = frozenset(("PUBLIC", "PRIVATE", "INTERFACE"))
-_LED_ACTIONS_ALLOWED_LINKS = frozenset(("action_engine", "local_argb_sink_contract"))
+_LED_ACTIONS_ALLOWED_LINKS = frozenset(
+    ("action_engine", "local_argb_sink_contract", "vehicle_core")
+)
 _LED_ACTIONS_ALLOWED_REQUIRES = frozenset(
     ("action_engine", "local_argb_sink_contract", "vehicle_core")
 )

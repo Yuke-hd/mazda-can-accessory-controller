@@ -27,9 +27,10 @@ namespace local_argb_actions {
 // on/off levels, so Trigger and SetLevel are ignored, as are commands for
 // unbound actions.
 //
-// Precondition: the lighting sink accepts every publish while the renderer
-// runs, and this adapter is its only publisher. A rejected publish is not
-// retried, and the engine does not resend a deduplicated level.
+// Precondition: while the engine is attached, this adapter is the lighting
+// sink's only publisher and the sink accepts every publish, so start the
+// renderer first. A rejected publish is not retried, and the engine does not
+// resend a deduplicated level.
 //
 // Setup: bind() runs before the engine attaches. execute() then runs on the
 // engine's serialized command context, never blocks, and publishes through

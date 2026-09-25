@@ -298,6 +298,8 @@ TEST_CASE("a pixel write fault fails off and stays dark until the next level cha
   // fault. Held levels bring no refresh, so the strip stays dark.
   harness.pixels.failures_remaining = 1;
   CHECK_FALSE(harness.renderer.tick(40'000));
+  REQUIRE(harness.pixels.failures_remaining == 0);
+  CHECK(harness.renderer.faulted());
   CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
   CHECK(harness.frame_at(1'000'000) == local_argb::kBlackFrame);
 

@@ -48,12 +48,12 @@ did.
 The engine's explicit initial `Deactivate` therefore publishes a black
 baseline on each provider start.
 
-The adapter must be the lighting sink's only publisher, and the sink must
-accept every publish while the renderer runs. The production sink is a
-one-slot overwrite queue that rejects only before `local_argb::start()`, when
-the strip is already black. A rejected publish is not retried, and the engine
-never resends a deduplicated level, so a rejected `Deactivate` would leave the
-effect lit.
+While the engine is attached, the adapter must be the lighting sink's only
+publisher, and the sink must accept every publish. The production sink is a
+one-slot overwrite queue that rejects only before `local_argb::start()`, so
+start the renderer before the engine attaches. A rejected publish is not
+retried, and the engine never resends a deduplicated level, so a rejected
+`Deactivate` would leave the effect lit.
 
 ## Fail-off policy: held level
 
@@ -78,12 +78,15 @@ The composition root owns the cases the engine cannot see:
 
 - Stopping the provider publishes no Unavailable notice, and
   `ActionEngine::detach()` sends no `Deactivate`. Call `local_argb::fail_off()`
-  whenever the provider is stopped or the engine is detached after attach.
+  after the provider's `stop()` or the engine's `detach()` returns, so that no
+  late command can relight the strip.
 - If notice delivery stops while the provider runs (a hung dispatcher), a
   held effect stays lit until a reset or a later command. The renderer's
   watchdogs cover only a stuck LED driver or LED worker, not the provider.
-  The legacy binding's 100 ms heartbeat bounded this case; closing it again
-  needs a provider liveness signal, which is outside #11.
+  The legacy binding published from the receive worker with a per-command
+  deadline of at most the 250 ms turn freshness or the transport-silence
+  timeout. Restoring such a bound needs a provider liveness signal, which is
+  outside #11.
 
 Write-fault recovery also differs from the legacy binding. After a failed
 pixel write the renderer writes black and latches its fault until the next
