@@ -22,10 +22,11 @@ Every setup failure after `local_argb::start()` calls `local_argb::fail_off()`
 and refuses to start CAN.
 
 Strip lighting runs on the generic engine path: `MazdaSignalProvider` ->
-`ActionEngine` -> `LedActionSink` -> `local_argb::internal::sink()`. Only
-effect flags, a held deadline and an actionable bit cross the renderer
-boundary. The composition root, its mirrored turn bindings and the brake
-migration are described in
+`ActionEngine` -> `LedActionSink` -> `local_argb::internal::sink()`. The
+renderer boundary carries RGB bytes, effect flags, a held deadline and an
+actionable bit. The LED sink leaves the RGB bytes unused (black) and drives
+only the effect flags. The composition root, its mirrored turn bindings and
+the brake migration are described in
 [local-led-actions.md](local-led-actions.md#firmware-composition).
 The legacy `bind_local_argb_sink()` telemetry binding is no longer bound in
 firmware. Public facade headers still contain no CAN, decoder, board,

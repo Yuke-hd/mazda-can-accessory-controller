@@ -146,19 +146,24 @@ The legacy binding is no longer bound in firmware. The renderer queue has one
 slot, so the LED sink must be its only publisher. The binding stays compiled
 in `mazda_telemetry` as a rollout fallback and is to be removed after rollout.
 The local ARGB boundary validator rejects it in the vehicle application. It
-checks `main.cpp` with comments removed and requires the wiring above:
+checks `main.cpp` with comments and string contents removed, so neither a
+comment nor a log message can stand in for a call. It requires the wiring
+above:
 
 - the components;
-- attach before start;
+- the startup calls inside `app_main`, with attach before start. A call that
+  `app_main` does not make fails the check;
 - `fail_off()` in the block of every `return` between `local_argb::start()`
-  and `telemetry.start()`, and on the success path after any
-  `telemetry.stop()` or `engine.detach()`;
+  and `telemetry.start()`, after the last `case` or `default` label, and on
+  the success path after any `telemetry.stop()` or `engine.detach()`, before
+  any return;
 - exactly the mirrored `kTurnRules` and `kEffectBindings` entries, applied
-  by the only bind and rule loops;
+  by the only bind and rule loops, with no `continue` or `break`;
 - no `FreshOrUnverified`.
 
 `tests/tools/validate_local_argb_boundary_test.py` covers these rules,
-including braceless, commented-out and nested bypasses.
+including braceless, commented-out, nested, decoy-string, switch-label and
+helper-wrapped bypasses.
 
 Hardware follow-up: engine evaluation and the LED publish now run on the
 4 KiB `mazda_notify` dispatcher stack. On a bench with debug logging

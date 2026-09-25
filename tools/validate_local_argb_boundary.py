@@ -93,6 +93,16 @@ def _has_unconditional_fail_off(flat: str) -> bool:
     return False
 
 
+# A `case`/`default` label starts another path through a switch, so a
+# fail_off() before the label does not cover a return after it.
+_SWITCH_LABEL = re.compile(r"\b(?:case\b(?:[^;{}:]|::)*|default\s*):(?!:)")
+
+
+def _after_last_label(flat: str) -> str:
+    labels = list(_SWITCH_LABEL.finditer(flat))
+    return flat[labels[-1].end() :] if labels else flat
+
+
 def _statement_end(body: str, index: int) -> int:
     """End of the top-level statement of `body` that contains `index`."""
 
@@ -113,8 +123,67 @@ def _statement_end(body: str, index: int) -> int:
     return len(body)
 
 
+def _statement_start(text: str, index: int) -> int:
+    """Start of the statement at the nesting level of `index`."""
+
+    parens = 0
+    for position in range(index - 1, -1, -1):
+        char = text[position]
+        if char == ")":
+            parens += 1
+        elif char == "(":
+            parens -= 1
+        elif char in ";{}" and parens <= 0:
+            return position + 1
+    return 0
+
+
+def _matching_paren(text: str, open_index: int) -> int:
+    depth = 0
+    for index in range(open_index, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(text)
+
+
+def _after_controlled_branch(text: str, index: int) -> int:
+    """Where the success path resumes after the call at `index`.
+
+    When the call is the condition of an `if` or `while`, its controlled
+    branch (the failure path) is skipped; otherwise the path resumes after the
+    call itself.
+    """
+
+    start = _statement_start(text, index)
+    guard = re.match(r"\s*(?:if|while)\s*\(", text[start:])
+    if guard is None:
+        return index
+    close = _matching_paren(text, start + guard.end() - 1)
+    rest = close + 1
+    while rest < len(text) and text[rest].isspace():
+        rest += 1
+    if rest < len(text) and text[rest] == "{":
+        return _matching_close(text, rest) + 1
+    semicolon = text.find(";", rest)
+    return len(text) if semicolon < 0 else semicolon + 1
+
+
 def _context(text: str, end: int) -> str:
     return " ".join(text[max(0, end - 80) : end].split())
+
+
+def _app_main_body(structure: str) -> Optional[str]:
+    app_main = re.search(r"\bvoid\s+app_main\s*\(", structure)
+    if app_main is None:
+        return None
+    open_index = structure.find("{", app_main.end())
+    if open_index < 0:
+        return None
+    return structure[open_index + 1 : _matching_close(structure, open_index)]
 
 
 def _fail_off_failures(structure: str) -> List[str]:
@@ -124,18 +193,20 @@ def _fail_off_failures(structure: str) -> List[str]:
     telemetry/CAN start must be preceded, in its own block and on its own path,
     by `local_argb::fail_off();`. A stopped facade publishes no Unavailable
     notice and a detached engine sends no Deactivate, so every stop or detach
-    must also fail off on its success path.
+    must also fail off on its success path. The rule fails closed: if either
+    start call is missing from app_main, the returns cannot be checked.
     """
 
     failures: List[str] = []
-    app_main = re.search(r"\bvoid\s+app_main\s*\(", structure)
-    open_index = structure.find("{", app_main.end()) if app_main is not None else -1
-    if app_main is None:
+    body = _app_main_body(structure)
+    if body is None:
         failures.append("app_main is missing from vehicle integration")
-    if open_index >= 0:
-        body = structure[open_index + 1 : _matching_close(structure, open_index)]
+    else:
         argb_start = body.find("local_argb::start()")
         telemetry_start = body.find("telemetry.start()")
+        for index, call in ((argb_start, "local_argb::start()"), (telemetry_start, "telemetry.start()")):
+            if index < 0:
+                failures.append(f"{call} is not called in app_main; setup returns cannot be checked")
         if argb_start >= 0 and telemetry_start >= 0:
             region_start = _statement_end(body, argb_start)
             region_end = _statement_end(body, telemetry_start)
@@ -145,7 +216,7 @@ def _fail_off_failures(structure: str) -> List[str]:
                 block_open = _enclosing_open(body, position)
                 path = _flatten(body[max(block_open + 1, region_start) : position])
                 braceless = before.endswith(")") or re.search(r"\belse$", before) is not None
-                if braceless or not _has_unconditional_fail_off(path):
+                if braceless or not _has_unconditional_fail_off(_after_last_label(path)):
                     failures.append(
                         "setup failure path does not fail off before returning: "
                         + _context(body, position + len("return"))
@@ -153,11 +224,14 @@ def _fail_off_failures(structure: str) -> List[str]:
     for match in _SHUTDOWN_CALL.finditer(structure):
         block_open = _enclosing_open(structure, match.start())
         block_close = _matching_close(structure, block_open) if block_open >= 0 else len(structure)
-        success_path = _flatten(structure[match.end() : block_close])
+        resume = min(_after_controlled_branch(structure, match.end()), block_close)
+        success_path = structure[resume:block_close]
+        # Any return on the success path, nested or not, leaves before a later
+        # fail_off() can run.
         next_return = re.search(r"\breturn\b", success_path)
         if next_return is not None:
             success_path = success_path[: next_return.start()]
-        if not _has_unconditional_fail_off(success_path):
+        if not _has_unconditional_fail_off(_flatten(success_path)):
             call = _squash(match.group(0))
             failures.append(f"{call} is not followed by local_argb::fail_off() on its success path")
     return failures
@@ -179,7 +253,7 @@ def _loop_body(structure: str, pattern: str) -> Optional[str]:
     open_index = structure.find("{", match.end())
     if open_index < 0 or structure[match.end() : open_index].strip():
         return None
-    return _squash(structure[open_index + 1 : _matching_close(structure, open_index)])
+    return structure[open_index + 1 : _matching_close(structure, open_index)]
 
 
 def _binding_failures(code: str, structure: str) -> List[str]:
@@ -200,13 +274,19 @@ def _binding_failures(code: str, structure: str) -> List[str]:
     binding_loop = _loop_body(
         structure, r"\bfor\s*\(\s*const\s+auto\s*&\s*binding\s*:\s*kEffectBindings\s*\)"
     )
-    if binding_loop is None or "led_actions.bind(binding.action,binding.effect)" not in binding_loop:
+    # A continue or break would skip table entries.
+    loop_exit = re.compile(r"\b(?:continue|break)\b")
+    if (
+        binding_loop is None
+        or "led_actions.bind(binding.action,binding.effect)" not in _squash(binding_loop)
+        or loop_exit.search(binding_loop)
+    ):
         failures.append("LED effect binding loop does not bind every kEffectBindings entry")
     rule_loop = _loop_body(
         structure, r"\bfor\s*\(\s*const\s+auto\s*&\s*rule\s*:\s*kTurnRules\s*\)"
     )
-    if rule_loop is None or not all(
-        needle in rule_loop
+    if rule_loop is None or loop_exit.search(rule_loop) or not all(
+        needle in _squash(rule_loop)
         for needle in (
             "{kTurnStateSignal,action_engine::Comparison::Equal,"
             "action_engine::RuleOperand::choice(rule.choice)},rule.action,"
@@ -307,14 +387,21 @@ def main() -> int:
     ):
         if needle not in board_header:
             failures.append(f"{label} is missing: {needle}")
-    # Strip comments once; every composition-root rule runs on this code.
+    # Strip comments once; every composition-root rule runs on this code. Only
+    # #include lines need string contents; every other rule runs on
+    # `structure`, where string contents are blanked, so a log message can
+    # never stand in for a call.
     code, _ = _strip_cpp_comments(vehicle_main)
     structure = _STRING_LITERAL.sub('""', code)
+    for header, label in (
+        ("mazda/vehicle_telemetry.hpp", "public telemetry facade include"),
+        ("mazda/signal_provider.hpp", "generic signal provider include"),
+        ("action_engine/engine.hpp", "generic action engine include"),
+        ("local_argb_actions/led_action_sink.hpp", "local LED action sink include"),
+    ):
+        if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
+            failures.append(f'{label} is missing from vehicle integration: #include "{header}"')
     for needle, label in (
-        ('#include "mazda/vehicle_telemetry.hpp"', "public telemetry facade include"),
-        ('#include "mazda/signal_provider.hpp"', "generic signal provider include"),
-        ('#include "action_engine/engine.hpp"', "generic action engine include"),
-        ('#include "local_argb_actions/led_action_sink.hpp"', "local LED action sink include"),
         ("static mazda::VehicleTelemetry telemetry{}", "static facade instance"),
         ("static mazda::MazdaSignalProvider signal_provider{telemetry}",
          "static generic provider over the facade"),
@@ -329,9 +416,16 @@ def main() -> int:
         ("telemetry.start()", "facade-owned startup"),
         ("vTaskDelay(pdMS_TO_TICKS(100))", "application polling cadence"),
     ):
-        if needle not in code:
+        if needle not in structure:
             failures.append(f"{label} is missing from vehicle integration: {needle}")
 
+    # Startup order is checked inside app_main only, and fails closed: a call
+    # that app_main does not make is a violation. _fail_off_failures reports
+    # the two start calls.
+    app_main_body = _app_main_body(structure) or ""
+    for call in ("board::initialize_safe_defaults()", "engine.attach()"):
+        if call not in app_main_body:
+            failures.append(f"{call} is not called in app_main")
     for earlier, later, label in (
         ("board::initialize_safe_defaults()", "local_argb::start()",
          "board safe defaults do not precede local ARGB startup"),
@@ -342,7 +436,8 @@ def main() -> int:
         ("local_argb::start()", "telemetry.start()",
          "local ARGB startup does not precede telemetry/CAN startup"),
     ):
-        earlier_index, later_index = code.find(earlier), code.find(later)
+        earlier_index = app_main_body.find(earlier)
+        later_index = app_main_body.find(later)
         if earlier_index >= 0 and later_index >= 0 and earlier_index > later_index:
             failures.append(label)
     failures.extend(_fail_off_failures(structure))

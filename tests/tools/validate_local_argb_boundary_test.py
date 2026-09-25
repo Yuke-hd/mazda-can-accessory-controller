@@ -169,6 +169,115 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("engine.detach() is not followed by local_argb::fail_off()")
 
+    def test_start_wrapped_in_helper_after_app_main_is_rejected(self) -> None:
+        for label, call, helper, message in (
+            (
+                "renderer start",
+                "if (!local_argb::start()) {",
+                "bool start_renderer() noexcept { return local_argb::start(); }\n",
+                "local_argb::start() is not called in app_main",
+            ),
+            (
+                "telemetry start",
+                "if (!telemetry.start().ok()) {",
+                "bool start_renderer() noexcept { return telemetry.start().ok(); }\n",
+                "telemetry.start() is not called in app_main",
+            ),
+        ):
+            original = (self.root / MAIN).read_text(encoding="utf-8")
+            with self.subTest(label):
+                try:
+                    self.edit(MAIN, call, "if (!start_renderer()) {")
+                    path = self.root / MAIN
+                    path.write_text(path.read_text(encoding="utf-8") + helper, encoding="utf-8")
+                    self.assert_rejected(message)
+                finally:
+                    (self.root / MAIN).write_text(original, encoding="utf-8")
+
+    def test_decoy_attach_string_before_start_is_rejected(self) -> None:
+        self.edit(MAIN, "engine.attach()", "vehicle_signals::SignalStatus::Ok")
+        self.edit(
+            MAIN,
+            BEFORE_CAN_START,
+            '  ESP_LOGI(kTag, "engine.attach() skipped");\n' + BEFORE_CAN_START,
+        )
+        self.edit(
+            MAIN,
+            '  ESP_LOGI(kTag, "strict listen-only CAN acquisition started',
+            "  (void)engine.attach();\n"
+            '  ESP_LOGI(kTag, "strict listen-only CAN acquisition started',
+        )
+        self.assert_rejected("engine attachment does not precede telemetry/CAN startup")
+
+    def test_fail_off_in_another_case_label_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            BEFORE_CAN_START,
+            "  switch (application_state.turn_notifications) {\n"
+            "  case 0U:\n"
+            '    ESP_LOGW(kTag, "no turn notice yet");\n'
+            "    local_argb::fail_off();\n"
+            "    break;\n"
+            "  default:\n"
+            "    return;\n"
+            "  }\n" + BEFORE_CAN_START,
+        )
+        self.assert_rejected("setup failure path does not fail off")
+
+    def test_fail_off_in_the_returning_case_label_passes(self) -> None:
+        self.edit(
+            MAIN,
+            BEFORE_CAN_START,
+            "  switch (application_state.turn_notifications) {\n"
+            "  case 0U:\n"
+            "    break;\n"
+            "  default:\n"
+            "    local_argb::fail_off();\n"
+            "    return;\n"
+            "  }\n" + BEFORE_CAN_START,
+        )
+        self.assert_accepted()
+
+    def test_nested_return_before_shutdown_fail_off_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            POLL_DELAY,
+            POLL_DELAY + "    (void)telemetry.stop();\n"
+            "    if (application_state.turn_notifications == 0U) {\n"
+            "      return;\n"
+            "    }\n"
+            "    local_argb::fail_off();\n",
+        )
+        self.assert_rejected("telemetry.stop() is not followed by local_argb::fail_off()")
+
+    def test_loop_exit_in_bind_or_rule_loop_is_rejected(self) -> None:
+        for label, anchor, message in (
+            (
+                "continue in bind loop",
+                "  for (const auto &binding : kEffectBindings) {\n",
+                "LED effect binding loop does not bind every kEffectBindings entry",
+            ),
+            (
+                "break in rule loop",
+                "  for (const auto &rule : kTurnRules) {\n",
+                "turn-state rule loop does not add a strict rule for every kTurnRules entry",
+            ),
+        ):
+            exit_statement = "continue" if "continue" in label else "break"
+            original = (self.root / MAIN).read_text(encoding="utf-8")
+            with self.subTest(label):
+                try:
+                    self.edit(
+                        MAIN,
+                        anchor,
+                        anchor
+                        + "    if (application_state.turn_notifications != 0U)\n"
+                        + f"      {exit_statement};\n",
+                    )
+                    self.assert_rejected(message)
+                finally:
+                    (self.root / MAIN).write_text(original, encoding="utf-8")
+
     def test_detach_followed_by_fail_off_passes(self) -> None:
         self.edit(
             MAIN,
