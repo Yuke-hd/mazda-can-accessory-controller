@@ -247,6 +247,163 @@ void test_fill_list_is_bounded() {
   assert(fills.size() == local_argb::internal::LightingFills::kCapacity);
 }
 
+namespace priority {
+
+using local_argb::internal::EffectPriority;
+using local_argb::internal::FillDirection;
+using local_argb::internal::FillFraction;
+using local_argb::internal::LedZone;
+using local_argb::internal::LightingCommand;
+using local_argb::internal::LightingFill;
+
+constexpr local_argb::Rgb kGauge{0, 16, 0};
+constexpr local_argb::Rgb kSignal{16, 8, 0};
+constexpr local_argb::Rgb kAmber{128, 16, 0};
+constexpr local_argb::Rgb kBrakeRed{local_argb::kBrightnessCeiling, 0, 0};
+
+LightingFill fill(const LedZone zone, const FillFraction level, const local_argb::Rgb color,
+                  const EffectPriority priority) {
+  return LightingFill{zone, level, {color.red, color.green, color.blue}, priority};
+}
+
+LightingCommand held() {
+  LightingCommand command{};
+  command.valid_until_us = 10'000'000;
+  command.actionable = true;
+  return command;
+}
+
+local_argb::PixelFrame render(const LightingCommand &command) {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(command, 0));
+  return sink.writes.back();
+}
+
+void paint(local_argb::PixelFrame &frame, const std::size_t first, const std::size_t last,
+           const local_argb::Rgb color) {
+  for (std::size_t index = first; index <= last; ++index)
+    frame[index] = color;
+}
+
+// The issue's example: a gauge over 20..79 at priority 50 and a signal over
+// 60..79 at priority 100. The signal owns all of 60..79, dark pixels too, and
+// the gauge keeps 20..59. Binding order does not matter.
+void test_higher_priority_fill_owns_its_whole_zone() {
+  const auto gauge = fill(LedZone{20, 60, FillDirection::StartToEnd}, FillFraction::full(), kGauge,
+                          EffectPriority{50});
+  const auto signal = fill(LedZone{60, 20, FillDirection::StartToEnd}, FillFraction::of(1, 2),
+                           kSignal, EffectPriority{100});
+  local_argb::PixelFrame expected = local_argb::kBlackFrame;
+  paint(expected, 20, 59, kGauge);
+  paint(expected, 60, 69, kSignal);
+
+  LightingCommand gauge_first = held();
+  assert(gauge_first.fills.add(gauge));
+  assert(gauge_first.fills.add(signal));
+  assert(render(gauge_first) == expected);
+
+  LightingCommand signal_first = held();
+  assert(signal_first.fills.add(signal));
+  assert(signal_first.fills.add(gauge));
+  assert(render(signal_first) == expected);
+}
+
+// A turn above a gauge owns its whole region, including the pixels its
+// animation leaves dark; the gauge keeps rendering outside that region.
+void test_higher_priority_turn_owns_its_dark_animation_pixels() {
+  LightingCommand command = held();
+  assert(command.fills.add(fill(LedZone{20, 60, FillDirection::StartToEnd}, FillFraction::full(),
+                                kGauge, EffectPriority{50})));
+  command.right_turn = true;
+
+  local_argb::PixelFrame expected = local_argb::kBlackFrame;
+  paint(expected, 20, local_argb::kRightTurnLedStart - 1, kGauge);
+  // At elapsed zero the right flow has only its head, at the inner edge.
+  expected[local_argb::kRightTurnLedStart] = kAmber;
+  assert(render(command) == expected);
+}
+
+// A fill above a turn owns its zone and the turn keeps animating elsewhere.
+void test_lower_priority_turn_yields_to_a_fill() {
+  LightingCommand command = held();
+  command.left_turn = true;
+  command.priorities.left_turn = EffectPriority{10};
+  assert(command.fills.add(fill(LedZone{30, 5, FillDirection::StartToEnd}, FillFraction::of(2, 5),
+                                kGauge, EffectPriority{11})));
+
+  // The left flow starts at pixel 34, which the fill owns and leaves dark.
+  local_argb::PixelFrame expected = local_argb::kBlackFrame;
+  paint(expected, 30, 31, kGauge);
+  assert(render(command) == expected);
+
+  command.priorities.left_turn = EffectPriority{12};
+  expected[34] = kAmber;
+  expected[30] = local_argb::kBlack;
+  expected[31] = local_argb::kBlack;
+  assert(render(command) == expected);
+}
+
+// Equal priorities keep the drawing order: fills in binding order, then
+// brake, then the turns; the later layer owns the overlap.
+void test_equal_priorities_resolve_in_drawing_order() {
+  LightingCommand fills = held();
+  assert(fills.fills.add(fill(LedZone{10, 10, FillDirection::StartToEnd}, FillFraction::full(),
+                              kGauge, EffectPriority{})));
+  assert(fills.fills.add(fill(LedZone{15, 10, FillDirection::StartToEnd}, FillFraction::of(1, 2),
+                              kSignal, EffectPriority{})));
+  local_argb::PixelFrame expected = local_argb::kBlackFrame;
+  paint(expected, 10, 14, kGauge);
+  paint(expected, 15, 19, kSignal);
+  assert(render(fills) == expected);
+
+  LightingCommand brake = held();
+  brake.brake = true;
+  assert(brake.fills.add(fill(LedZone{30, 10, FillDirection::StartToEnd}, FillFraction::full(),
+                              kGauge, EffectPriority{})));
+  expected = local_argb::kBlackFrame;
+  paint(expected, 30, local_argb::kBrakeLedStart - 1, kGauge);
+  paint(expected, local_argb::kBrakeLedStart,
+        local_argb::kBrakeLedStart + local_argb::kBrakeLedCount - 1, kBrakeRed);
+  assert(render(brake) == expected);
+}
+
+// Priorities change nothing where effects do not overlap.
+void test_priorities_do_not_change_disjoint_effects() {
+  LightingCommand defaults = held();
+  defaults.brake = true;
+  defaults.left_turn = true;
+  assert(defaults.fills.add(fill(LedZone{70, 10, FillDirection::EndToStart}, FillFraction::of(1, 2),
+                                 kGauge, EffectPriority{})));
+  LightingCommand ranked = defaults;
+  ranked.priorities = {EffectPriority{200}, EffectPriority{0}, EffectPriority{7}};
+  LightingCommand reranked = held();
+  reranked.brake = true;
+  reranked.left_turn = true;
+  assert(reranked.fills.add(fill(LedZone{70, 10, FillDirection::EndToStart}, FillFraction::of(1, 2),
+                                 kGauge, EffectPriority{255})));
+
+  const auto expected = render(defaults);
+  assert(expected[local_argb::kBrakeLedStart] == kBrakeRed);
+  assert(expected[34] == kAmber);
+  assert(expected[79] == kGauge);
+  assert(render(ranked) == expected);
+  assert(render(reranked) == expected);
+}
+
+void test_default_priority() {
+  assert(EffectPriority{} == EffectPriority{EffectPriority::kDefault});
+  assert(EffectPriority{50} < EffectPriority{100});
+  const LightingCommand command{};
+  assert(command.priorities.left_turn == EffectPriority{});
+  assert(command.priorities.right_turn == EffectPriority{});
+  assert(command.priorities.brake == EffectPriority{});
+  assert(LightingFill{}.priority == EffectPriority{});
+}
+
+} // namespace priority
+
 void test_onboard_status_collapses_logical_frame() {
   local_argb::PixelFrame turn_frame{};
   turn_frame[0] = {128, 16, 0};
@@ -282,5 +439,11 @@ int main() {
   test_fill_renders_its_zone_level_under_the_brightness_ceiling();
   test_empty_fill_list_keeps_the_generic_colour();
   test_fill_list_is_bounded();
+  priority::test_default_priority();
+  priority::test_higher_priority_fill_owns_its_whole_zone();
+  priority::test_higher_priority_turn_owns_its_dark_animation_pixels();
+  priority::test_lower_priority_turn_yields_to_a_fill();
+  priority::test_equal_priorities_resolve_in_drawing_order();
+  priority::test_priorities_do_not_change_disjoint_effects();
   return 0;
 }

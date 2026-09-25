@@ -14,9 +14,12 @@ constexpr vehicle_core::MonotonicTimestamp kHeldUntilUs =
 
 using local_argb::internal::FillFraction;
 
-local_argb::internal::LightingCommand
-held_command(const LedEffects effects, const local_argb::internal::LightingFills &fills) noexcept {
+local_argb::internal::LightingCommand held_command(const EffectBindings &bindings,
+                                                   const FillBindings &fill_bindings) noexcept {
+  const LedEffects effects = bindings.lit();
+  const local_argb::internal::LightingFills fills = fill_bindings.lit();
   local_argb::internal::LightingCommand command{};
+  command.priorities = bindings.priorities();
   command.left_turn = effects.left_turn;
   command.right_turn = effects.right_turn;
   command.brake = effects.brake;
@@ -67,7 +70,7 @@ void LedActionSink::execute(const action_engine::ActionCommand &command) noexcep
     return;
   // A rejected publish is not retried; see the LightingSink precondition in
   // the header.
-  (void)lighting_->publish(held_command(bindings_.lit(), fills_.lit()));
+  (void)lighting_->publish(held_command(bindings_, fills_));
 }
 
 } // namespace local_argb_actions

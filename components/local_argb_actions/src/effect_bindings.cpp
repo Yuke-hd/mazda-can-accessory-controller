@@ -1,16 +1,20 @@
 #include "local_argb_actions/effect_bindings.hpp"
 
+#include <optional>
+
 namespace local_argb_actions {
 
-BindingStatus EffectBindings::bind(const action_engine::ActionId action,
-                                   const LedEffect effect) noexcept {
+using local_argb::internal::EffectPriority;
+
+BindingStatus EffectBindings::bind(const action_engine::ActionId action, const LedEffect effect,
+                                   const EffectPriority priority) noexcept {
   if (!action.valid())
     return BindingStatus::InvalidAction;
   if (contains(action, effect))
     return BindingStatus::DuplicateBinding;
   if (count_ == kCapacity)
     return BindingStatus::CapacityExceeded;
-  bindings_[count_++] = Binding{action, effect, false};
+  bindings_[count_++] = Binding{action, effect, priority, false};
   return BindingStatus::Ok;
 }
 
@@ -37,6 +41,23 @@ LedEffects EffectBindings::lit() const noexcept {
     effects.brake = effects.brake || binding.effect == LedEffect::Brake;
   }
   return effects;
+}
+
+local_argb::internal::EffectPriorities EffectBindings::priorities() const noexcept {
+  return {highest_active(LedEffect::LeftTurn), highest_active(LedEffect::RightTurn),
+          highest_active(LedEffect::Brake)};
+}
+
+EffectPriority EffectBindings::highest_active(const LedEffect effect) const noexcept {
+  std::optional<EffectPriority> highest{};
+  for (std::size_t index = 0; index < count_; ++index) {
+    const Binding &binding = bindings_[index];
+    if (!binding.active || binding.effect != effect)
+      continue;
+    if (!highest || *highest < binding.priority)
+      highest = binding.priority;
+  }
+  return highest.value_or(EffectPriority{});
 }
 
 bool EffectBindings::contains(const action_engine::ActionId action,

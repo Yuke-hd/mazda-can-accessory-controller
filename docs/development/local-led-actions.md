@@ -67,10 +67,9 @@ did.
 - Commands for unbound actions are ignored and publish nothing.
 
 A command lists every non-empty fill in binding order, up to
-`LightingFills::kCapacity` (8). The renderer draws the fills first and then
-brake and the turn animation on top, so a fixed effect wins wherever it
-overlaps a fill. A command with fills does not paint the generic
-compatibility colour. The fill list makes `LightingCommand` larger, and the
+`LightingFills::kCapacity` (8), and the priority of each fill and fixed
+effect; see [Effect priority](#effect-priority). A command with fills does
+not paint the generic compatibility colour. The fill list makes `LightingCommand` larger, and the
 renderer queue still copies it by value; a `static_assert` keeps it trivially
 copyable.
 
@@ -83,6 +82,37 @@ one-slot overwrite queue that rejects only before `local_argb::start()`, so
 start the renderer before the engine attaches. A rejected publish is not
 retried, and the engine never resends a deduplicated level, so a rejected
 `Deactivate` would leave the effect lit.
+
+## Effect priority
+
+Every binding takes an optional `EffectPriority` (#30), a rank from 0 to 255
+where higher wins. It is set per binding, never by effect type or signal:
+
+- `bind(ActionId, LedEffect, EffectPriority)` sets the priority of an on/off
+  binding. When several active bindings light one effect, the effect takes
+  the highest of their priorities.
+- `FillEffect::priority` sets the priority of a fill binding.
+- An unset priority is `EffectPriority::kDefault` (100) for every binding, so
+  a configuration that sets none keeps the drawing order below.
+
+The renderer resolves overlaps per physical LED. Each lit effect owns every
+pixel of its region (the fill's zone, the brake region, or one turn region),
+including the pixels its level or animation leaves dark, unless an effect of
+higher priority also covers that pixel. No colours are blended or mixed.
+Pixels that no other effect covers render exactly as they would alone.
+
+Equal priorities resolve by drawing order, and the later effect wins: fills
+in binding order (a later fill beats an earlier one, even on the same zone),
+then brake, then the left turn, then the right turn. With the defaults a
+fixed effect therefore wins over a fill it overlaps, as before #30; the
+difference is that it now also blanks the fill's pixels its animation leaves
+dark. An empty fill, or one with an invalid zone, owns nothing.
+
+For example, a gauge fill over `20..79` at priority 50 and the right turn
+(`65..99`) at the default priority: while the turn is lit it owns `65..79`,
+and the gauge keeps rendering on `20..64`. Give the gauge priority 101 or
+more and it owns `65..79` instead, while the turn keeps animating on
+`80..99`.
 
 ## Fail-off policy: held level
 
@@ -130,10 +160,14 @@ level change. This is fail-safe but visible.
   rejected publish, and the binding errors. For fills it covers levels 0,
   0.25, 0.5 and 1.0, clamping of out-of-range and infinite levels, NaN
   fail-off, Deactivate, Activate, Trigger, fills published together with
-  on/off effects, and the fill binding errors.
+  on/off effects, and the fill binding errors. It also covers default and
+  configured binding priorities and the highest active priority of an effect.
 - `components/local_argb/tests/rendering_tests.cpp` covers a fill under the
   brightness ceiling, the generic colour without fills, and the bounded fill
-  list.
+  list. For priority it covers the #30 gauge and turn example in both binding
+  orders, a turn owning its dark animation pixels, a fill above a turn,
+  equal-priority overlaps between fills and between a fill and brake, and
+  unchanged frames when no effects overlap.
 - `tests/host/local_led_action_composition_tests.cpp` runs a make-independent
   fake provider, the engine, the adapter and the production
   `RendererController` into a fake `PixelFrameSink`. It shows left, right and
@@ -141,7 +175,8 @@ level change. This is fail-safe but visible.
   black for off, NoData, Stale, Unavailable and rejected unverified readings,
   plus recovery and the latched write fault. It also renders a fill in every
   direction at levels 0, 0.25, 0.5 and 1.0, and drives one from an engine
-  range rule on a generic numeric signal, which fails off on Stale data.
+  range rule on a generic numeric signal, which fails off on Stale data, and
+  renders a higher-priority turn over a gauge fill and releases it.
 - `architecture_contracts` restricts the adapter to the engine action port,
   the renderer sink contract, core time values and standard headers. It
   rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,

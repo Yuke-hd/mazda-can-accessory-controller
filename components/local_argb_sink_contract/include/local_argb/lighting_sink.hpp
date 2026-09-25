@@ -16,6 +16,41 @@ struct LightingRgb {
   std::uint8_t blue{0};
 };
 
+// Resolves effects that overlap on the strip. Each lit effect owns the pixels
+// of its region, dark pixels included, wherever no effect of higher priority
+// overlaps it. At equal priority the later effect in drawing order wins: fills
+// in list order, then brake, then the left turn, then the right turn.
+// Priority is a binding choice; it does not depend on the signal behind it.
+class EffectPriority {
+public:
+  static constexpr std::uint8_t kDefault = 100;
+
+  constexpr EffectPriority() noexcept = default;
+  constexpr explicit EffectPriority(const std::uint8_t rank) noexcept : rank_(rank) {}
+
+  [[nodiscard]] constexpr std::uint8_t rank() const noexcept { return rank_; }
+
+private:
+  std::uint8_t rank_{kDefault};
+};
+
+constexpr bool operator==(const EffectPriority left, const EffectPriority right) noexcept {
+  return left.rank() == right.rank();
+}
+constexpr bool operator!=(const EffectPriority left, const EffectPriority right) noexcept {
+  return !(left == right);
+}
+constexpr bool operator<(const EffectPriority left, const EffectPriority right) noexcept {
+  return left.rank() < right.rank();
+}
+
+// The priority of each fixed effect, used while that effect is lit.
+struct EffectPriorities {
+  EffectPriority left_turn{};
+  EffectPriority right_turn{};
+  EffectPriority brake{};
+};
+
 // One level-driven fill: `level` of `zone` lit in `color`. The renderer caps
 // each colour channel at its brightness ceiling and draws nothing for an
 // invalid zone.
@@ -23,6 +58,7 @@ struct LightingFill {
   LedZone zone{};
   FillFraction level{FillFraction::empty()};
   LightingRgb color{};
+  EffectPriority priority{};
 };
 
 // Fixed-capacity, trivially copyable list of fills, in drawing order. It never
@@ -61,6 +97,8 @@ struct LightingCommand {
   // Level-driven zone fills. With no fills, no brake and no turn, the
   // renderer paints the generic colour instead.
   LightingFills fills{};
+  // Overlap resolution for the fixed effects; see EffectPriority.
+  EffectPriorities priorities{};
 };
 
 // The renderer queue copies commands byte-wise.

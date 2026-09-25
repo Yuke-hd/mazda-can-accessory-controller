@@ -52,8 +52,9 @@ public:
   LedActionSink &operator=(LedActionSink &&) = delete;
   ~LedActionSink() = default;
 
-  [[nodiscard]] BindingStatus bind(action_engine::ActionId action, LedEffect effect) noexcept {
-    return bindings_.bind(action, effect);
+  [[nodiscard]] BindingStatus bind(action_engine::ActionId action, LedEffect effect,
+                                   local_argb::internal::EffectPriority priority = {}) noexcept {
+    return bindings_.bind(action, effect, priority);
   }
   [[nodiscard]] BindingStatus bind(action_engine::ActionId action,
                                    const FillEffect &effect) noexcept {
