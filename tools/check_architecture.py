@@ -815,10 +815,13 @@ def _include_violations(relative: str, code: str, allowed: "re.Pattern[str]") ->
 
 
 def _target_arguments(cmake_code: str, command: str, target: str) -> List[str]:
-    """Arguments after `target` of every `command(target ...)` call."""
+    """Arguments after `target` of every `command(target ...)` call.
+
+    `target` is matched literally, so `${COMPONENT_LIB}` works too.
+    """
 
     arguments: List[str] = []
-    pattern = rf"\b{command}\s*\(\s*{target}\b([^)]*)\)"
+    pattern = rf"\b{command}\s*\(\s*{re.escape(target)}(?!\w)([^)]*)\)"
     for match in re.finditer(pattern, cmake_code):
         arguments.extend(match.group(1).split())
     return arguments
@@ -902,9 +905,15 @@ _LED_ACTIONS_ALLOWED_REQUIRES = frozenset(
 _LED_ACTIONS_ALLOWED_INCLUDE_DIRS = frozenset(("${CMAKE_CURRENT_SOURCE_DIR}/include", "include"))
 # Bare SDK headers such as <FreeRTOS.h> or <esp_timer.h> pass the standard
 # angle-include rule, so their names are rejected here as well.
+# Names are anchored at an identifier start. `subscribe` keeps the adapter from
+# registering with a provider, the facade or CAN itself.
 _LED_ACTIONS_FORBIDDEN_NAMES = re.compile(
-    r"mazda|twai|can_bus|freertos|wled|esp_|led_strip|sdkconfig", re.IGNORECASE
+    r"(?<![A-Za-z0-9])(?:mazda|twai|can_bus|freertos|wled|esp_|led_strip|sdkconfig|subscribe)",
+    re.IGNORECASE,
 )
+# The ESP-IDF build names the component's target ${COMPONENT_LIB}.
+_LED_ACTIONS_TARGETS = ("local_argb_actions", "${COMPONENT_LIB}")
+_LED_ACTIONS_DIRECTORY_SCOPE = re.compile(r"\b(include_directories|link_libraries)\s*\(")
 
 
 def _led_action_cmake_violations(cmake: Path) -> List[str]:
@@ -912,12 +921,15 @@ def _led_action_cmake_violations(cmake: Path) -> List[str]:
         return ["local_argb_actions CMakeLists.txt is missing"]
     code = re.sub(r"#.*", "", cmake.read_text(encoding="utf-8"))
     violations: List[str] = []
-    for item in _target_arguments(code, "target_link_libraries", "local_argb_actions"):
-        if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_LINKS:
-            violations.append(f"local_argb_actions links forbidden target {item}")
-    for item in _target_arguments(code, "target_include_directories", "local_argb_actions"):
-        if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
-            violations.append(f"local_argb_actions adds forbidden include directory {item}")
+    for target in _LED_ACTIONS_TARGETS:
+        for item in _target_arguments(code, "target_link_libraries", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_LINKS:
+                violations.append(f"local_argb_actions links forbidden target {item}")
+        for item in _target_arguments(code, "target_include_directories", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
+                violations.append(f"local_argb_actions adds forbidden include directory {item}")
+    for command in sorted(set(_LED_ACTIONS_DIRECTORY_SCOPE.findall(code))):
+        violations.append(f"local_argb_actions uses directory-scope {command}()")
     for item in _idf_arguments(code, ("REQUIRES", "PRIV_REQUIRES")):
         if item not in _LED_ACTIONS_ALLOWED_REQUIRES:
             violations.append(f"local_argb_actions requires forbidden component {item}")

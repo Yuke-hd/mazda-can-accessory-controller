@@ -108,7 +108,9 @@ level change. This is fail-safe but visible.
 - `architecture_contracts` restricts the adapter to the engine action port,
   the renderer sink contract, core time values and standard headers. It
   rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,
-  and any other link target, include directory or ESP-IDF requirement.
+  a `subscribe` call, any other link target, include directory or ESP-IDF
+  requirement (including `${COMPONENT_LIB}`), and directory-scope
+  `include_directories()` or `link_libraries()`.
 
 ## Firmware composition
 
@@ -129,6 +131,11 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
 Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
 The application never stops the facade or detaches the engine.
 
+This step is where the documented differences from the legacy binding reach
+the hardware: a hung dispatcher holds the strip lit, and a write fault stays
+dark until the next level change. See
+[Fail-off policy: held level](#fail-off-policy-held-level).
+
 The migration keeps the visible turn and hazard behavior of the legacy
 `mazda::application::bind_local_argb_sink()` binding. That binding also lit
 brake on a Fresh brake reading. Brake has no freshness timeout, so it is never
@@ -139,7 +146,20 @@ The legacy binding is no longer bound in firmware. The renderer queue has one
 slot, so the LED sink must be its only publisher. The binding stays compiled
 in `mazda_telemetry` as a rollout fallback and is to be removed after rollout.
 The local ARGB boundary validator rejects it in the vehicle application. It
-also requires the wiring above: the components, attach before start, fail-off
-on every setup failure and after any stop or detach, the mirrored bindings,
-no `FreshOrUnverified`, and no subscription inside the adapter.
-`tests/tools/validate_local_argb_boundary_test.py` covers these rules.
+checks `main.cpp` with comments removed and requires the wiring above:
+
+- the components;
+- attach before start;
+- `fail_off()` in the block of every `return` between `local_argb::start()`
+  and `telemetry.start()`, and on the success path after any
+  `telemetry.stop()` or `engine.detach()`;
+- exactly the mirrored `kTurnRules` and `kEffectBindings` entries, applied
+  by the only bind and rule loops;
+- no `FreshOrUnverified`.
+
+`tests/tools/validate_local_argb_boundary_test.py` covers these rules,
+including braceless, commented-out and nested bypasses.
+
+Hardware follow-up: engine evaluation and the LED publish now run on the
+4 KiB `mazda_notify` dispatcher stack. On a bench with debug logging
+enabled, check that task's `uxTaskGetStackHighWaterMark()`.

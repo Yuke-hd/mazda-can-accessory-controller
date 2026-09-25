@@ -19,9 +19,9 @@ constexpr char kTag[] = "weact_can485_v11";
 // MazdaSignalProvider -> ActionEngine -> LedActionSink -> renderer queue.
 // The strip is mounted mirrored, so, as in the retired telemetry binding, the
 // vehicle's left indicator lights the renderer's right_turn region and the
-// right indicator its left_turn region; hazard lights both. The legacy binding
-// also lit brake on a Fresh brake reading, but brake has no freshness timeout
-// and is never Fresh, so it never lit; brake is not bound here.
+// right indicator its left_turn region; hazard lights both. Brake is not bound;
+// see docs/development/local-led-actions.md#firmware-composition.
+constexpr std::string_view kTurnStateSignal{"vehicle.turn_state"};
 constexpr action_engine::ActionId kTurnLeftAction{1};
 constexpr action_engine::ActionId kTurnRightAction{2};
 constexpr action_engine::ActionId kHazardAction{3};
@@ -87,13 +87,14 @@ bool reading_is_actionable(const mazda::Reading<float> &reading) noexcept {
           reading.availability == mazda::Availability::FreshnessUnverified);
 }
 
-// The facade owns a 32 KiB opaque service allocation. Keep both it and the
-// callback context in application-owned storage instead of the 3.5 KiB
-// app_main task stack. Declare the context first so it outlives the facade if
-// static teardown ever runs after the workers have been stopped. The LED sink
-// is the renderer queue's only publisher. The provider and the engine borrow
-// the facade, so they follow it; the engine is a callback context too and is
-// torn down only after the workers have been stopped.
+// The facade owns a 32 KiB opaque service allocation. Keep it, the provider,
+// the engine, the LED sink and the typed callback context in application-owned
+// storage instead of the 3.5 KiB app_main task stack. The LED sink is the
+// renderer queue's only publisher. Static destructors never run on ESP-IDF.
+// If teardown were ever added, it would have to stop the facade
+// (telemetry.stop()) before the engine is destroyed, and then call
+// local_argb::fail_off(), because a stopped facade and a destroyed engine send
+// no Deactivate.
 static ApplicationState application_state{};
 static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()};
 static mazda::VehicleTelemetry telemetry{};
@@ -105,19 +106,30 @@ static action_engine::ActionEngine engine{signal_provider};
 // 250 ms freshness timeout.
 bool configure_engine_lighting() noexcept {
   for (const auto &binding : kEffectBindings) {
-    if (led_actions.bind(binding.action, binding.effect) != local_argb_actions::BindingStatus::Ok)
+    const auto status = led_actions.bind(binding.action, binding.effect);
+    if (status != local_argb_actions::BindingStatus::Ok) {
+      ESP_LOGE(kTag, "LED effect bind failed for action %u: status=%u",
+               static_cast<unsigned>(binding.action.value()), static_cast<unsigned>(status));
       return false;
+    }
   }
-  if (engine.add_sink(led_actions) != action_engine::ConfigStatus::Ok)
+  const auto sink_status = engine.add_sink(led_actions);
+  if (sink_status != action_engine::ConfigStatus::Ok) {
+    ESP_LOGE(kTag, "engine add_sink failed for the LED action sink: status=%u",
+             static_cast<unsigned>(sink_status));
     return false;
+  }
   for (const auto &rule : kTurnRules) {
-    const action_engine::StateRuleConfig config{{"vehicle.turn_state",
-                                                 action_engine::Comparison::Equal,
+    const action_engine::StateRuleConfig config{{kTurnStateSignal, action_engine::Comparison::Equal,
                                                  action_engine::RuleOperand::choice(rule.choice)},
                                                 rule.action,
                                                 action_engine::FreshnessRequirement::Fresh};
-    if (engine.add_state_rule(config) != action_engine::ConfigStatus::Ok)
+    const auto status = engine.add_state_rule(config);
+    if (status != action_engine::ConfigStatus::Ok) {
+      ESP_LOGE(kTag, "engine add_state_rule failed for action %u: status=%u",
+               static_cast<unsigned>(rule.action.value()), static_cast<unsigned>(status));
       return false;
+    }
   }
   return true;
 }
