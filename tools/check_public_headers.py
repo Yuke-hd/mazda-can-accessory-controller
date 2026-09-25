@@ -138,7 +138,7 @@ FORBIDDEN_DEPENDENCIES: DependencyRules = (
     ),
     ("mutable signal/state", ("vehicle_core/signal.hpp", "mazda/state.hpp")),
     ("notification implementation", ("vehicle_core/notification_channel.hpp",)),
-    ("lighting implementation", ("lighting_sink.hpp",)),
+    ("lighting implementation", ("lighting_sink.hpp", "lighting_zone.hpp")),
     ("board dependency", ("board/board_config.h",)),
     (
         "CAN driver dependency",

@@ -1,5 +1,7 @@
 #include "../private_include/local_argb/renderer.hpp"
 
+#include "../private_include/local_argb/led_zone.hpp"
+
 namespace local_argb::internal {
 
 namespace {
@@ -13,6 +15,20 @@ Rgb scaled(const Rgb color, const std::size_t numerator, const std::size_t denom
   return {static_cast<std::uint8_t>(color.red * numerator / denominator),
           static_cast<std::uint8_t>(color.green * numerator / denominator),
           static_cast<std::uint8_t>(color.blue * numerator / denominator)};
+}
+
+std::uint8_t ceiling_clamped(const std::uint8_t channel) noexcept {
+  return channel > kBrightnessCeiling ? kBrightnessCeiling : channel;
+}
+
+Rgb ceiling_clamped(const LightingRgb color) noexcept {
+  return {ceiling_clamped(color.red), ceiling_clamped(color.green), ceiling_clamped(color.blue)};
+}
+
+// An invalid zone draws nothing; see fill_zone().
+void draw_fills(PixelFrame &frame, const LightingFills &fills) noexcept {
+  for (const LightingFill &fill : fills)
+    (void)fill_zone(frame, fill.zone, fill.level, ceiling_clamped(fill.color));
 }
 
 void draw_flow(PixelFrame &frame, const bool left, const std::size_t phase) noexcept {
@@ -105,6 +121,8 @@ bool RendererController::tick(const vehicle_core::MonotonicTimestamp now_us) noe
 PixelFrame
 RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) const noexcept {
   PixelFrame frame = kBlackFrame;
+  // Fixed effects draw over fills where they overlap.
+  draw_fills(frame, command_.fills);
   if (command_.brake) {
     for (std::size_t index = 0; index < kBrakeLedCount; ++index)
       frame[kBrakeLedStart + index] = kRed;
@@ -114,13 +132,9 @@ RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) con
   if (turn_active) {
     const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
     animation_(frame, AnimationContext{command_.left_turn, command_.right_turn, elapsed});
-  } else if (!command_.brake) {
+  } else if (!command_.brake && command_.fills.empty()) {
     // Preserve the generic colour-only handoff for compatibility consumers.
-    const Rgb color{
-        command_.color.red > kBrightnessCeiling ? kBrightnessCeiling : command_.color.red,
-        command_.color.green > kBrightnessCeiling ? kBrightnessCeiling : command_.color.green,
-        command_.color.blue > kBrightnessCeiling ? kBrightnessCeiling : command_.color.blue};
-    frame.fill(color);
+    frame.fill(ceiling_clamped(command_.color));
   }
   return frame;
 }

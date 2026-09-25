@@ -199,6 +199,54 @@ void test_turn_flow_starts_at_inner_edges_and_moves_outward() {
   assert(right_outer[local_argb::kRightTurnLedStart] == local_argb::kBlack);
 }
 
+local_argb::internal::LightingCommand fill_command(const local_argb::internal::LightingRgb color,
+                                                   const local_argb::internal::FillFraction level) {
+  local_argb::internal::LightingCommand command{};
+  command.color = {0, local_argb::kBrightnessCeiling, 0};
+  const local_argb::internal::LedZone zone{10, 4, local_argb::internal::FillDirection::StartToEnd};
+  assert(command.fills.add({zone, level, color}));
+  command.valid_until_us = 1'000;
+  command.actionable = true;
+  return command;
+}
+
+void test_fill_renders_its_zone_level_under_the_brightness_ceiling() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+
+  assert(
+      renderer.apply(fill_command({255, 8, 0}, local_argb::internal::FillFraction::of(1, 2)), 0));
+
+  // Half of a four-pixel zone: two pixels, each channel capped at the ceiling.
+  // The generic colour is not painted over a command that carries fills.
+  local_argb::PixelFrame expected = local_argb::kBlackFrame;
+  expected[10] = {local_argb::kBrightnessCeiling, 8, 0};
+  expected[11] = {local_argb::kBrightnessCeiling, 8, 0};
+  assert(sink.writes.back() == expected);
+}
+
+void test_empty_fill_list_keeps_the_generic_colour() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+
+  assert(renderer.apply(green(1'000), 0));
+
+  const local_argb::Rgb green_rgb{0, local_argb::kBrightnessCeiling, 0};
+  assert(sink.writes.back().front() == green_rgb);
+  assert(sink.writes.back().back() == green_rgb);
+}
+
+void test_fill_list_is_bounded() {
+  local_argb::internal::LightingFills fills;
+  const local_argb::internal::LightingFill fill{};
+  for (std::size_t index = 0; index < local_argb::internal::LightingFills::kCapacity; ++index)
+    assert(fills.add(fill));
+  assert(!fills.add(fill));
+  assert(fills.size() == local_argb::internal::LightingFills::kCapacity);
+}
+
 void test_onboard_status_collapses_logical_frame() {
   local_argb::PixelFrame turn_frame{};
   turn_frame[0] = {128, 16, 0};
@@ -231,5 +279,8 @@ int main() {
   test_turn_flow_and_brake_regions();
   test_turn_flow_starts_at_inner_edges_and_moves_outward();
   test_onboard_status_collapses_logical_frame();
+  test_fill_renders_its_zone_level_under_the_brightness_ceiling();
+  test_empty_fill_list_keeps_the_generic_colour();
+  test_fill_list_is_bounded();
   return 0;
 }

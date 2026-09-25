@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-// Host composition proof for #11: generic provider -> ActionEngine ->
+// Host composition proof for #11 and #29: generic provider -> ActionEngine ->
 // LedActionSink -> RendererController -> PixelFrameSink. The catalog is
 // make-independent, so no Mazda type is reachable from this test; the renderer
 // is the production state machine behind the component's private include.
@@ -25,11 +25,17 @@ using action_engine::ActionId;
 using action_engine::Comparison;
 using action_engine::ConfigStatus;
 using action_engine::FreshnessRequirement;
+using action_engine::NumericRange;
+using action_engine::RangeRuleConfig;
 using action_engine::RuleOperand;
 using action_engine::SignalCondition;
 using action_engine::StateRuleConfig;
 using local_argb::PixelFrame;
+using local_argb::internal::FillDirection;
+using local_argb::internal::LedZone;
+using local_argb::internal::LightingRgb;
 using local_argb_actions::BindingStatus;
+using local_argb_actions::FillEffect;
 using local_argb_actions::LedActionSink;
 using local_argb_actions::LedEffect;
 using vehicle_signals::Availability;
@@ -38,6 +44,7 @@ using vehicle_signals::SignalEnumChoice;
 using vehicle_signals::SignalId;
 using vehicle_signals::SignalMetadata;
 using vehicle_signals::SignalNotification;
+using vehicle_signals::SignalReading;
 using vehicle_signals::SignalStatus;
 using vehicle_signals::SignalType;
 using vehicle_signals::SignalUnit;
@@ -45,6 +52,7 @@ using vehicle_signals::SignalValue;
 using vehicle_signals::ValidationStatus;
 
 constexpr SignalId kTurnState{1};
+constexpr SignalId kGaugeInput{2};
 constexpr std::uint16_t kOff = 0;
 constexpr std::uint16_t kLeft = 1;
 constexpr std::uint16_t kRight = 2;
@@ -56,6 +64,9 @@ constexpr SignalEnumChoice kTurnChoices[] = {
 constexpr SignalMetadata kCatalog[] = {
     {kTurnState, "lamps.turn_state", SignalType::Enum, SignalUnit::None, ValidationStatus::Observed,
      SignalCapability::Read | SignalCapability::Notify, kTurnChoices, std::size(kTurnChoices)},
+    // A generic numeric input for level-driven fills; no vehicle meaning.
+    {kGaugeInput, "test.gauge_input", SignalType::Number, SignalUnit::None,
+     ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
 };
 constexpr vehicle_signals::SignalCatalogView kView{kCatalog};
 static_assert(kView.well_formed());
@@ -63,6 +74,7 @@ static_assert(kView.well_formed());
 constexpr ActionId kTurnLeftAction{1};
 constexpr ActionId kTurnRightAction{2};
 constexpr ActionId kHazardAction{3};
+constexpr ActionId kGaugeAction{4};
 
 class RecordingPixelSink final : public local_argb::PixelFrameSink {
 public:
@@ -306,4 +318,113 @@ TEST_CASE("a pixel write fault fails off and stays dark until the next level cha
   // The next command is the renderer's recovery boundary.
   harness.publish_at(1'001'000, turn(kLeft));
   CHECK(left_lit(harness.frame_at(1'001'000)));
+}
+
+namespace {
+
+constexpr LightingRgb kFillColor{0, 0, 16};
+constexpr local_argb::Rgb kFillPixel{0, 0, 16};
+constexpr std::size_t kFillStart = 40;
+constexpr std::size_t kFillLength = 8;
+
+// Composition root for a level-driven fill: LedActionSink -> renderer.
+struct FillHarness final {
+  explicit FillHarness(FillDirection direction) {
+    REQUIRE(renderer.start());
+    REQUIRE(led.bind(kGaugeAction, FillEffect{LedZone{kFillStart, kFillLength, direction},
+                                              kFillColor}) == BindingStatus::Ok);
+  }
+
+  [[nodiscard]] const PixelFrame &frame_after(const action_engine::ActionCommand &command) {
+    led.execute(command);
+    REQUIRE(renderer.tick(0));
+    return pixels.frames.back();
+  }
+
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  RendererLightingSink lighting{renderer};
+  LedActionSink led{lighting};
+};
+
+action_engine::ActionCommand set_level(float level) {
+  return action_engine::ActionCommand{kGaugeAction, action_engine::ActionCommandKind::SetLevel,
+                                      level};
+}
+
+// A black frame with pixels [first, last] lit in the fill colour.
+PixelFrame lit_between(std::size_t first, std::size_t last) {
+  PixelFrame frame = local_argb::kBlackFrame;
+  for (std::size_t index = first; index <= last; ++index)
+    frame[index] = kFillPixel;
+  return frame;
+}
+
+} // namespace
+
+TEST_CASE("a SetLevel renders its fill in every zone direction") {
+  const struct {
+    FillDirection direction;
+    float level;
+    PixelFrame expected;
+  } cases[] = {
+      {FillDirection::StartToEnd, 0.0F, local_argb::kBlackFrame},
+      {FillDirection::StartToEnd, 0.25F, lit_between(40, 41)},
+      {FillDirection::StartToEnd, 0.5F, lit_between(40, 43)},
+      {FillDirection::StartToEnd, 1.0F, lit_between(40, 47)},
+      {FillDirection::EndToStart, 0.0F, local_argb::kBlackFrame},
+      {FillDirection::EndToStart, 0.25F, lit_between(46, 47)},
+      {FillDirection::EndToStart, 0.5F, lit_between(44, 47)},
+      {FillDirection::EndToStart, 1.0F, lit_between(40, 47)},
+      {FillDirection::CenterOut, 0.0F, local_argb::kBlackFrame},
+      {FillDirection::CenterOut, 0.25F, lit_between(43, 44)},
+      {FillDirection::CenterOut, 0.5F, lit_between(42, 45)},
+      {FillDirection::CenterOut, 1.0F, lit_between(40, 47)},
+  };
+  for (const auto &item : cases) {
+    CAPTURE(static_cast<int>(item.direction));
+    CAPTURE(item.level);
+    FillHarness harness{item.direction};
+
+    CHECK(harness.frame_after(set_level(item.level)) == item.expected);
+  }
+}
+
+TEST_CASE("Deactivate turns a rendered fill black") {
+  FillHarness harness{FillDirection::StartToEnd};
+  REQUIRE(harness.frame_after(set_level(0.5F)) == lit_between(40, 43));
+
+  CHECK(harness.frame_after(action_engine::ActionCommand{
+            kGaugeAction, action_engine::ActionCommandKind::Deactivate, 0.0F}) ==
+        local_argb::kBlackFrame);
+}
+
+TEST_CASE("an engine range rule drives a fill end to end and fails off without data") {
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  RendererLightingSink lighting{renderer};
+  LedActionSink led{lighting};
+  test_support::FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+  REQUIRE(renderer.start());
+  REQUIRE(
+      led.bind(kGaugeAction, FillEffect{LedZone{kFillStart, kFillLength, FillDirection::StartToEnd},
+                                        kFillColor}) == BindingStatus::Ok);
+  REQUIRE(engine.add_sink(led) == ConfigStatus::Ok);
+  REQUIRE(engine.add_range_rule(RangeRuleConfig{"test.gauge_input", NumericRange{0.0F, 100.0F},
+                                                NumericRange{0.0F, 1.0F}, kGaugeAction}) ==
+          ConfigStatus::Ok);
+  REQUIRE(engine.attach() == SignalStatus::Ok);
+
+  provider.set_reading(kGaugeInput, SignalReading{SignalValue::number(50.0F), Availability::Fresh,
+                                                  ValidationStatus::Reference});
+  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  CHECK(pixels.frames.back() == lit_between(40, 43));
+
+  provider.set_reading(kGaugeInput, SignalReading{SignalValue::number(50.0F), Availability::Stale,
+                                                  ValidationStatus::Reference});
+  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  CHECK(pixels.frames.back() == local_argb::kBlackFrame);
+
+  (void)engine.detach();
 }
