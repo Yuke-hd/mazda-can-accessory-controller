@@ -42,7 +42,20 @@ ConfigStatus ActionEngine::add_range_rule(const RangeRuleConfig &config) noexcep
   if (!resolution.rule.has_value()) {
     return resolution.status;
   }
-  return range_rules_.add(*resolution.rule);
+  return polled_rules_.add(*resolution.rule);
+}
+
+ConfigStatus ActionEngine::add_sampled_state_rule(const SampledStateRuleConfig &config) noexcept {
+  const auto status = check_action(config.action, RuleOutput::Level);
+  if (status != ConfigStatus::Ok) {
+    return status;
+  }
+  const auto resolution =
+      resolve_sampled_condition(provider_->catalog(), config.condition, config.freshness);
+  if (!resolution.condition.has_value()) {
+    return resolution.status;
+  }
+  return polled_rules_.add(SampledStateRule{*resolution.condition, config.action});
 }
 
 ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) const noexcept {
@@ -52,7 +65,8 @@ ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) cons
   if (!action.valid()) {
     return ConfigStatus::InvalidAction;
   }
-  if (output == RuleOutput::Level && (rules_.drives_level(action) || range_rules_.drives(action))) {
+  if (output == RuleOutput::Level &&
+      (rules_.drives_level(action) || polled_rules_.drives(action))) {
     return ConfigStatus::DuplicateAction;
   }
   return ConfigStatus::Ok;
@@ -95,15 +109,15 @@ SignalStatus ActionEngine::detach() noexcept {
   return status;
 }
 
-SignalStatus ActionEngine::sample_range_rules() noexcept {
+SignalStatus ActionEngine::sample_polled_rules() noexcept {
   if (!attached_) {
     return SignalStatus::InvalidState;
   }
-  for (std::size_t index = 0; index < range_rules_.size(); ++index) {
+  for (std::size_t index = 0; index < polled_rules_.size(); ++index) {
     // Read outside the lock: a provider read must never wait on a sink.
-    const auto read = provider_->read(range_rules_.signal(index));
+    const auto read = provider_->read(polled_rules_.signal(index));
     const std::lock_guard<std::mutex> lock{evaluation_};
-    range_rules_.on_sample(index, read, sinks_);
+    polled_rules_.on_sample(index, read, sinks_);
   }
   return SignalStatus::Ok;
 }
@@ -111,7 +125,7 @@ SignalStatus ActionEngine::sample_range_rules() noexcept {
 void ActionEngine::reset_rules() noexcept {
   const std::lock_guard<std::mutex> lock{evaluation_};
   rules_.reset();
-  range_rules_.reset();
+  polled_rules_.reset();
 }
 
 void ActionEngine::on_notice(void *context, const SignalNotification &notice) noexcept {

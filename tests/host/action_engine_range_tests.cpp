@@ -75,7 +75,7 @@ struct Bench final {
   Bench &operator=(const Bench &) = delete;
 
   Commands sample() {
-    CHECK(engine.sample_range_rules() == SignalStatus::Ok);
+    CHECK(engine.sample_polled_rules() == SignalStatus::Ok);
     return sink.take();
   }
   Commands sample_rpm(float rpm, Availability availability = Availability::Fresh) {
@@ -340,7 +340,7 @@ TEST_CASE("range and state rules share one level-action namespace") {
 TEST_CASE("the ninth range rule exceeds capacity and range rules are stopped-only") {
   FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
-  for (std::size_t index = 0; index < ActionEngine::kMaxRangeRules; ++index) {
+  for (std::size_t index = 0; index < ActionEngine::kMaxPolledRules; ++index) {
     RangeRuleConfig config = tachometer();
     config.action = ActionId{static_cast<std::uint16_t>(100 + index)};
     REQUIRE(engine.add_range_rule(config) == ConfigStatus::Ok);
@@ -403,17 +403,17 @@ TEST_CASE("unverified rpm follows each range rule's freshness policy in the engi
   CHECK(bench.sample_rpm(3250.0F) == Commands{set_level(kTachometer, 0.5F)});
 }
 
-TEST_CASE("sample_range_rules is rejected while detached") {
+TEST_CASE("sample_polled_rules is rejected while detached") {
   Bench bench{};
   REQUIRE(bench.engine.add_range_rule(tachometer()) == ConfigStatus::Ok);
   bench.provider.set_reading(kRpm, rpm_reading(3250.0F));
-  CHECK(bench.engine.sample_range_rules() == SignalStatus::InvalidState);
+  CHECK(bench.engine.sample_polled_rules() == SignalStatus::InvalidState);
   CHECK(bench.sink.commands().empty());
 
   REQUIRE(bench.engine.attach() == SignalStatus::Ok);
   CHECK(bench.sample() == Commands{set_level(kTachometer, 0.5F)});
   REQUIRE(bench.engine.detach() == SignalStatus::Ok);
-  CHECK(bench.engine.sample_range_rules() == SignalStatus::InvalidState);
+  CHECK(bench.engine.sample_polled_rules() == SignalStatus::InvalidState);
 }
 
 TEST_CASE("re-attaching resets range rules so an unchanged level is emitted again") {
@@ -466,7 +466,7 @@ TEST_CASE("sampling on one thread and notices on another never overlap sink call
     }
   }};
   for (int round = 0; round < kRounds; ++round) {
-    CHECK(engine.sample_range_rules() == SignalStatus::Ok);
+    CHECK(engine.sample_polled_rules() == SignalStatus::Ok);
   }
   dispatcher.join();
 

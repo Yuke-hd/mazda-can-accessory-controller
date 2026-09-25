@@ -1,5 +1,6 @@
 # Generic action engine: resolves persisted rules against a provider catalog,
-# evaluates state/event rules on latest-state notices and fans commands out to
+# evaluates state/event rules on latest-state notices and polled (range and
+# sampled state) rules on caller-driven reads, and fans commands out to
 # action sinks. It links only the portable vehicle_signals contracts; no make,
 # CAN, driver, RTOS, LED or transport component is reachable from this target.
 # Only the firmware composition root combines it with a provider and sinks.
@@ -7,10 +8,11 @@ if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/actionability.cpp"
                               "src/condition.cpp"
                               "src/engine.cpp"
+                              "src/polled_rule_set.cpp"
                               "src/range_rule.cpp"
-                              "src/range_rule_set.cpp"
                               "src/rule_set.cpp"
                               "src/rules.cpp"
+                              "src/sampled_state_rule.cpp"
                               "src/sink_fan_out.cpp"
                               "src/subscription_set.cpp"
                          INCLUDE_DIRS "include"
@@ -22,10 +24,11 @@ add_library(action_engine STATIC
   src/actionability.cpp
   src/condition.cpp
   src/engine.cpp
+  src/polled_rule_set.cpp
   src/range_rule.cpp
-  src/range_rule_set.cpp
   src/rule_set.cpp
   src/rules.cpp
+  src/sampled_state_rule.cpp
   src/sink_fan_out.cpp
   src/subscription_set.cpp
 )

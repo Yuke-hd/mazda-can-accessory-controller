@@ -93,6 +93,18 @@ struct StateRuleConfig {
   FreshnessRequirement freshness{FreshnessRequirement::Fresh};
 };
 
+// Level rule sampled at the caller's cadence: reads a Read-capable signal and
+// Activates while the condition holds on an actionable reading, Deactivating
+// otherwise (every non-actionable reading and every failed read). Only a
+// change of output is emitted. The condition follows the same rules as a
+// state rule's, so ordered comparisons apply only to Number signals. A
+// sampled state rule owns its ActionId like any other level rule.
+struct SampledStateRuleConfig {
+  SignalCondition condition{};
+  ActionId action{};
+  FreshnessRequirement freshness{FreshnessRequirement::Fresh};
+};
+
 // Direction of the condition transition that fires an event rule.
 enum class EventEdge : std::uint8_t { BecomesTrue, BecomesFalse };
 

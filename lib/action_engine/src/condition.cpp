@@ -52,6 +52,31 @@ namespace {
                              ResolvedCondition{signal.id, condition.comparison, value, freshness}};
 }
 
+// Shared resolution; `delivery` is the capability the rule consumes the
+// signal through (Notify for notified rules, Read for sampled ones).
+[[nodiscard]] ConditionResolution resolve_through(vehicle_signals::SignalCatalogView catalog,
+                                                  const SignalCondition &condition,
+                                                  FreshnessRequirement freshness,
+                                                  SignalCapability delivery) noexcept {
+  const SignalMetadata *signal = catalog.find(condition.signal_key);
+  if (signal == nullptr) {
+    return failure(ConfigStatus::UnknownSignal);
+  }
+  if (!signal->capabilities.has(delivery)) {
+    return failure(ConfigStatus::UnsupportedCapability);
+  }
+  if (operand_type(condition.operand.kind()) != signal->type) {
+    return failure(ConfigStatus::TypeMismatch);
+  }
+  if (!std::isfinite(condition.operand.as_number().value_or(0.0F))) {
+    return failure(ConfigStatus::InvalidOperand);
+  }
+  if (is_ordered(condition.comparison) && signal->type != SignalType::Number) {
+    return failure(ConfigStatus::UnsupportedComparison);
+  }
+  return resolve_operand(*signal, condition, freshness);
+}
+
 } // namespace
 
 std::optional<bool> ResolvedCondition::evaluate(const SignalReading &reading) const noexcept {
@@ -86,23 +111,13 @@ bool ResolvedCondition::holds(const SignalValue &value) const noexcept {
 ConditionResolution resolve_condition(vehicle_signals::SignalCatalogView catalog,
                                       const SignalCondition &condition,
                                       FreshnessRequirement freshness) noexcept {
-  const SignalMetadata *signal = catalog.find(condition.signal_key);
-  if (signal == nullptr) {
-    return failure(ConfigStatus::UnknownSignal);
-  }
-  if (!signal->capabilities.has(SignalCapability::Notify)) {
-    return failure(ConfigStatus::UnsupportedCapability);
-  }
-  if (operand_type(condition.operand.kind()) != signal->type) {
-    return failure(ConfigStatus::TypeMismatch);
-  }
-  if (!std::isfinite(condition.operand.as_number().value_or(0.0F))) {
-    return failure(ConfigStatus::InvalidOperand);
-  }
-  if (is_ordered(condition.comparison) && signal->type != SignalType::Number) {
-    return failure(ConfigStatus::UnsupportedComparison);
-  }
-  return resolve_operand(*signal, condition, freshness);
+  return resolve_through(catalog, condition, freshness, SignalCapability::Notify);
+}
+
+ConditionResolution resolve_sampled_condition(vehicle_signals::SignalCatalogView catalog,
+                                              const SignalCondition &condition,
+                                              FreshnessRequirement freshness) noexcept {
+  return resolve_through(catalog, condition, freshness, SignalCapability::Read);
 }
 
 } // namespace action_engine

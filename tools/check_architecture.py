@@ -321,11 +321,12 @@ ACTION_ENGINE_HEADERS = (
     "action_engine/condition.hpp",
     "action_engine/config_status.hpp",
     "action_engine/engine.hpp",
+    "action_engine/polled_rule_set.hpp",
     "action_engine/range_rule.hpp",
-    "action_engine/range_rule_set.hpp",
     "action_engine/rule_config.hpp",
     "action_engine/rule_set.hpp",
     "action_engine/rules.hpp",
+    "action_engine/sampled_state_rule.hpp",
     "action_engine/sink_fan_out.hpp",
     "action_engine/subscription_set.hpp",
 )
@@ -367,8 +368,8 @@ _VEHICLE_SIGNALS_PROBE_BODY = (
     "}\n"
 )
 
-# Drives one state rule and one range rule through a probe-local provider and
-# sink, so the probe links and runs the engine's compiled sources.
+# Drives one state rule, one range rule and one sampled state rule through a
+# probe-local provider and sink, so the probe links and runs the engine's compiled sources.
 _ACTION_ENGINE_PROBE_BODY = (
     "namespace {\n"
     "using namespace vehicle_signals;\n"
@@ -406,8 +407,12 @@ _ACTION_ENGINE_PROBE_BODY = (
     "public:\n"
     "  void execute(const action_engine::ActionCommand &command) noexcept override {\n"
     "    last = command;\n"
+    "    if (command.kind == action_engine::ActionCommandKind::SetLevel) {\n"
+    "      level = command.level;\n"
+    "    }\n"
     "  }\n"
     "  action_engine::ActionCommand last{};\n"
+    "  float level{-1.0F};\n"
     "};\n"
     "} // namespace\n"
     "int main() {\n"
@@ -420,9 +425,14 @@ _ACTION_ENGINE_PROBE_BODY = (
     "      action_engine::ActionId{1}};\n"
     "  const action_engine::RangeRuleConfig range{\"probe.number\", {0.0F, 100.0F},\n"
     "                                              {0.0F, 1.0F}, action_engine::ActionId{2}};\n"
+    "  const action_engine::SampledStateRuleConfig sampled_state{\n"
+    "      {\"probe.number\", action_engine::Comparison::Greater,\n"
+    "       action_engine::RuleOperand::number(25.0F)},\n"
+    "      action_engine::ActionId{3}};\n"
     "  if (engine.add_sink(sink) != action_engine::ConfigStatus::Ok ||\n"
     "      engine.add_state_rule(rule) != action_engine::ConfigStatus::Ok ||\n"
     "      engine.add_range_rule(range) != action_engine::ConfigStatus::Ok ||\n"
+    "      engine.add_sampled_state_rule(sampled_state) != action_engine::ConfigStatus::Ok ||\n"
     "      engine.attach() != SignalStatus::Ok) {\n"
     "    return 1;\n"
     "  }\n"
@@ -433,9 +443,10 @@ _ACTION_ENGINE_PROBE_BODY = (
     "  notice.initial = true;\n"
     "  provider.publish(notice);\n"
     "  const bool activated = sink.last.kind == action_engine::ActionCommandKind::Activate;\n"
-    "  const bool sampled = engine.sample_range_rules() == SignalStatus::Ok &&\n"
-    "                       sink.last.kind == action_engine::ActionCommandKind::SetLevel &&\n"
-    "                       sink.last.level == 0.5F;\n"
+    "  const bool sampled = engine.sample_polled_rules() == SignalStatus::Ok &&\n"
+    "                       sink.level == 0.5F &&\n"
+    "                       sink.last.action == action_engine::ActionId{3} &&\n"
+    "                       sink.last.kind == action_engine::ActionCommandKind::Activate;\n"
     "  return activated && sampled && engine.detach() == SignalStatus::Ok ? 0 : 1;\n"
     "}\n"
 )

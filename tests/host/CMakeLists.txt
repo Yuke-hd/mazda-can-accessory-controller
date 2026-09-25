@@ -91,6 +91,7 @@ doctest_discover_tests(signal_consumer_tests)
 add_executable(action_engine_tests
   action_engine_condition_tests.cpp
   action_engine_range_tests.cpp
+  action_engine_sampled_state_tests.cpp
   action_engine_rule_tests.cpp
   action_engine_tests.cpp
 )

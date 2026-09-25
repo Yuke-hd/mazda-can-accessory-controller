@@ -190,7 +190,7 @@ TEST_CASE("a real engine-rpm frame maps to a tachometer level only under FreshOr
   REQUIRE(engine.attach() == SignalStatus::Ok);
   REQUIRE(harness.telemetry.start().ok());
 
-  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  REQUIRE(engine.sample_polled_rules() == SignalStatus::Ok);
   CHECK(sink.take() == Commands{{kStrictTachometer, ActionCommandKind::Deactivate},
                                 {kTachometer, ActionCommandKind::Deactivate}});
 
@@ -206,7 +206,7 @@ TEST_CASE("a real engine-rpm frame maps to a tachometer level only under FreshOr
   REQUIRE(reading.ok());
   CHECK(reading.value->availability == vehicle_signals::Availability::FreshnessUnverified);
 
-  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  REQUIRE(engine.sample_polled_rules() == SignalStatus::Ok);
   const auto commands = sink.take();
   REQUIRE(commands.size() == 1);
   CHECK(commands[0].action == kTachometer);
