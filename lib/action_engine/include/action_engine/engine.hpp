@@ -7,7 +7,7 @@
 #include "action_engine/action.hpp"
 #include "action_engine/condition.hpp"
 #include "action_engine/config_status.hpp"
-#include "action_engine/range_rule_set.hpp"
+#include "action_engine/polled_rule_set.hpp"
 #include "action_engine/rule_config.hpp"
 #include "action_engine/rule_set.hpp"
 #include "action_engine/sink_fan_out.hpp"
@@ -21,26 +21,28 @@ namespace action_engine {
 // The engine knows only the generic provider port: application composition
 // chooses the concrete provider at construction and it cannot be swapped.
 //
-// Setup: add_sink(), add_state_rule(), add_event_rule() and add_range_rule()
-// are accepted only while detached (InvalidState otherwise). A sink is
-// registered at most once (DuplicateSink). State and range rules are level
-// outputs, so each ActionId is driven by at most one of them
-// (DuplicateAction); otherwise the sink's level would depend on rule order.
+// Setup: add_sink(), add_state_rule(), add_event_rule(), add_range_rule() and
+// add_sampled_state_rule() are accepted only while detached (InvalidState
+// otherwise). A sink is registered at most once (DuplicateSink). State, range
+// and sampled state rules are level outputs, so each ActionId is driven by at
+// most one of them (DuplicateAction); otherwise the sink's level would depend
+// on rule order.
 // Event rules emit one-shot Triggers and may share an ActionId with each other
 // and with one level rule. Rules are resolved through the provider catalog
 // when added; runtime rules keep only SignalIds and compact values.
-// Capacities are fixed (kMaxSinks, kMaxRules, kMaxRangeRules) and evaluation
+// Capacities are fixed (kMaxSinks, kMaxRules, kMaxPolledRules) and evaluation
 // never allocates.
 //
-// Cadence: state and event rules run on provider notices. Range rules run
-// only when the application calls sample_range_rules() at its own cadence;
-// each call reads every range rule's signal through the provider port. The
-// signal layer gains no polling worker or synthetic notification.
+// Cadence: state and event rules run on provider notices. Polled rules (range
+// and sampled state rules, sharing kMaxPolledRules) run only when the
+// application calls sample_polled_rules() at its own cadence; each call reads
+// every polled rule's signal through the provider port. The signal layer
+// gains no polling worker or synthetic notification.
 //
 // Lifecycle: attach() and detach() are provider subscription mutations, so
 // they run on the provider's lifecycle owner while the provider is stopped.
-// attach() resets every rule's runtime state (including range rules) and
-// subscribes once per distinct signal used by state and event rules; range
+// attach() resets every rule's runtime state (including polled rules) and
+// subscribes once per distinct signal used by state and event rules; polled
 // rules need no subscription; if a subscription fails it unsubscribes the ones
 // it made and returns the provider's failure. detach() unsubscribes
 // everything; on a provider failure the remaining registrations are kept, the
@@ -52,10 +54,10 @@ namespace action_engine {
 // sinks must outlive the engine's attachment.
 //
 // Concurrency: the provider delivers notifications serially on its dispatcher
-// context, while sample_range_rules() runs on the caller's context. The engine
+// context, while sample_polled_rules() runs on the caller's context. The engine
 // serializes all rule evaluation and sink delivery with one mutex, so sinks
 // never see concurrent execute() calls. Provider reads happen outside the
-// lock. Call sample_range_rules() from one context at a time, and never
+// lock. Call sample_polled_rules() from one context at a time, and never
 // concurrently with configuration, attach() or detach(). Rules on a signal see
 // its notices in insertion order, and each command is sent to every sink in
 // registration order.
@@ -63,7 +65,8 @@ class ActionEngine final {
 public:
   static constexpr std::size_t kMaxSinks = SinkFanOut::kCapacity;
   static constexpr std::size_t kMaxRules = RuleSet::kCapacity;
-  static constexpr std::size_t kMaxRangeRules = RangeRuleSet::kCapacity;
+  // Shared by range and sampled state rules.
+  static constexpr std::size_t kMaxPolledRules = PolledRuleSet::kCapacity;
 
   explicit ActionEngine(vehicle_signals::SignalProvider &provider) noexcept;
 
@@ -77,6 +80,9 @@ public:
   [[nodiscard]] ConfigStatus add_state_rule(const StateRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_event_rule(const EventRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_range_rule(const RangeRuleConfig &config) noexcept;
+  // Failures, in check order: InvalidState, InvalidAction, DuplicateAction,
+  // then resolve_sampled_condition()'s, then CapacityExceeded.
+  [[nodiscard]] ConfigStatus add_sampled_state_rule(const SampledStateRuleConfig &config) noexcept;
 
   [[nodiscard]] vehicle_signals::SignalStatus attach() noexcept;
   [[nodiscard]] vehicle_signals::SignalStatus detach() noexcept;
@@ -84,10 +90,14 @@ public:
   // registrations behind) until a successful detach().
   [[nodiscard]] bool attached() const noexcept { return attached_; }
 
-  // Reads each range rule's signal and emits its SetLevel or fail-off
-  // Deactivate when that changes. InvalidState while detached; otherwise Ok.
-  // Read failures are per-rule fail-off, not a returned status.
-  [[nodiscard]] vehicle_signals::SignalStatus sample_range_rules() noexcept;
+  // Reads each polled rule's signal, in insertion order, and emits the rule's
+  // command when its output changes: SetLevel for a range rule,
+  // Activate/Deactivate for a sampled state rule, and fail-off Deactivate for
+  // either on a failed read or non-actionable reading. InvalidState while
+  // detached; otherwise Ok. Read failures are per-rule fail-off, not a
+  // returned status. Each rule reads its signal separately, so rules on the
+  // same signal may see different samples.
+  [[nodiscard]] vehicle_signals::SignalStatus sample_polled_rules() noexcept;
 
 private:
   static void on_notice(void *context, const vehicle_signals::SignalNotification &notice) noexcept;
@@ -108,7 +118,7 @@ private:
   vehicle_signals::SignalProvider *provider_{nullptr};
   SinkFanOut sinks_{};
   RuleSet rules_{};
-  RangeRuleSet range_rules_{};
+  PolledRuleSet polled_rules_{};
   SubscriptionSet subscriptions_{};
   // Serializes rule evaluation and sink delivery across the provider's
   // dispatcher and the sampling context.

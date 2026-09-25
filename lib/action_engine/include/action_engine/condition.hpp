@@ -52,4 +52,12 @@ struct ConditionResolution {
                                                     const SignalCondition &condition,
                                                     FreshnessRequirement freshness) noexcept;
 
+// Resolves a condition evaluated on sampled reads rather than notices. It
+// applies the same checks, in the same order, as resolve_condition() except
+// that UnsupportedCapability means the signal cannot be read.
+[[nodiscard]] ConditionResolution
+resolve_sampled_condition(vehicle_signals::SignalCatalogView catalog,
+                          const SignalCondition &condition,
+                          FreshnessRequirement freshness) noexcept;
+
 } // namespace action_engine

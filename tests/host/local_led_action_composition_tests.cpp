@@ -419,12 +419,12 @@ TEST_CASE("an engine range rule drives a fill end to end and fails off without d
 
   provider.set_reading(kGaugeInput, SignalReading{SignalValue::number(50.0F), Availability::Fresh,
                                                   ValidationStatus::Reference});
-  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  REQUIRE(engine.sample_polled_rules() == SignalStatus::Ok);
   CHECK(pixels.frames.back() == lit_between(40, 43));
 
   provider.set_reading(kGaugeInput, SignalReading{SignalValue::number(50.0F), Availability::Stale,
                                                   ValidationStatus::Reference});
-  REQUIRE(engine.sample_range_rules() == SignalStatus::Ok);
+  REQUIRE(engine.sample_polled_rules() == SignalStatus::Ok);
   CHECK(pixels.frames.back() == local_argb::kBlackFrame);
 
   (void)engine.detach();

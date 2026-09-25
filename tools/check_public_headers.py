@@ -82,11 +82,12 @@ ACTION_ENGINE_HEADERS: Tuple[str, ...] = (
     "action_engine/condition.hpp",
     "action_engine/config_status.hpp",
     "action_engine/engine.hpp",
+    "action_engine/polled_rule_set.hpp",
     "action_engine/range_rule.hpp",
-    "action_engine/range_rule_set.hpp",
     "action_engine/rule_config.hpp",
     "action_engine/rule_set.hpp",
     "action_engine/rules.hpp",
+    "action_engine/sampled_state_rule.hpp",
     "action_engine/sink_fan_out.hpp",
     "action_engine/subscription_set.hpp",
 )
