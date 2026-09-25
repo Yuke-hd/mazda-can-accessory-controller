@@ -2,6 +2,10 @@
 
 #include "../private_include/local_argb/led_zone.hpp"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
 namespace local_argb::internal {
 
 namespace {
@@ -23,12 +27,6 @@ std::uint8_t ceiling_clamped(const std::uint8_t channel) noexcept {
 
 Rgb ceiling_clamped(const LightingRgb color) noexcept {
   return {ceiling_clamped(color.red), ceiling_clamped(color.green), ceiling_clamped(color.blue)};
-}
-
-// An invalid zone draws nothing; see fill_zone().
-void draw_fills(PixelFrame &frame, const LightingFills &fills) noexcept {
-  for (const LightingFill &fill : fills)
-    (void)fill_zone(frame, fill.zone, fill.level, ceiling_clamped(fill.color));
 }
 
 void draw_flow(PixelFrame &frame, const bool left, const std::size_t phase) noexcept {
@@ -59,6 +57,86 @@ void draw_center_out_fill(PixelFrame &frame, const bool left, const std::size_t 
     const auto position = left ? kTurnLedCount - 1 - offset : kRightTurnLedStart + offset;
     frame[position] = kAmber;
   }
+}
+
+enum class LayerKind : std::uint8_t { Fill, Brake, LeftTurn, RightTurn };
+
+// One lit effect and the strip region it owns while no higher layer covers it.
+struct Layer {
+  LayerKind kind{LayerKind::Brake};
+  EffectPriority priority{};
+  const LightingFill *fill{nullptr};
+  std::size_t start{0};
+  std::size_t count{0};
+};
+
+// The lit effects of a command, in drawing order: fills in list order, then
+// brake, then the left turn, then the right turn. Fills that are empty or
+// have an invalid zone light nothing and so own nothing.
+class LayerStack {
+public:
+  explicit LayerStack(const LightingCommand &command) noexcept {
+    for (const LightingFill &fill : command.fills) {
+      if (fill.level != FillFraction::empty() && validate_zone(fill.zone) == ZoneValidity::Valid)
+        push({LayerKind::Fill, fill.priority, &fill, fill.zone.start, fill.zone.length});
+    }
+    if (command.brake)
+      push({LayerKind::Brake, command.priorities.brake, nullptr, kBrakeLedStart, kBrakeLedCount});
+    if (command.left_turn)
+      push({LayerKind::LeftTurn, command.priorities.left_turn, nullptr, 0, kTurnLedCount});
+    if (command.right_turn)
+      push({LayerKind::RightTurn, command.priorities.right_turn, nullptr, kRightTurnLedStart,
+            kTurnLedCount});
+  }
+
+  // Stable insertion sort by ascending priority, so equal priorities keep
+  // their drawing order and the last layer drawn is the one that wins.
+  void sort_by_priority() noexcept {
+    for (std::size_t index = 1; index < count_; ++index) {
+      const Layer layer = layers_[index];
+      std::size_t slot = index;
+      for (; slot > 0 && layer.priority < layers_[slot - 1].priority; --slot)
+        layers_[slot] = layers_[slot - 1];
+      layers_[slot] = layer;
+    }
+  }
+
+  [[nodiscard]] const Layer *begin() const noexcept { return layers_.data(); }
+  [[nodiscard]] const Layer *end() const noexcept { return layers_.data() + count_; }
+
+private:
+  void push(const Layer &layer) noexcept { layers_[count_++] = layer; }
+
+  std::array<Layer, LightingFills::kCapacity + 3> layers_{};
+  std::size_t count_{0};
+};
+
+void draw_layer(PixelFrame &frame, const Layer &layer, const AnimationStrategy animation,
+                const vehicle_core::Microseconds elapsed_us) noexcept {
+  switch (layer.kind) {
+  case LayerKind::Fill:
+    (void)fill_zone(frame, layer.fill->zone, layer.fill->level, ceiling_clamped(layer.fill->color));
+    return;
+  case LayerKind::Brake:
+    for (std::size_t index = 0; index < layer.count; ++index)
+      frame[layer.start + index] = kRed;
+    return;
+  case LayerKind::LeftTurn:
+    animation(frame, AnimationContext{true, false, elapsed_us});
+    return;
+  case LayerKind::RightTurn:
+    animation(frame, AnimationContext{false, true, elapsed_us});
+    return;
+  }
+}
+
+// A layer owns its whole region, dark pixels included: clearing the region
+// first removes every lower layer's pixels there. No colours are mixed.
+void draw_owned(PixelFrame &frame, const Layer &layer, const AnimationStrategy animation,
+                const vehicle_core::Microseconds elapsed_us) noexcept {
+  for (std::size_t index = 0; index < layer.count; ++index)
+    frame[layer.start + index] = kBlack;
+  draw_layer(frame, layer, animation, elapsed_us);
 }
 
 } // namespace
@@ -121,21 +199,19 @@ bool RendererController::tick(const vehicle_core::MonotonicTimestamp now_us) noe
 PixelFrame
 RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) const noexcept {
   PixelFrame frame = kBlackFrame;
-  // Fixed effects draw over fills where they overlap.
-  draw_fills(frame, command_.fills);
-  if (command_.brake) {
-    for (std::size_t index = 0; index < kBrakeLedCount; ++index)
-      frame[kBrakeLedStart + index] = kRed;
-  }
-
-  const bool turn_active = command_.left_turn || command_.right_turn;
-  if (turn_active) {
-    const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
-    animation_(frame, AnimationContext{command_.left_turn, command_.right_turn, elapsed});
-  } else if (!command_.brake && command_.fills.empty()) {
+  if (!command_.left_turn && !command_.right_turn && !command_.brake && command_.fills.empty()) {
     // Preserve the generic colour-only handoff for compatibility consumers.
     frame.fill(ceiling_clamped(command_.color));
+    return frame;
   }
+
+  // Painter's order by priority: each layer owns its region wherever no
+  // later, higher-or-equal layer overlaps it; see EffectPriority.
+  LayerStack layers{command_};
+  layers.sort_by_priority();
+  const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
+  for (const Layer &layer : layers)
+    draw_owned(frame, layer, animation_, elapsed);
   return frame;
 }
 

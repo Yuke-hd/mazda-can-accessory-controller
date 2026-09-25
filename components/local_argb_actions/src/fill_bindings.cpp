@@ -54,7 +54,8 @@ local_argb::internal::LightingFills FillBindings::lit() const noexcept {
     if (binding.level == FillFraction::empty())
       continue;
     // Cannot fail: both lists share one capacity.
-    (void)fills.add({binding.effect.zone, binding.level, binding.effect.color});
+    (void)fills.add(
+        {binding.effect.zone, binding.level, binding.effect.color, binding.effect.priority});
   }
   return fills;
 }

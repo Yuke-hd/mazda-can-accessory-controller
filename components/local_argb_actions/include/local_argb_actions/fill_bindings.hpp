@@ -12,9 +12,11 @@ namespace local_argb_actions {
 // A level-capable LED effect: a configured strip zone, lit from its fill
 // direction in proportion to the level, in one colour. The renderer caps the
 // colour at its brightness ceiling and draws nothing for an invalid zone.
+// `priority` resolves overlaps with other lit effects; see EffectPriority.
 struct FillEffect {
   local_argb::internal::LedZone zone{};
   local_argb::internal::LightingRgb color{};
+  local_argb::internal::EffectPriority priority{};
 };
 
 // Converts an engine level to a fill fraction. Levels are normalized to

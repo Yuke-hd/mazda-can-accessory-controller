@@ -15,6 +15,7 @@ namespace {
 using action_engine::ActionCommand;
 using action_engine::ActionCommandKind;
 using action_engine::ActionId;
+using local_argb::internal::EffectPriority;
 using local_argb::internal::FillDirection;
 using local_argb::internal::FillFraction;
 using local_argb::internal::LedZone;
@@ -388,4 +389,61 @@ TEST_CASE("fill bind rejects bindings beyond the fixed fill capacity") {
   const ActionId overflow{static_cast<std::uint16_t>(LedActionSink::kMaxFillBindings + 1)};
   CHECK(sink.bind(overflow, FillEffect{kGaugeZone, kGaugeColor}) ==
         BindingStatus::CapacityExceeded);
+}
+
+TEST_CASE("an unset binding priority publishes the default priority") {
+  GaugeSink fixture{};
+  REQUIRE(fixture.sink.bind(kTurnLeft, LedEffect::LeftTurn) == BindingStatus::Ok);
+
+  fixture.sink.execute(set_level(kGauge, 0.5F));
+  fixture.sink.execute(activate(kTurnLeft));
+
+  REQUIRE(fixture.last().fills.size() == 1);
+  CHECK(fixture.last().fills.begin()->priority == EffectPriority{});
+  CHECK(fixture.last().priorities.left_turn == EffectPriority{});
+  CHECK(fixture.last().priorities.right_turn == EffectPriority{});
+  CHECK(fixture.last().priorities.brake == EffectPriority{});
+}
+
+TEST_CASE("a fill binding publishes its configured priority") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting};
+  REQUIRE(sink.bind(kGauge, FillEffect{kGaugeZone, kGaugeColor, EffectPriority{50}}) ==
+          BindingStatus::Ok);
+
+  sink.execute(set_level(kGauge, 0.5F));
+
+  REQUIRE(lighting.commands.back().fills.size() == 1);
+  CHECK(lighting.commands.back().fills.begin()->priority == EffectPriority{50});
+}
+
+TEST_CASE("an on/off binding publishes its configured priority for its effect") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting};
+  REQUIRE(sink.bind(kTurnRight, LedEffect::RightTurn, EffectPriority{150}) == BindingStatus::Ok);
+  REQUIRE(sink.bind(kHazard, LedEffect::Brake, EffectPriority{20}) == BindingStatus::Ok);
+
+  sink.execute(activate(kTurnRight));
+  sink.execute(activate(kHazard));
+
+  const auto &command = lighting.commands.back();
+  CHECK(command.priorities.right_turn == EffectPriority{150});
+  CHECK(command.priorities.brake == EffectPriority{20});
+  CHECK(command.priorities.left_turn == EffectPriority{});
+}
+
+TEST_CASE("an effect lit by several actions takes the highest active binding priority") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting};
+  REQUIRE(sink.bind(kTurnLeft, LedEffect::LeftTurn, EffectPriority{120}) == BindingStatus::Ok);
+  REQUIRE(sink.bind(kHazard, LedEffect::LeftTurn, EffectPriority{80}) == BindingStatus::Ok);
+
+  sink.execute(activate(kHazard));
+  CHECK(lighting.commands.back().priorities.left_turn == EffectPriority{80});
+
+  sink.execute(activate(kTurnLeft));
+  CHECK(lighting.commands.back().priorities.left_turn == EffectPriority{120});
+
+  sink.execute(deactivate(kTurnLeft));
+  CHECK(lighting.commands.back().priorities.left_turn == EffectPriority{80});
 }

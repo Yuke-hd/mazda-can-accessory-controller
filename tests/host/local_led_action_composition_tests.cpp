@@ -31,6 +31,7 @@ using action_engine::RuleOperand;
 using action_engine::SignalCondition;
 using action_engine::StateRuleConfig;
 using local_argb::PixelFrame;
+using local_argb::internal::EffectPriority;
 using local_argb::internal::FillDirection;
 using local_argb::internal::LedZone;
 using local_argb::internal::LightingRgb;
@@ -427,4 +428,29 @@ TEST_CASE("an engine range rule drives a fill end to end and fails off without d
   CHECK(pixels.frames.back() == local_argb::kBlackFrame);
 
   (void)engine.detach();
+}
+
+// The #30 example: a gauge over 20..79 at priority 50 and the right turn,
+// 65..99, at the default priority. The turn owns its whole region while lit;
+// the gauge keeps 20..64 and gets 65..79 back when the turn ends.
+TEST_CASE("a higher-priority turn owns its overlap with a gauge fill") {
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  RendererLightingSink lighting{renderer};
+  LedActionSink led{lighting};
+  REQUIRE(renderer.start());
+  REQUIRE(led.bind(kGaugeAction, FillEffect{LedZone{20, 60, FillDirection::StartToEnd}, kFillColor,
+                                            EffectPriority{50}}) == BindingStatus::Ok);
+  REQUIRE(led.bind(kTurnRightAction, LedEffect::RightTurn) == BindingStatus::Ok);
+
+  led.execute(set_level(1.0F));
+  led.execute({kTurnRightAction, action_engine::ActionCommandKind::Activate});
+  REQUIRE(renderer.tick(0));
+  PixelFrame expected = lit_between(20, local_argb::kRightTurnLedStart - 1);
+  expected[local_argb::kRightTurnLedStart] = local_argb::Rgb{128, 16, 0};
+  CHECK(pixels.frames.back() == expected);
+
+  led.execute({kTurnRightAction, action_engine::ActionCommandKind::Deactivate});
+  REQUIRE(renderer.tick(0));
+  CHECK(pixels.frames.back() == lit_between(20, 79));
 }
