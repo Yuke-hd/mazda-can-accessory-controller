@@ -2,10 +2,11 @@ if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/vehicle_telemetry.cpp"
                          "src/public_contract_consumer.cpp"
                          "src/local_argb_binding.cpp"
+                         "src/signal_provider.cpp"
                          INCLUDE_DIRS "include"
                          PRIV_INCLUDE_DIRS "private_include"
                                          "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda/internal_include"
-                         REQUIRES vehicle_core mazda vehicle_telemetry
+                         REQUIRES vehicle_core mazda vehicle_telemetry vehicle_signals
                          PRIV_REQUIRES local_argb local_argb_sink_contract)
   return()
 endif()
@@ -17,6 +18,7 @@ add_library(mazda_telemetry STATIC
   src/vehicle_telemetry.cpp
   src/public_contract_consumer.cpp
   src/local_argb_binding.cpp
+  src/signal_provider.cpp
 )
 find_package(Threads REQUIRED)
 target_include_directories(
@@ -28,7 +30,10 @@ target_include_directories(
 )
 # The facade's value-only contracts are supplied by mazda; the store's
 # implementation-only state/decoder includes remain private above.
-target_link_libraries(mazda_telemetry PUBLIC mazda Threads::Threads vehicle_telemetry)
+# The public MazdaSignalProvider declaration is expressed in vehicle_signals
+# value types only.
+target_link_libraries(mazda_telemetry PUBLIC mazda Threads::Threads vehicle_telemetry
+                                             vehicle_signals)
 target_link_libraries(mazda_telemetry PRIVATE local_argb local_argb_sink_contract)
 target_compile_features(mazda_telemetry PUBLIC cxx_std_17)
 
@@ -93,5 +98,26 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   target_compile_features(mazda_telemetry_descriptor_tests PRIVATE cxx_std_17)
   add_test(NAME mazda_telemetry_descriptor_tests
            COMMAND mazda_telemetry_descriptor_tests)
+
+  add_executable(mazda_telemetry_signal_catalog_tests
+    tests/signal_catalog_tests.cpp
+  )
+  target_include_directories(mazda_telemetry_signal_catalog_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
+  )
+  target_link_libraries(mazda_telemetry_signal_catalog_tests PRIVATE
+    mazda_telemetry
+    Threads::Threads
+  )
+  target_compile_features(mazda_telemetry_signal_catalog_tests PRIVATE cxx_std_17)
+  # An exhaustive switch in the test keeps enum choice coverage in lock-step
+  # with the Mazda enums: a new enumerator fails the build.
+  if(NOT MSVC)
+    target_compile_options(mazda_telemetry_signal_catalog_tests PRIVATE
+      -Wall -Wextra -Wpedantic -Werror=switch)
+  endif()
+  add_test(NAME mazda_telemetry_signal_catalog_tests
+           COMMAND mazda_telemetry_signal_catalog_tests)
 
 endif()

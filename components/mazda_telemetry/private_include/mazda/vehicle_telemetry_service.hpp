@@ -17,6 +17,7 @@
 #include "mazda/decoder.hpp"
 #include "mazda/internal_contracts.hpp"
 #include "mazda/publication_store.hpp"
+#include "mazda/signal_catalog.hpp"
 #include "vehicle_core/notification_channel.hpp"
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
@@ -104,9 +105,13 @@ using TestFrontWiperNotificationChannel =
 // Fixed metadata records keep the service's typed state/channel wiring in one
 // place. Member pointers preserve compile-time value types while allowing the
 // worker loops to operate over a heterogeneous tuple without allocation.
+// `id` binds a production descriptor to its generic catalog row
+// (signal_catalog.hpp). Host-only test descriptors keep the invalid id and are
+// never part of the released catalog.
 template <typename T> struct PollingDescriptor final {
   using SignalMember = vehicle_core::Signal<T> VehicleState::*;
 
+  vehicle_signals::SignalId id{};
   const char *name{nullptr};
   SignalMember signal{nullptr};
   std::uint32_t identifier{0};
@@ -117,21 +122,22 @@ template <typename T> struct PollingDescriptor final {
 using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
-    PollingDescriptor<float>{"speed_kph", &VehicleState::speed_kph, candidate::kEngineDataId,
-                             ValidationStatus::Reference},
-    PollingDescriptor<float>{"engine_rpm", &VehicleState::engine_rpm, candidate::kEngineDataId,
-                             ValidationStatus::Confirmed}};
+    PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
+                             candidate::kEngineDataId, ValidationStatus::Reference},
+    PollingDescriptor<float>{signal_ids::kEngineRpm, "engine_rpm", &VehicleState::engine_rpm,
+                             candidate::kEngineDataId, ValidationStatus::Confirmed}};
 #else
 using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>,
                                           PollingDescriptor<FrontWiperPosition>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
-    PollingDescriptor<float>{"speed_kph", &VehicleState::speed_kph, candidate::kEngineDataId,
-                             ValidationStatus::Reference},
-    PollingDescriptor<float>{"engine_rpm", &VehicleState::engine_rpm, candidate::kEngineDataId,
-                             ValidationStatus::Confirmed},
-    PollingDescriptor<FrontWiperPosition>{"test_front_wiper", &VehicleState::front_wiper,
-                                          candidate::kTurnSwitchId, ValidationStatus::Observed}};
+    PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
+                             candidate::kEngineDataId, ValidationStatus::Reference},
+    PollingDescriptor<float>{signal_ids::kEngineRpm, "engine_rpm", &VehicleState::engine_rpm,
+                             candidate::kEngineDataId, ValidationStatus::Confirmed},
+    PollingDescriptor<FrontWiperPosition>{vehicle_signals::SignalId{}, "test_front_wiper",
+                                          &VehicleState::front_wiper, candidate::kTurnSwitchId,
+                                          ValidationStatus::Observed}};
 #endif
 
 template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor final {
@@ -139,6 +145,7 @@ template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor fin
   using ChannelMember = Channel VehicleTelemetryService::*;
   using SignalMember = vehicle_core::Signal<T> VehicleState::*;
 
+  vehicle_signals::SignalId id{};
   const char *name{nullptr};
   ChannelMember channel{nullptr};
   SignalMember signal{nullptr};
