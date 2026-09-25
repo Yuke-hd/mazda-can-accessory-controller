@@ -11,7 +11,8 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_can_rx"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
-    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy")
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")
 
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_LIST_DIR}/../../third_party/esp32-vehicle-can-core"
