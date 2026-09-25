@@ -1,0 +1,164 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+// Application-composition proof: this is the only translation unit that knows
+// both the generic action engine and the Mazda provider. The engine sees the
+// provider only through vehicle_signals::SignalProvider.
+#include "action_engine/engine.hpp"
+#include "support/recording_action_sink.hpp"
+
+// Test harness only: the private seam binds the facade's production service to
+// an injected clock, host acquisition source and lighting sink.
+#include "mazda/definitions.hpp"
+#include "mazda/signal_provider.hpp"
+#include "mazda/vehicle_telemetry.hpp"
+#include "mazda/vehicle_telemetry_internal.hpp"
+
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <thread>
+#include <type_traits>
+#include <vector>
+
+namespace {
+
+namespace candidate = mazda::candidate;
+using action_engine::ActionCommand;
+using action_engine::ActionCommandKind;
+using action_engine::ActionEngine;
+using action_engine::ActionId;
+using action_engine::Comparison;
+using action_engine::ConfigStatus;
+using action_engine::EventEdge;
+using action_engine::EventRuleConfig;
+using action_engine::RuleOperand;
+using action_engine::SignalCondition;
+using action_engine::StateRuleConfig;
+using vehicle_signals::SignalStatus;
+using Commands = std::vector<ActionCommand>;
+
+static_assert(std::is_base_of_v<vehicle_signals::SignalProvider, mazda::MazdaSignalProvider>);
+static_assert(
+    std::is_convertible_v<mazda::MazdaSignalProvider *, vehicle_signals::SignalProvider *>);
+
+constexpr ActionId kLeftIndicator{1};
+constexpr ActionId kHazardChime{2};
+
+// The service reads the clock from its own thread, so the fake is atomic.
+class FakeClock final : public vehicle_core::MonotonicClock {
+public:
+  [[nodiscard]] vehicle_core::MonotonicTimestamp now() const noexcept override {
+    return now_us_.load(std::memory_order_relaxed);
+  }
+  void set(const vehicle_core::MonotonicTimestamp value) noexcept {
+    now_us_.store(value, std::memory_order_relaxed);
+  }
+
+private:
+  std::atomic<vehicle_core::MonotonicTimestamp> now_us_{0};
+};
+
+// Generated TURN_SWITCH byte patterns shared with the decoder fixtures; none is
+// a capture. D2 bit 5 is left and bit 2 is hazard.
+constexpr std::initializer_list<std::uint8_t> kTurnLeft{0, 0x20, 0, 0, 0, 0, 0, 0};
+constexpr std::initializer_list<std::uint8_t> kTurnHazard{0, 0x04, 0, 0, 0, 0, 0, 0};
+
+vehicle_core::RawCanFrame turn_frame(const vehicle_core::MonotonicTimestamp timestamp_us,
+                                     std::initializer_list<std::uint8_t> bytes) {
+  vehicle_core::RawCanFrame result{};
+  result.identifier = candidate::kTurnSwitchId;
+  result.timestamp_us = timestamp_us;
+  result.dlc = static_cast<std::uint8_t>(bytes.size());
+  std::size_t index = 0;
+  for (const auto byte : bytes) {
+    result.data[index++] = byte;
+  }
+  return result;
+}
+
+// The facade runs the production runtime, Mazda decoder and publication path
+// over the injected seams; its destructor stops the facade before the engine,
+// a borrowed callback context, is destroyed.
+struct Harness final {
+  Harness() noexcept {
+    mazda::TelemetryConfig config{};
+    config.callback_stop_timeout_us = 20'000;
+    mazda::internal::VehicleTelemetryAccess::emplace_host_service(telemetry, clock, source,
+                                                                  lighting, config);
+  }
+  ~Harness() {
+    if (telemetry.diagnostics().lifecycle != mazda::LifecycleState::Stopped) {
+      (void)telemetry.stop();
+    }
+  }
+  Harness(const Harness &) = delete;
+  Harness &operator=(const Harness &) = delete;
+
+  void inject_turn(const vehicle_core::MonotonicTimestamp timestamp_us,
+                   std::initializer_list<std::uint8_t> bytes) {
+    clock.set(timestamp_us);
+    CHECK(source.inject(turn_frame(timestamp_us, bytes)) == mazda::ResultCode::Ok);
+  }
+
+  FakeClock clock{};
+  mazda::internal::HostAcquisitionSource source{};
+  mazda::internal::NullLightingSink lighting{};
+  mazda::VehicleTelemetry telemetry{};
+  mazda::MazdaSignalProvider provider{telemetry};
+};
+
+// Waits until the sink has recorded at least `count` commands.
+bool wait_for_commands(const test_support::RecordingActionSink &sink, std::size_t count) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{1000};
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (sink.commands().size() >= count) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return sink.commands().size() >= count;
+}
+
+} // namespace
+
+TEST_CASE("a real left-turn frame drives MazdaSignalProvider -> ActionEngine -> sink") {
+  Harness harness{};
+  test_support::RecordingActionSink sink{};
+  ActionEngine engine{harness.provider};
+  REQUIRE(engine.add_sink(sink) == ConfigStatus::Ok);
+  REQUIRE(engine.add_state_rule(StateRuleConfig{
+              SignalCondition{"vehicle.turn_state", Comparison::Equal, RuleOperand::choice("left")},
+              kLeftIndicator}) == ConfigStatus::Ok);
+  REQUIRE(
+      engine.add_event_rule(EventRuleConfig{
+          SignalCondition{"vehicle.turn_state", Comparison::Equal, RuleOperand::choice("hazard")},
+          EventEdge::BecomesTrue, kHazardChime}) == ConfigStatus::Ok);
+
+  // Two rules on the turn-state channel take one of its two subscriber slots,
+  // so a typed consumer can still subscribe to the same channel.
+  REQUIRE(engine.attach() == SignalStatus::Ok);
+  const auto typed = harness.telemetry.on_turn_state_changed(
+      [](void *, const mazda::Notification<mazda::TurnState> &) noexcept {}, nullptr);
+  REQUIRE(typed.ok());
+  REQUIRE(harness.telemetry.start().ok());
+
+  // initial NoData: explicit fail-off baseline for the state rule only.
+  REQUIRE(wait_for_commands(sink, 1));
+  CHECK(sink.commands() == Commands{{kLeftIndicator, ActionCommandKind::Deactivate}});
+
+  harness.inject_turn(10, kTurnLeft);
+  REQUIRE(wait_for_commands(sink, 2));
+  harness.inject_turn(20, kTurnHazard);
+  REQUIRE(wait_for_commands(sink, 4));
+  CHECK(sink.commands() == Commands{{kLeftIndicator, ActionCommandKind::Deactivate},
+                                    {kLeftIndicator, ActionCommandKind::Activate},
+                                    {kLeftIndicator, ActionCommandKind::Deactivate},
+                                    {kHazardChime, ActionCommandKind::Trigger}});
+
+  REQUIRE(harness.telemetry.stop().ok());
+  CHECK(engine.detach() == SignalStatus::Ok);
+  CHECK(harness.telemetry.unsubscribe(*typed.value).ok());
+}

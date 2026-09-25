@@ -67,6 +67,28 @@ VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES: DependencyRules = (
 )
 
 
+# The generic action engine knows no vehicle make and no output adapter: it
+# talks to providers only through vehicle_signals and to outputs only through
+# its own ActionSink port.
+ACTION_ENGINE_FORBIDDEN_DEPENDENCIES: DependencyRules = (
+    ("Mazda dependency", ("include/mazda/",)),
+    ("output adapter dependency", ("local_argb", "wled")),
+)
+
+
+ACTION_ENGINE_HEADERS: Tuple[str, ...] = (
+    "action_engine/action.hpp",
+    "action_engine/condition.hpp",
+    "action_engine/config_status.hpp",
+    "action_engine/engine.hpp",
+    "action_engine/rule_config.hpp",
+    "action_engine/rule_set.hpp",
+    "action_engine/rules.hpp",
+    "action_engine/sink_fan_out.hpp",
+    "action_engine/subscription_set.hpp",
+)
+
+
 # These are the application-facing entry points, including the frozen Mazda
 # compatibility umbrella.  The compatibility path remains public even while
 # its internal handoff includes are being moved behind an internal target.
@@ -89,6 +111,15 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
         "vehicle_signals/signal_catalog.hpp",
         "portable signal catalog view",
         VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
+    ),
+    PublicHeader(
+        "vehicle_signals/signal_provider.hpp",
+        "portable signal provider port",
+        VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
+    ),
+    *(
+        PublicHeader(header, "generic action engine", ACTION_ENGINE_FORBIDDEN_DEPENDENCIES)
+        for header in ACTION_ENGINE_HEADERS
     ),
 )
 
@@ -160,6 +191,7 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
         root / "lib/mazda/include",
         root / "lib/vehicle_signals/include",
+        root / "lib/action_engine/include",
         resolved_core_root / "components/vehicle_core/include",
         root / "lib/vehicle_core/include",  # legacy isolated fixture
     )

@@ -42,8 +42,10 @@ state, definitions, the telemetry service, the publication store or the
 private signal catalog, even though the typed facade legitimately reaches
 `mazda/types.hpp`. A third, provider-only CMake consumer applies the same
 provider rules under the real target's compile flags. The `vehicle_signals`
-headers must not reach any Mazda header. The stricter isolated build of
-`vehicle_signals` against the core alone is part of `architecture_contracts`. The checker also
+headers must not reach any Mazda header. Each `action_engine` header must not
+reach any Mazda header or output adapter (`local_argb`, WLED). The stricter
+isolated builds of `vehicle_signals` and `action_engine` against the core alone
+are part of `architecture_contracts`. The checker also
 runs two access probes. A normal consumer is expected to fail
 when it includes `mazda/internal_contracts.hpp`; an explicitly authorized
 consumer must be given the `lib/mazda/internal_include` directory and must

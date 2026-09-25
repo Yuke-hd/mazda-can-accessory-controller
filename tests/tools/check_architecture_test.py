@@ -5,12 +5,14 @@ from __future__ import annotations
 from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
 
 
-TOOLS = Path(__file__).resolve().parents[2] / "tools"
+REPOSITORY = Path(__file__).resolve().parents[2]
+TOOLS = REPOSITORY / "tools"
 sys.path.insert(0, str(TOOLS))
 import check_architecture  # noqa: E402
 
@@ -74,6 +76,18 @@ private:
 }
 """
 
+SIGNALS_PROVIDER = """#pragma once
+#include "vehicle_signals/signal_catalog.hpp"
+namespace vehicle_signals {
+class SignalProvider {
+public:
+  virtual SignalCatalogView catalog() const noexcept = 0;
+protected:
+  ~SignalProvider() = default;
+};
+}
+"""
+
 
 def write_signals_fixture(root: Path) -> None:
     """Write a self-contained core + vehicle_signals + Mazda fixture tree."""
@@ -111,6 +125,9 @@ def write_signals_fixture(root: Path) -> None:
     (signals / "include/vehicle_signals/signal_catalog.hpp").write_text(
         SIGNALS_CATALOG, encoding="utf-8"
     )
+    (signals / "include/vehicle_signals/signal_provider.hpp").write_text(
+        SIGNALS_PROVIDER, encoding="utf-8"
+    )
     (signals / "CMakeLists.txt").write_text(
         "# Portable signals; no Mazda component is reachable from this target.\n"
         "add_library(vehicle_signals INTERFACE)\n"
@@ -127,6 +144,50 @@ def check_signals_fixture(root: Path) -> str:
     output = io.StringIO()
     with redirect_stdout(output), redirect_stderr(io.StringIO()):
         check_architecture._check_vehicle_signals_only(root, "cmake", ("c++",), work_dir)
+    return output.getvalue()
+
+
+def write_action_engine_fixture(root: Path) -> None:
+    """Copy the real vehicle_signals and action_engine over a stub core."""
+
+    core = root / "third_party/esp32-vehicle-can-core/components/vehicle_core"
+    core_include = core / "include/vehicle_core"
+    core_include.mkdir(parents=True)
+    (core_include / "telemetry_contracts.hpp").write_text(
+        "#pragma once\n#include <cstdint>\n"
+        "namespace vehicle_core {\n"
+        "enum class Availability : std::uint8_t {\n"
+        "  NoData, Fresh, Stale, FreshnessUnverified, Unavailable };\n"
+        "enum class ValidationStatus : std::uint8_t { Reference, Observed, Confirmed };\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (core_include / "signal.hpp").write_text(
+        "#pragma once\nnamespace vehicle_core { template <typename T> class Signal {}; }\n",
+        encoding="utf-8",
+    )
+    (core / "CMakeLists.txt").write_text(
+        "add_library(vehicle_core INTERFACE)\n"
+        "target_include_directories(vehicle_core INTERFACE\n"
+        "  ${CMAKE_CURRENT_SOURCE_DIR}/include)\n",
+        encoding="utf-8",
+    )
+    mazda = root / "lib/mazda/include/mazda"
+    mazda.mkdir(parents=True)
+    (mazda / "types.hpp").write_text(
+        "#pragma once\nnamespace mazda { enum class TurnState { Off, Left }; }\n",
+        encoding="utf-8",
+    )
+    for library in ("vehicle_signals", "action_engine"):
+        shutil.copytree(REPOSITORY / "lib" / library, root / "lib" / library)
+
+
+def check_action_engine_fixture(root: Path) -> str:
+    work_dir = root / "work"
+    work_dir.mkdir()
+    output = io.StringIO()
+    with redirect_stdout(output), redirect_stderr(io.StringIO()):
+        check_architecture._check_action_engine_only(root, "cmake", ("c++",), work_dir)
     return output.getvalue()
 
 
@@ -274,6 +335,95 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("names Mazda type TurnState", detail)
         self.assertIn("Mazda catalog key literal: vehicle.turn_state", detail)
 
+    def test_clean_action_engine_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-engine-fixture-") as directory:
+            root = Path(directory)
+            write_action_engine_fixture(root)
+            output = check_action_engine_fixture(root)
+        self.assertIn("OK   action_engine builds on vehicle_signals alone", output)
+
+    def test_action_engine_header_reaching_mazda_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-engine-fixture-") as directory:
+            root = Path(directory)
+            write_action_engine_fixture(root)
+            engine = root / "lib/action_engine"
+            cmake = engine / "CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8")
+                + "target_include_directories(action_engine PUBLIC\n"
+                + "  ${CMAKE_CURRENT_SOURCE_DIR}/../mazda/include)\n",
+                encoding="utf-8",
+            )
+            prepend(engine / "include/action_engine/action.hpp", '#include "mazda/types.hpp"\n')
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_action_engine_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("forbidden action_engine target include directory", detail)
+        self.assertIn("forbidden action_engine consumer include directory", detail)
+        self.assertIn("forbidden action_engine target (condition.cpp) include directory", detail)
+        self.assertIn("action.hpp references Mazda outside comments", detail)
+        self.assertIn("forbidden action_engine dependency", detail)
+        self.assertIn("lib/mazda/include/mazda/types.hpp", detail)
+
+    def test_action_engine_source_reaching_mutable_core_signal_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-engine-fixture-") as directory:
+            root = Path(directory)
+            write_action_engine_fixture(root)
+            # Only the engine's own compile command reaches this header, so
+            # only the target dependency closure can see the violation.
+            source = root / "lib/action_engine/src/engine.cpp"
+            source.write_text(
+                '#include "vehicle_core/signal.hpp"\n' + source.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_action_engine_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("forbidden action_engine core dependency", detail)
+        self.assertIn("vehicle_core/signal.hpp", detail)
+
+    def test_action_engine_link_to_output_or_mazda_target_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-engine-fixture-") as directory:
+            root = Path(directory)
+            write_action_engine_fixture(root)
+            cmake = root / "lib/action_engine/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8")
+                + "target_link_libraries(action_engine PUBLIC mazda_telemetry local_argb)\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_action_engine_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("forbidden action_engine target link target: mazda_telemetry", detail)
+        self.assertIn("forbidden action_engine target link target: local_argb", detail)
+
+    def test_action_engine_mazda_keys_types_and_output_tokens_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-engine-fixture-") as directory:
+            root = Path(directory)
+            write_action_engine_fixture(root)
+            source = root / "lib/action_engine/src/rules.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "// wled, argb and can_bus in a comment are fine.\n"
+                + "namespace action_engine {\n"
+                + "enum class TurnState { Off };\n"
+                + 'inline constexpr const char *kTurnKey = "vehicle.turn_state";\n'
+                + "inline constexpr int wled_port = 21324;\n"
+                + "inline constexpr int twai_mode = 0;\n"
+                + "inline constexpr int argb_pixels = 100;\n"
+                + "inline constexpr int can_bus_rate = 500;\n"
+                + "inline constexpr int freertos_ticks = 1;\n"
+                + "}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_action_engine_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("rules.cpp names Mazda type TurnState", detail)
+        self.assertIn("Mazda catalog key literal: vehicle.turn_state", detail)
+        for token in ("wled", "twai", "argb", "can_bus", "freertos"):
+            self.assertIn(f"rules.cpp references forbidden {token} outside comments", detail)
 
     def test_vehicle_core_target_private_mazda_dependency_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-core-fixture-") as directory:

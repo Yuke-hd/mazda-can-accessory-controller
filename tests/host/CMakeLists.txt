@@ -86,6 +86,39 @@ else()
 endif()
 doctest_discover_tests(signal_consumer_tests)
 
+# The generic action engine is tested against the host provider fake and a
+# make-independent fixture catalog; no Mazda target is reachable here.
+add_executable(action_engine_tests
+  action_engine_condition_tests.cpp
+  action_engine_rule_tests.cpp
+  action_engine_tests.cpp
+)
+target_link_libraries(action_engine_tests PRIVATE action_engine vehicle_signals_test_support
+                                                  action_engine_test_support doctest::doctest)
+target_compile_features(action_engine_tests PRIVATE cxx_std_17)
+
+# Application-composition proof: the only test that knows both the engine and
+# the Mazda provider. It reuses the private host-service seam, like
+# signal_consumer_tests, to drive real frames through the production path.
+add_executable(action_engine_composition_tests action_engine_composition_tests.cpp)
+target_include_directories(action_engine_composition_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(action_engine_composition_tests PRIVATE action_engine
+                                                              action_engine_test_support
+                                                              mazda_telemetry doctest::doctest)
+target_compile_features(action_engine_composition_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(action_engine_tests PRIVATE /W4 /permissive-)
+  target_compile_options(action_engine_composition_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(action_engine_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(action_engine_composition_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(action_engine_tests)
+doctest_discover_tests(action_engine_composition_tests)
+
 add_executable(board_config_tests board_config_tests.cpp)
 target_include_directories(board_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/components/board/include)
 target_compile_features(board_config_tests PRIVATE cxx_std_17)
