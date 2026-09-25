@@ -87,6 +87,12 @@ static_assert(!std::has_virtual_destructor_v<SignalProvider>);
 class CatalogOnlyProvider final : public SignalProvider {
 public:
   [[nodiscard]] SignalCatalogView catalog() const noexcept override { return kView; }
+  [[nodiscard]] SignalResult<SignalReading> read(SignalId id) const noexcept override {
+    if (kView.find(id) == nullptr) {
+      return SignalResult<SignalReading>::failure(SignalStatus::InvalidSignal);
+    }
+    return SignalResult<SignalReading>::success(SignalReading{});
+  }
   [[nodiscard]] SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback,
                                                            void *) noexcept override {
     return SignalResult<SignalSubscription>::failure(SignalStatus::UnsupportedCapability);
@@ -119,12 +125,16 @@ TEST_CASE("signal ids reserve zero as invalid") {
   CHECK(SignalId{5} < SignalId{6});
 }
 
-TEST_CASE("a consumer resolves transmission.gear through the provider port") {
+TEST_CASE("a consumer resolves and reads transmission.gear through the provider port") {
   CatalogOnlyProvider concrete{};
   const SignalProvider &provider = concrete;
   const SignalMetadata *gear = provider.catalog().find(std::string_view{"transmission.gear"});
   REQUIRE(gear != nullptr);
   CHECK(gear->id == SignalId{3});
+  const auto reading = provider.read(gear->id);
+  REQUIRE(reading.ok());
+  CHECK(reading.value->availability == Availability::NoData);
+  CHECK(provider.read(SignalId{9}).status == SignalStatus::InvalidSignal);
   CHECK(concrete.subscribe(gear->id, &record_notification, nullptr).status ==
         SignalStatus::UnsupportedCapability);
   CHECK(concrete.unsubscribe(SignalSubscription{}).status == SignalStatus::InvalidSubscription);

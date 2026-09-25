@@ -12,9 +12,11 @@
 namespace test_support {
 
 // Host fake of the generic provider port over a caller-supplied catalog. It
-// enforces the port contract a real provider enforces: subscriptions only to
-// Notify-capable catalog signals, a bounded two-slot capacity per signal (as
-// the Mazda channels have), and stopped-only subscription mutation. publish()
+// enforces the port contract a real provider enforces: reads only of
+// Read-capable catalog signals (NoData until set_reading()), subscriptions
+// only to Notify-capable catalog signals, a bounded two-slot capacity per
+// signal (as the Mazda channels have), and stopped-only subscription
+// mutation. publish()
 // delivers a notice synchronously on the calling thread, which serializes
 // delivery as the port requires, to every subscriber of its signal, and only
 // while running.
@@ -22,12 +24,51 @@ class FakeSignalProvider final : public vehicle_signals::SignalProvider {
 public:
   static constexpr std::size_t kSubscribersPerSignal = 2;
   static constexpr std::size_t kMaxSubscriptions = 32;
+  static constexpr std::size_t kMaxReadings = 32;
 
   explicit FakeSignalProvider(vehicle_signals::SignalCatalogView catalog) noexcept
       : catalog_(catalog) {}
 
   [[nodiscard]] vehicle_signals::SignalCatalogView catalog() const noexcept override {
     return catalog_;
+  }
+
+  [[nodiscard]] vehicle_signals::SignalResult<vehicle_signals::SignalReading>
+  read(vehicle_signals::SignalId id) const noexcept override {
+    using Result = vehicle_signals::SignalResult<vehicle_signals::SignalReading>;
+    const vehicle_signals::SignalMetadata *signal = catalog_.find(id);
+    if (signal == nullptr) {
+      return Result::failure(vehicle_signals::SignalStatus::InvalidSignal);
+    }
+    if (!signal->capabilities.has(vehicle_signals::SignalCapability::Read)) {
+      return Result::failure(vehicle_signals::SignalStatus::UnsupportedCapability);
+    }
+    const ReadSlot *slot = read_slot(id);
+    if (slot == nullptr) {
+      return Result::success(vehicle_signals::SignalReading{});
+    }
+    if (slot->failure.has_value()) {
+      return Result::failure(*slot->failure);
+    }
+    return Result::success(slot->reading);
+  }
+
+  // Stores the reading read(id) returns and clears any injected failure.
+  void set_reading(vehicle_signals::SignalId id,
+                   const vehicle_signals::SignalReading &reading) noexcept {
+    ReadSlot *slot = writable_read_slot(id);
+    if (slot != nullptr) {
+      slot->reading = reading;
+      slot->failure.reset();
+    }
+  }
+  // Makes read(id) fail with `status` (for example Faulted or Timeout) until
+  // the next set_reading(id).
+  void fail_reads(vehicle_signals::SignalId id, vehicle_signals::SignalStatus status) noexcept {
+    ReadSlot *slot = writable_read_slot(id);
+    if (slot != nullptr) {
+      slot->failure = status;
+    }
   }
 
   [[nodiscard]] vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>
@@ -104,6 +145,30 @@ public:
   }
 
 private:
+  struct ReadSlot {
+    vehicle_signals::SignalId id{};
+    vehicle_signals::SignalReading reading{};
+    std::optional<vehicle_signals::SignalStatus> failure{};
+  };
+
+  [[nodiscard]] const ReadSlot *read_slot(vehicle_signals::SignalId id) const noexcept {
+    for (const ReadSlot &slot : readings_) {
+      if (slot.id.valid() && slot.id == id) {
+        return &slot;
+      }
+    }
+    return nullptr;
+  }
+  [[nodiscard]] ReadSlot *writable_read_slot(vehicle_signals::SignalId id) noexcept {
+    for (ReadSlot &slot : readings_) {
+      if (slot.id == id || !slot.id.valid()) {
+        slot.id = id;
+        return &slot;
+      }
+    }
+    return nullptr;
+  }
+
   struct Slot {
     vehicle_signals::SignalId id{};
     vehicle_signals::SignalCallback callback{nullptr};
@@ -144,6 +209,7 @@ private:
 
   vehicle_signals::SignalCatalogView catalog_{};
   std::array<Slot, kMaxSubscriptions> slots_{};
+  std::array<ReadSlot, kMaxReadings> readings_{};
   std::uint64_t issued_{0};
   bool running_{false};
   std::optional<vehicle_signals::SignalStatus> injected_unsubscribe_failure_{};

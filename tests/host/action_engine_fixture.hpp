@@ -15,8 +15,8 @@
 #include "vehicle_signals/signal_contracts.hpp"
 
 // Shared, make-independent fixture for the action-engine host tests: a small
-// catalog with one Notify signal of each type, a read-only signal, and a
-// notice builder.
+// catalog with one Notify signal of each type, Read-only and Notify-only
+// Number signals, and a notice builder.
 
 namespace action_engine_fixture {
 
@@ -36,6 +36,8 @@ inline constexpr SignalId kDoorOpen{1};
 inline constexpr SignalId kSpeed{2};
 inline constexpr SignalId kGear{3};
 inline constexpr SignalId kOdometer{4};
+inline constexpr SignalId kRpm{5};
+inline constexpr SignalId kFanLevel{6};
 
 inline constexpr std::uint16_t kPark = 0;
 inline constexpr std::uint16_t kReverse = 1;
@@ -60,6 +62,10 @@ inline constexpr SignalMetadata kCatalog[] = {
      kReadNotify, kGearChoices, std::size(kGearChoices)},
     {kOdometer, "trip.odometer_km", SignalType::Number, SignalUnit::None,
      ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
+    {kRpm, "engine.rpm", SignalType::Number, SignalUnit::RevolutionsPerMinute,
+     ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
+    {kFanLevel, "climate.fan_level", SignalType::Number, SignalUnit::None,
+     ValidationStatus::Reference, SignalCapability::Notify, nullptr, 0},
 };
 
 inline constexpr vehicle_signals::SignalCatalogView kView{kCatalog};
@@ -122,16 +128,23 @@ inline action_engine::ActionCommand deactivate(std::uint16_t action) {
 inline action_engine::ActionCommand trigger(std::uint16_t action) {
   return {action_engine::ActionId{action}, action_engine::ActionCommandKind::Trigger};
 }
+inline action_engine::ActionCommand set_level(std::uint16_t action, float level) {
+  return {action_engine::ActionId{action}, action_engine::ActionCommandKind::SetLevel, level};
+}
 
 } // namespace action_engine_fixture
 
 namespace action_engine {
 
-// Readable doctest failure output, for example "Activate(7)".
+// Readable doctest failure output, for example "Activate(7)" or
+// "SetLevel(3, 0.5)".
 inline std::ostream &operator<<(std::ostream &stream, const ActionCommand &command) {
-  constexpr const char *kNames[] = {"Activate", "Deactivate", "Trigger"};
-  return stream << kNames[static_cast<std::size_t>(command.kind)] << '(' << command.action.value()
-                << ')';
+  constexpr const char *kNames[] = {"Activate", "Deactivate", "Trigger", "SetLevel"};
+  stream << kNames[static_cast<std::size_t>(command.kind)] << '(' << command.action.value();
+  if (command.kind == ActionCommandKind::SetLevel) {
+    stream << ", " << command.level;
+  }
+  return stream << ')';
 }
 
 } // namespace action_engine

@@ -106,4 +106,25 @@ struct EventRuleConfig {
   FreshnessRequirement freshness{FreshnessRequirement::Fresh};
 };
 
+// Closed numeric interval [from, to] of a range rule. Both bounds must be
+// finite and their difference must not overflow.
+struct NumericRange {
+  float from{0.0F};
+  float to{0.0F};
+};
+
+// Level rule sampled at the caller's cadence: reads a Read-capable Number
+// signal and maps it linearly from `input` onto `output`, clamping outside
+// `input`. `input` must be ascending (from < to); `output` may be ascending,
+// descending (an inverse mapping) or equal (a constant level). Non-actionable
+// readings and failed reads are fail-off (Deactivate). A range rule owns its
+// ActionId like a state rule does.
+struct RangeRuleConfig {
+  std::string_view signal_key{};
+  NumericRange input{};
+  NumericRange output{};
+  ActionId action{};
+  FreshnessRequirement freshness{FreshnessRequirement::Fresh};
+};
+
 } // namespace action_engine

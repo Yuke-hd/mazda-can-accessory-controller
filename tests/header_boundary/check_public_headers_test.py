@@ -60,6 +60,7 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("OK   vehicle_signals/signal_provider.hpp", result.stdout)
         self.assertIn("OK   action_engine/engine.hpp (generic action engine)", result.stdout)
         self.assertIn("OK   action_engine/action.hpp (generic action engine)", result.stdout)
+        self.assertIn("OK   action_engine/range_rule.hpp (generic action engine)", result.stdout)
 
     def test_provider_reaching_telemetry_service_is_detected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:

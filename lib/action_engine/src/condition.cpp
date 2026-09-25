@@ -12,11 +12,6 @@ using vehicle_signals::SignalValue;
 
 namespace {
 
-[[nodiscard]] bool is_finite_number(const SignalValue &value) noexcept {
-  const auto number = value.as_number();
-  return !number.has_value() || std::isfinite(*number);
-}
-
 [[nodiscard]] bool is_ordered(Comparison comparison) noexcept {
   return comparison != Comparison::Equal && comparison != Comparison::NotEqual;
 }
@@ -60,15 +55,11 @@ namespace {
 } // namespace
 
 std::optional<bool> ResolvedCondition::evaluate(const SignalReading &reading) const noexcept {
-  if (!actionable(reading)) {
+  const auto value = actionable_value(reading, operand_.type(), freshness_);
+  if (!value.has_value()) {
     return std::nullopt;
   }
-  return holds(*reading.value);
-}
-
-bool ResolvedCondition::actionable(const SignalReading &reading) const noexcept {
-  return reading.value.has_value() && reading.value->type() == operand_.type() &&
-         is_finite_number(*reading.value) && meets(freshness_, reading.availability);
+  return holds(*value);
 }
 
 bool ResolvedCondition::holds(const SignalValue &value) const noexcept {
