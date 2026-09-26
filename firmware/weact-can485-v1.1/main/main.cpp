@@ -1,6 +1,7 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
 #include "controller_config/rpm_level_fill.hpp"
+#include "controller_config/rpm_threshold.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -20,8 +21,9 @@ constexpr char kTag[] = "weact_can485_v11";
 // MazdaSignalProvider -> ActionEngine -> LedActionSink -> renderer queue.
 // The strip is mounted mirrored, so, as in the retired telemetry binding, the
 // vehicle's left indicator lights the renderer's right_turn region and the
-// right indicator its left_turn region; hazard lights both. Brake is not bound;
-// see docs/development/local-led-actions.md#firmware-composition.
+// right indicator its left_turn region; hazard lights both. No brake signal is
+// bound; the brake region only shows the RPM red zone below. See
+// docs/development/local-led-actions.md#firmware-composition.
 constexpr std::string_view kTurnStateSignal{"vehicle.turn_state"};
 constexpr action_engine::ActionId kTurnLeftAction{1};
 constexpr action_engine::ActionId kTurnRightAction{2};
@@ -57,6 +59,16 @@ constexpr controller_config::RpmLevelFillConfig kRpmLevelFill{
         local_argb::internal::LedZone{0, board::kWeActCan485V11.vehicle_light_strip.pixel_count,
                                       local_argb::internal::FillDirection::CenterOut},
         local_argb::internal::LightingRgb{0, 16, 32}, local_argb::internal::EffectPriority{50}}};
+
+// RPM red zone: engine speed strictly above the configured threshold
+// (controller_config::RpmThresholdConfig, here 6000 rpm) activates its
+// own action, independently of the level fill. Here it lights the existing
+// brake region as a warning at priority 200, above the fill and the turn
+// effects; any other adapter could bind the same action instead. The
+// threshold stays in controller configuration, never in the renderer.
+constexpr action_engine::ActionId kRpmRedZoneAction{5};
+constexpr controller_config::RpmThresholdConfig kRpmRedZone{6000.0F, kRpmRedZoneAction};
+constexpr local_argb::internal::EffectPriority kRpmRedZonePriority{200};
 
 struct ApplicationState {
   std::uint32_t turn_notifications{0};
@@ -115,9 +127,9 @@ static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 
-// Binds the LED effects and adds the LED sink, the turn-state rules and the
-// RPM level fill. The strict Fresh turn requirement fails off once the turn
-// state goes Stale after its 250 ms freshness timeout.
+// Binds the LED effects and adds the LED sink, the turn-state rules, the RPM
+// level fill and the RPM red zone. The strict Fresh turn requirement fails off
+// once the turn state goes Stale after its 250 ms freshness timeout.
 bool configure_engine_lighting() noexcept {
   for (const auto &binding : kEffectBindings) {
     const auto status = led_actions.bind(binding.action, binding.effect);
@@ -150,6 +162,19 @@ bool configure_engine_lighting() noexcept {
     ESP_LOGE(kTag, "RPM level fill setup failed: binding=%u rule=%d",
              static_cast<unsigned>(rpm_status.binding),
              rpm_status.rule.has_value() ? static_cast<int>(*rpm_status.rule) : -1);
+    return false;
+  }
+  const auto red_zone_binding = led_actions.bind(
+      kRpmRedZoneAction, local_argb_actions::LedEffect::Brake, kRpmRedZonePriority);
+  if (red_zone_binding != local_argb_actions::BindingStatus::Ok) {
+    ESP_LOGE(kTag, "RPM red zone LED bind failed: status=%u",
+             static_cast<unsigned>(red_zone_binding));
+    return false;
+  }
+  const auto red_zone_rule = controller_config::apply(kRpmRedZone, engine);
+  if (red_zone_rule != action_engine::ConfigStatus::Ok) {
+    ESP_LOGE(kTag, "RPM red zone rule setup failed: status=%u",
+             static_cast<unsigned>(red_zone_rule));
     return false;
   }
   return true;
@@ -204,8 +229,8 @@ extern "C" void app_main(void) {
       ESP_LOGD(kTag, "telemetry poll: speed=%.2f kph engine_rpm=%.2f", *speed.value,
                *engine_rpm.value);
     }
-    // Polled rules, such as the RPM level fill, are sampled at this cadence;
-    // the engine serializes them with the turn notices.
+    // Polled rules, such as the RPM level fill and red zone, are sampled at
+    // this cadence; the engine serializes them with the turn notices.
     (void)engine.sample_polled_rules();
     // The application chooses its own observation cadence. CAN receive,
     // decoding, freshness servicing, notification dispatch, and LED updates

@@ -389,6 +389,46 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         self.edit(MAIN_CMAKE, " controller_config", "")
         self.assert_rejected("vehicle application does not require the controller_config component")
 
+    def test_missing_rpm_red_zone_apply_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "controller_config::apply(kRpmRedZone, engine)",
+            "action_engine::ConfigStatus::Ok",
+        )
+        self.assert_rejected(
+            "vehicle integration must call controller_config::apply(kRpmRedZone,engine)) "
+            "exactly 1 time(s)"
+        )
+
+    def test_missing_rpm_red_zone_binding_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "led_actions.bind(\n      kRpmRedZoneAction, local_argb_actions::LedEffect::Brake, "
+            "kRpmRedZonePriority)",
+            "local_argb_actions::BindingStatus::Ok",
+        )
+        self.assert_rejected(
+            "vehicle integration must call led_actions.bind(kRpmRedZoneAction,"
+            "local_argb_actions::LedEffect::Brake,kRpmRedZonePriority)) exactly 1 time(s)"
+        )
+
+    def test_direct_sampled_state_rule_in_main_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_sampled_state_rule(controller_config::sampled_state_rule(kRpmRedZone));\n"
+            "  return true;\n}\n} // namespace",
+        )
+        self.assert_rejected(
+            "vehicle integration must call engine.add_sampled_state_rule() exactly 0 time(s)"
+        )
+
+    def test_missing_rpm_threshold_include_is_rejected(self) -> None:
+        self.edit(MAIN, '#include "controller_config/rpm_threshold.hpp"\n', "")
+        self.assert_rejected(
+            "RPM threshold configuration include is missing from vehicle integration"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

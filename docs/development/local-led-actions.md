@@ -200,9 +200,13 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
    a `FillEffect` over the whole strip (`CenterOut`, priority 50, so the turn
    effects at the default 100 draw over it) and adds a range rule on
    `vehicle.engine_rpm`. See [RPM level fill](#rpm-level-fill);
-4. registers the typed turn notice log and attaches the engine. These are the
+4. binds the RPM red zone action to `Brake` at priority 200, so the red
+   warning draws over the fill and the turns, then applies
+   `controller_config::RpmThresholdConfig` (`vehicle.engine_rpm > 6000`). See
+   [RPM red zone](#rpm-red-zone);
+5. registers the typed turn notice log and attaches the engine. These are the
    turn channel's two subscriber slots;
-5. starts the facade, then calls `engine.sample_polled_rules()` on every
+6. starts the facade, then calls `engine.sample_polled_rules()` on every
    100 ms pass of its runtime loop.
 
 Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
@@ -238,6 +242,34 @@ This step is where the documented differences from the legacy binding reach
 the hardware: a hung dispatcher holds the strip lit, and a write fault stays
 dark until the next level change. See
 [Fail-off policy: held level](#fail-off-policy-held-level).
+
+### RPM red zone
+
+`controller_config::RpmThresholdConfig` (#33) turns "engine speed above a
+threshold" into an ordinary `Activate`/`Deactivate` action. The threshold
+lives only in the controller configuration; neither the engine nor this
+adapter nor the renderer knows about it.
+
+- The config holds `threshold_rpm` (default 6000) and the `ActionId`.
+  `sampled_state_rule()` builds `vehicle.engine_rpm Greater
+  number(threshold_rpm)` with `FreshOrUnverified`, for the same reason as the
+  level fill. The comparison is strict: exactly the threshold is off. There is
+  no hysteresis, so a reading that oscillates around the threshold toggles the
+  action on each crossing.
+- `apply()` only adds the sampled state rule. It binds no output, so the
+  action can drive any sink. A non-finite threshold is rejected with
+  `InvalidOperand`.
+- The firmware binds the action separately, to the existing `Brake` region at
+  priority 200. The red warning draws over the fill (50) and the turns (100).
+  The fill keeps its own action and keeps tracking RPM underneath.
+
+`tools/validate_local_argb_boundary.py` requires the include, exactly one
+`controller_config::apply(kRpmRedZone, engine)` and the `Brake` binding, and
+still forbids direct `add_sampled_state_rule()` calls in `main.cpp`.
+`tests/host/rpm_threshold_tests.cpp` covers the default, the rule shape, below,
+at and above the threshold, deduplication while above, a configured threshold,
+a lost reading, a non-finite threshold, and the red zone drawn over the level
+fill.
 
 The migration keeps the visible turn and hazard behavior of the legacy
 `mazda::application::bind_local_argb_sink()` binding. That binding also lit

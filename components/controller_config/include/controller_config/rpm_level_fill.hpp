@@ -1,17 +1,14 @@
 #pragma once
 
 #include <optional>
-#include <string_view>
 
 #include "action_engine/config_status.hpp"
 #include "action_engine/engine.hpp"
 #include "action_engine/rule_config.hpp"
+#include "controller_config/engine_rpm_signal.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
 
 namespace controller_config {
-
-// The signal the RPM level fill samples. The provider reports it Read-only.
-inline constexpr std::string_view kEngineRpmSignal{"vehicle.engine_rpm"};
 
 // Engine speed, in rpm, mapped onto the fill level: min_rpm and below is an
 // empty fill, max_rpm and above a full fill, and speeds in between fill
