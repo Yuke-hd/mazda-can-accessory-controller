@@ -4,13 +4,15 @@
 # neither the action engine nor the LED components learn about a signal. Only
 # the firmware composition root applies it.
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/rpm_level_fill.cpp" "src/rpm_threshold.cpp"
+  idf_component_register(SRCS "src/lighting_profile_application.cpp" "src/rpm_level_fill.cpp"
+                              "src/rpm_threshold.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES action_engine local_argb_actions)
   return()
 endif()
 
 add_library(controller_config STATIC
+  src/lighting_profile_application.cpp
   src/rpm_level_fill.cpp
   src/rpm_threshold.cpp
 )

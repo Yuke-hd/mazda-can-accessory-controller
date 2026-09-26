@@ -215,7 +215,20 @@ level change. This is fail-safe but visible.
 Mazda provider, the engine and this adapter. In static storage it builds
 `mazda::MazdaSignalProvider` over the telemetry facade, an
 `action_engine::ActionEngine` over the provider, and a `LedActionSink` over
-the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
+the renderer queue `local_argb::internal::sink()`.
+
+The reusable `controller_config::apply_lighting_profile()` helper owns the
+portable setup sequence represented below. It binds every profile effect,
+registers the supplied `LedActionSink`, adds the three strict-Fresh turn
+rules, and then applies the RPM level fill and red-zone configurations. Sink
+registration belongs to the helper, so the engine sees the same sink-before-
+rules order as the firmware composition root. The helper returns a structured
+stage, operation status, failing index, and completed counts; it performs no
+logging, renderer or provider lifecycle operation, engine attach/detach, or
+polling. A composition root can use that result to fail off while retaining
+diagnostics about partial setup.
+
+Before CAN starts, the firmware performs this sequence:
 
 1. binds the mirrored effects: `left` to `RightTurn`, `right` to `LeftTurn`,
    and `hazard` to both;
