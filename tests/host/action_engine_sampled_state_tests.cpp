@@ -119,6 +119,66 @@ TEST_CASE("rpm > 3000 activates above the threshold and deactivates at or below 
   CHECK(rule.on_sample(rpm_read(3001.0F)) == activate(kShiftLight));
 }
 
+TEST_CASE("sampled threshold hysteresis holds state between entry and release boundaries") {
+  Bench bench{};
+  SampledStateRuleConfig config = shift_light();
+  config.release_threshold = 2800.0F;
+  REQUIRE(bench.engine.add_sampled_state_rule(config) == ConfigStatus::Ok);
+  REQUIRE(bench.engine.attach() == SignalStatus::Ok);
+
+  CHECK(bench.sample() == Commands{deactivate(kShiftLight)});
+  CHECK(bench.sample_rpm(2900.0F) == Commands{});
+  CHECK(bench.sample_rpm(3000.5F) == Commands{activate(kShiftLight)});
+  CHECK(bench.sample_rpm(2900.0F) == Commands{});
+  CHECK(bench.sample_rpm(2800.0F) == Commands{deactivate(kShiftLight)});
+  CHECK(bench.sample_rpm(2900.0F) == Commands{});
+  CHECK(bench.sample_rpm(3000.5F) == Commands{activate(kShiftLight)});
+}
+
+TEST_CASE("sampled threshold hysteresis supports less-than rules") {
+  Bench bench{};
+  SampledStateRuleConfig config{
+      SignalCondition{"engine.rpm", Comparison::Less, RuleOperand::number(1000.0F)},
+      ActionId{kShiftLight}};
+  config.release_threshold = 1200.0F;
+  REQUIRE(bench.engine.add_sampled_state_rule(config) == ConfigStatus::Ok);
+  REQUIRE(bench.engine.attach() == SignalStatus::Ok);
+
+  CHECK(bench.sample_rpm(1100.0F) == Commands{deactivate(kShiftLight)});
+  CHECK(bench.sample_rpm(900.0F) == Commands{activate(kShiftLight)});
+  CHECK(bench.sample_rpm(1100.0F) == Commands{});
+  CHECK(bench.sample_rpm(1200.0F) == Commands{deactivate(kShiftLight)});
+}
+
+TEST_CASE("inclusive comparisons retain their release boundary") {
+  {
+    Bench bench{};
+    SampledStateRuleConfig config{
+        SignalCondition{"engine.rpm", Comparison::GreaterOrEqual, RuleOperand::number(3000.0F)},
+        ActionId{kShiftLight}};
+    config.release_threshold = 2800.0F;
+    REQUIRE(bench.engine.add_sampled_state_rule(config) == ConfigStatus::Ok);
+    REQUIRE(bench.engine.attach() == SignalStatus::Ok);
+
+    CHECK(bench.sample_rpm(3000.0F) == Commands{activate(kShiftLight)});
+    CHECK(bench.sample_rpm(2800.0F) == Commands{});
+    CHECK(bench.sample_rpm(2799.0F) == Commands{deactivate(kShiftLight)});
+  }
+  {
+    Bench bench{};
+    SampledStateRuleConfig config{
+        SignalCondition{"engine.rpm", Comparison::LessOrEqual, RuleOperand::number(1000.0F)},
+        ActionId{kShiftLight}};
+    config.release_threshold = 1200.0F;
+    REQUIRE(bench.engine.add_sampled_state_rule(config) == ConfigStatus::Ok);
+    REQUIRE(bench.engine.attach() == SignalStatus::Ok);
+
+    CHECK(bench.sample_rpm(1000.0F) == Commands{activate(kShiftLight)});
+    CHECK(bench.sample_rpm(1200.0F) == Commands{});
+    CHECK(bench.sample_rpm(1201.0F) == Commands{deactivate(kShiftLight)});
+  }
+}
+
 TEST_CASE("the first actionable sample emits an explicit Activate or Deactivate") {
   SampledStateRule above = rpm_rule(Comparison::Greater);
   CHECK(above.on_sample(rpm_read(3500.0F)) == activate(kShiftLight));
@@ -252,6 +312,44 @@ TEST_CASE("sampled state rule configuration errors follow the documented check o
   CHECK(engine.add_sampled_state_rule(shift_light()) == ConfigStatus::Ok);
 }
 
+TEST_CASE("sampled state hysteresis rejects non-finite or incompatible release thresholds") {
+  FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+
+  SampledStateRuleConfig config = shift_light();
+  config.release_threshold = kNaN;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config = shift_light();
+  config.release_threshold = std::numeric_limits<float>::infinity();
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config = shift_light();
+  config.release_threshold = kThreshold;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config.release_threshold = kThreshold + 1.0F;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config = SampledStateRuleConfig{
+      SignalCondition{"engine.rpm", Comparison::Less, RuleOperand::number(kThreshold)},
+      ActionId{kShiftLight}};
+  config.release_threshold = kThreshold;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config.release_threshold = kThreshold - 1.0F;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config = SampledStateRuleConfig{
+      SignalCondition{"engine.rpm", Comparison::Equal, RuleOperand::number(kThreshold)},
+      ActionId{kShiftLight}};
+  config.release_threshold = kThreshold - 1.0F;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+
+  config.condition.comparison = Comparison::NotEqual;
+  CHECK(engine.add_sampled_state_rule(config) == ConfigStatus::InvalidHysteresis);
+}
+
 TEST_CASE("sampled state, state and range rules share one level-action namespace") {
   FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
@@ -324,6 +422,22 @@ TEST_CASE("sampling rpm drives a shift light on and off through the engine") {
   CHECK(bench.sample_rpm(3500.0F) == Commands{activate(kShiftLight)});
   bench.provider.fail_reads(kRpm, SignalStatus::Timeout);
   CHECK(bench.sample() == Commands{deactivate(kShiftLight)});
+  CHECK(bench.sample_rpm(3500.0F) == Commands{activate(kShiftLight)});
+}
+
+TEST_CASE("sampled threshold hysteresis remains fail-off for bad reads") {
+  Bench bench{};
+  SampledStateRuleConfig config = shift_light();
+  config.release_threshold = 2800.0F;
+  REQUIRE(bench.engine.add_sampled_state_rule(config) == ConfigStatus::Ok);
+  REQUIRE(bench.engine.attach() == SignalStatus::Ok);
+
+  CHECK(bench.sample_rpm(3500.0F) == Commands{activate(kShiftLight)});
+  CHECK(bench.sample_rpm(2900.0F) == Commands{});
+  CHECK(bench.sample_rpm(3500.0F, Availability::Stale) == Commands{deactivate(kShiftLight)});
+  CHECK(bench.sample_rpm(2900.0F) == Commands{});
+  bench.provider.fail_reads(kRpm, SignalStatus::Timeout);
+  CHECK(bench.sample() == Commands{});
   CHECK(bench.sample_rpm(3500.0F) == Commands{activate(kShiftLight)});
 }
 

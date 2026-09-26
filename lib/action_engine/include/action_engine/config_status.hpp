@@ -20,6 +20,7 @@ enum class ConfigStatus : std::uint8_t {
   InvalidOperand,        // A Number operand is NaN or infinite.
   UnsupportedComparison, // An ordered comparison on a non-Number signal.
   InvalidRange,          // A non-finite range bound or span, or input.from >= input.to.
+  InvalidHysteresis,     // A sampled threshold's release boundary is invalid.
 };
 
 } // namespace action_engine
