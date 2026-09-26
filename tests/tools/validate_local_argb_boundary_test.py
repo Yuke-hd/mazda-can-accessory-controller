@@ -357,6 +357,15 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("vehicle integration retains direct LED sink registration")
 
+    def test_direct_event_rule_in_main_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_event_rule({});\n"
+            "  return true;\n}\n} // namespace",
+        )
+        self.assert_rejected("vehicle integration retains direct event rule registration")
+
     def test_missing_engine_project_component_is_rejected(self) -> None:
         self.edit(PROJECT_CMAKE, '    "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"\n', "")
         self.assert_rejected("vehicle project does not select the lib/action_engine component")
