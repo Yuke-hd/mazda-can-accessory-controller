@@ -33,6 +33,16 @@ target_link_libraries(mazda_candidate_tests PRIVATE mazda telemetry_test_support
 target_compile_features(mazda_candidate_tests PRIVATE cxx_std_17)
 doctest_discover_tests(mazda_candidate_tests)
 
+add_executable(gvret_parser_tests gvret_parser_tests.cpp)
+target_link_libraries(gvret_parser_tests PRIVATE gvret_parser doctest::doctest)
+target_compile_features(gvret_parser_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(gvret_parser_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(gvret_parser_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(gvret_parser_tests)
+
 add_executable(mazda_turn_tests mazda_turn_tests.cpp)
 target_link_libraries(mazda_turn_tests PRIVATE mazda telemetry_test_support doctest::doctest)
 target_compile_features(mazda_turn_tests PRIVATE cxx_std_17)
