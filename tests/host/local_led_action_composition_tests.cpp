@@ -8,7 +8,10 @@
 #include "action_engine/engine.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_fail_off.hpp"
+#include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
+#include "local_argb/stall_gated_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
 #include "support/fake_signal_provider.hpp"
 #include "vehicle_signals/signal_catalog.hpp"
@@ -319,6 +322,133 @@ TEST_CASE("a pixel write fault fails off and stays dark until the next level cha
   // The next command is the renderer's recovery boundary.
   harness.publish_at(1'001'000, turn(kLeft));
   CHECK(left_lit(harness.frame_at(1'001'000)));
+}
+
+namespace {
+
+// Records every command the engine sends, to prove the stall path never
+// reaches the action engine as a Deactivate.
+class RecordingActionSink final : public action_engine::ActionSink {
+public:
+  void execute(const action_engine::ActionCommand &command) noexcept override {
+    commands.push_back(command);
+  }
+
+  std::vector<action_engine::ActionCommand> commands{};
+};
+
+// The #34 composition: LedActionSink publishes through the stall gate, and a
+// fake supervisor samples a fake dispatcher progress count every poll and
+// applies the same ProgressFailOff policy as the firmware supervisor.
+struct StallHarness final {
+  StallHarness() {
+    REQUIRE(renderer.start());
+    REQUIRE(led.bind(kTurnLeftAction, LedEffect::LeftTurn) == BindingStatus::Ok);
+    REQUIRE(led.bind(kTurnRightAction, LedEffect::RightTurn) == BindingStatus::Ok);
+    REQUIRE(engine.add_sink(led) == ConfigStatus::Ok);
+    REQUIRE(engine.add_sink(commands) == ConfigStatus::Ok);
+    REQUIRE(engine.add_state_rule(turn_rule("left", kTurnLeftAction)) == ConfigStatus::Ok);
+    REQUIRE(engine.add_state_rule(turn_rule("right", kTurnRightAction)) == ConfigStatus::Ok);
+    REQUIRE(engine.attach() == SignalStatus::Ok);
+    provider.start();
+    watchdog.arm(progress, 0);
+  }
+  ~StallHarness() {
+    provider.stop();
+    (void)engine.detach();
+  }
+  StallHarness(const StallHarness &) = delete;
+  StallHarness &operator=(const StallHarness &) = delete;
+
+  // One healthy dispatcher pass that delivers a notice.
+  void dispatch_at(vehicle_core::MonotonicTimestamp now_us, SignalNotification notice) {
+    lighting.now_us = now_us;
+    ++progress;
+    REQUIRE(provider.publish(notice) == 1);
+  }
+
+  // One supervisor poll.
+  void supervise_at(vehicle_core::MonotonicTimestamp now_us) {
+    lighting.now_us = now_us;
+    fail_off.apply(watchdog.sample(progress, now_us));
+  }
+
+  [[nodiscard]] const PixelFrame &frame_at(vehicle_core::MonotonicTimestamp now_us) {
+    REQUIRE(renderer.tick(now_us));
+    return pixels.frames.back();
+  }
+
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  RendererLightingSink lighting{renderer};
+  local_argb::internal::StallGatedSink gate{lighting};
+  local_argb::internal::ProgressFailOff fail_off{gate, lighting};
+  LedActionSink led{gate};
+  RecordingActionSink commands{};
+  test_support::FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+  local_argb::internal::ProgressWatchdog watchdog{};
+  std::uint32_t progress{0};
+};
+
+} // namespace
+
+TEST_CASE("a stalled dispatcher fails a held turn off in bound and a later action relights it") {
+  StallHarness harness{};
+  constexpr vehicle_core::MonotonicTimestamp kActivatedUs = 1'000;
+
+  // 1. An effect is activated.
+  harness.dispatch_at(kActivatedUs, initial(turn(kLeft)));
+  REQUIRE(left_lit(harness.frame_at(kActivatedUs)));
+  const auto commands_before_stall = harness.commands.commands.size();
+
+  // 2. Dispatcher progress stops. The supervisor keeps polling.
+  vehicle_core::MonotonicTimestamp now_us = kActivatedUs;
+  while (left_lit(harness.frame_at(now_us)) &&
+         now_us <= kActivatedUs + local_argb::kProgressFailOffBoundUs) {
+    now_us += local_argb::kSupervisorPollUs;
+    harness.supervise_at(now_us);
+  }
+
+  // 3. No Deactivate reached the engine's sinks.
+  CHECK(harness.commands.commands.size() == commands_before_stall);
+  // 4. The strip went black within the bound, and not before the stall time.
+  CHECK(harness.frame_at(now_us) == local_argb::kBlackFrame);
+  CHECK(now_us > kActivatedUs + local_argb::kProgressStallFailOffUs);
+  CHECK(now_us <= kActivatedUs + local_argb::kProgressFailOffBoundUs);
+  CHECK(harness.fail_off.take_report().stalls == 1);
+
+  // A command from another context during the stall cannot relight the strip.
+  harness.led.execute({kTurnRightAction, action_engine::ActionCommandKind::Activate});
+  CHECK(harness.frame_at(now_us) == local_argb::kBlackFrame);
+
+  // 5. Progress resumes (an idle pass). Nothing is re-emitted.
+  ++harness.progress;
+  now_us += local_argb::kSupervisorPollUs;
+  harness.supervise_at(now_us);
+  CHECK(harness.fail_off.take_report().resumes == 1);
+  CHECK(harness.frame_at(now_us) == local_argb::kBlackFrame);
+
+  // 6. A subsequent valid action lights the strip again.
+  harness.dispatch_at(now_us, turn(kRight));
+  CHECK(right_lit(harness.frame_at(now_us)));
+}
+
+TEST_CASE("an idle dispatcher under stable state keeps a held turn lit") {
+  StallHarness harness{};
+  harness.dispatch_at(1'000, initial(turn(kLeft)));
+
+  // Idle loop passes with no notice, well past the stall bound.
+  vehicle_core::MonotonicTimestamp now_us = 1'000;
+  for (int poll = 0; poll < 500; ++poll) {
+    ++harness.progress;
+    now_us += local_argb::kSupervisorPollUs;
+    harness.supervise_at(now_us);
+  }
+
+  CHECK(now_us > local_argb::kProgressFailOffBoundUs);
+  CHECK(left_lit(harness.frame_at(now_us)));
+  CHECK(harness.fail_off.take_report().stalls == 0);
 }
 
 namespace {

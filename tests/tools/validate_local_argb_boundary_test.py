@@ -101,6 +101,52 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("engine attachment does not precede telemetry/CAN startup")
 
+    def test_missing_dispatcher_progress_watch_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "local_argb::watch_progress(&notification_dispatch_progress, &telemetry)",
+            "true",
+        )
+        self.assert_rejected("dispatcher progress watch is missing from vehicle integration")
+
+    def test_dispatcher_progress_watch_after_telemetry_start_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "local_argb::watch_progress(&notification_dispatch_progress, &telemetry)",
+            "true",
+        )
+        self.edit(
+            MAIN,
+            '  ESP_LOGI(kTag, "strict listen-only CAN acquisition started',
+            "  (void)local_argb::watch_progress(&notification_dispatch_progress, &telemetry);\n"
+            '  ESP_LOGI(kTag, "strict listen-only CAN acquisition started',
+        )
+        self.assert_rejected("dispatcher progress watch does not precede telemetry/CAN startup")
+
+    def test_supervisor_without_progress_fail_off_is_rejected(self) -> None:
+        self.edit(
+            Path("components/local_argb/src/local_argb_idf.cpp"),
+            "    supervise_progress();\n",
+            "",
+        )
+        self.assert_rejected("dispatcher-stall fail-off supervision is missing")
+
+    def test_progress_stall_without_gated_fail_off_policy_is_rejected(self) -> None:
+        self.edit(
+            Path("components/local_argb/src/local_argb_idf.cpp"),
+            "g_progress_fail_off.apply(sample_progress());",
+            "(void)sample_progress();",
+        )
+        self.assert_rejected("dispatcher-stall fail-off policy is missing")
+
+    def test_progress_stall_without_worker_report_is_rejected(self) -> None:
+        self.edit(
+            Path("components/local_argb/src/local_argb_idf.cpp"),
+            "    report_progress();\n  }\n}",
+            "  }\n}",
+        )
+        self.assert_rejected("worker-side progress stall logging is missing")
+
     def test_commented_out_engine_attach_is_rejected(self) -> None:
         self.edit(MAIN, "engine.attach()", "vehicle_signals::SignalStatus::Ok")
         self.edit(MAIN, BEFORE_CAN_START, "  // (void)engine.attach();\n" + BEFORE_CAN_START)

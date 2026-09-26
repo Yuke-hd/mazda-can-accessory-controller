@@ -848,6 +848,11 @@ void VehicleTelemetryService::dispatcher_loop() noexcept {
     callback_context_identity_.store(current_execution_identity(), std::memory_order_release);
     const std::size_t delivered = dispatch_channels_once();
     callback_context_identity_.store(kNoExecutionIdentity, std::memory_order_release);
+    // Record loop progress, not delivery: an idle pass under stable vehicle
+    // state is healthy. Only a pass stuck in a callback stops this count.
+    // Relaxed: readers only compare successive values; nothing is published
+    // through this count.
+    dispatch_progress_.fetch_add(1, std::memory_order_relaxed);
     if (delivered == 0) {
 #if defined(ESP_PLATFORM)
       vTaskDelay(kMinimumTaskDelayTicks);
@@ -1193,6 +1198,11 @@ Reading<float> VehicleTelemetry::engine_rpm() const noexcept {
 Diagnostics VehicleTelemetry::diagnostics() const noexcept {
   return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
       ->diagnostics();
+}
+
+std::uint32_t VehicleTelemetry::dispatch_progress() const noexcept {
+  return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
+      ->dispatch_progress();
 }
 
 #define MAZDA_PUBLIC_SUBSCRIPTION_METHOD(method_name, service_method, callback_type)               \

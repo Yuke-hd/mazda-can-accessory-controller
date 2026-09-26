@@ -405,6 +405,19 @@ bool wait_for_count(const TurnRecorder &recorder, const std::size_t count,
                                    [&recorder, count] { return recorder.count >= count; });
 }
 
+template <typename Telemetry>
+bool wait_for_dispatch_progress_after(
+    const Telemetry &telemetry, const std::uint32_t baseline,
+    const std::chrono::milliseconds timeout = std::chrono::milliseconds{500}) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (telemetry.dispatch_progress() != baseline)
+      return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return false;
+}
+
 bool wait_for_lifecycle(const mazda::internal::VehicleTelemetryService &service,
                         const mazda::LifecycleState expected,
                         const std::chrono::milliseconds timeout = std::chrono::milliseconds{500}) {
@@ -1409,11 +1422,50 @@ void test_lighting_heartbeat_for_off_unknown_nodata_and_unavailable() {
   }
 }
 
+void test_dispatch_progress_counts_idle_loop_passes_and_stops_in_blocked_callback() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 10'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  TurnRecorder recorder{};
+  EXPECT(service.subscribe_turn(&record_turn, &recorder).ok());
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_count(recorder, 1));
+
+  // Stable state: no notice is pending, yet every idle loop pass is progress.
+  const auto idle = service.dispatch_progress();
+  EXPECT(wait_for_dispatch_progress_after(service, idle));
+
+  recorder.block_left = true;
+  clock.set(30);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 30, {0, 0x20, 0, 0, 0, 0, 0, 0})) ==
+         mazda::ResultCode::Ok);
+  {
+    std::unique_lock<std::mutex> lock{recorder.mutex};
+    EXPECT(recorder.changed.wait_for(lock, std::chrono::milliseconds{500},
+                                     [&recorder] { return recorder.entered_block; }));
+  }
+  // A dispatcher stuck in a callback makes no progress.
+  const auto blocked = service.dispatch_progress();
+  EXPECT(!wait_for_dispatch_progress_after(service, blocked, std::chrono::milliseconds{20}));
+
+  {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    recorder.release_block = true;
+  }
+  recorder.changed.notify_all();
+  EXPECT(wait_for_dispatch_progress_after(service, blocked));
+  EXPECT(service.stop().ok());
+}
+
 void test_public_facade_lifecycle_contract() {
   mazda::VehicleTelemetry telemetry{};
   EXPECT(telemetry.configure(mazda::TelemetryConfig{}).ok());
   EXPECT(telemetry.start().ok());
   EXPECT(telemetry.diagnostics().lifecycle == mazda::LifecycleState::Running);
+  EXPECT(wait_for_dispatch_progress_after(telemetry, telemetry.dispatch_progress()));
   EXPECT(telemetry.stop().ok());
   EXPECT(telemetry.diagnostics().lifecycle == mazda::LifecycleState::Stopped);
 }
@@ -1439,6 +1491,7 @@ int main() {
   test_transport_liveness_uses_acquisition_clock();
   test_notifications_coalesce_and_recover();
   test_blocked_callback_does_not_block_polling_and_stop_is_retryable();
+  test_dispatch_progress_counts_idle_loop_passes_and_stops_in_blocked_callback();
   test_callback_stop_timeout_can_retry_after_source_already_stopped();
   test_terminal_receive_fault_is_propagated_and_restart_clears_state();
   test_lighting_startup_black_deadline_heartbeat_and_failure_retry();

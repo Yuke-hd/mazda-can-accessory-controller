@@ -83,6 +83,11 @@ public:
 
   [[nodiscard]] StatusResult unsubscribe(Subscription subscription) noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
+  // Liveness of the notification dispatcher: a wrapping count of completed
+  // dispatcher loop passes. It advances while idle under stable vehicle state
+  // and stops only while the dispatcher is stuck, for example in a callback.
+  // Safe to read from any context.
+  [[nodiscard]] std::uint32_t dispatch_progress() const noexcept;
 
 private:
   friend class internal::VehicleTelemetryAccess;

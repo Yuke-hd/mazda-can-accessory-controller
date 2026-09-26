@@ -1,6 +1,9 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_fail_off.hpp"
+#include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
+#include "local_argb/stall_gated_sink.hpp"
 
 #include "board/board_config.h"
 #include "driver/spi_master.h"
@@ -28,6 +31,8 @@ constexpr spi_host_device_t kVehicleStripSpiBus = SPI3_HOST;
 constexpr UBaseType_t kWorkerPriority = tskIDLE_PRIORITY + 2;
 // The guard performs no LED/RMT work and is above can_rx (MAX-2), so a stuck
 // lower-priority LED call cannot prevent the configured reset bound.
+// It never formats log output either: its stack is sized for watchdog reads,
+// so it only counts progress transitions and the worker logs them.
 constexpr UBaseType_t kSupervisorPriority = configMAX_PRIORITIES - 1;
 constexpr std::uint32_t kWorkerStackDepth = 4096;
 constexpr std::uint32_t kSupervisorStackDepth = 2048;
@@ -36,6 +41,9 @@ constexpr TickType_t kWorkerPollTicks =
 
 internal::DriverWatchdog g_driver_watchdog{};
 internal::WorkerLease g_worker_lease{};
+internal::ProgressWatchdog g_progress_watchdog{};
+ProgressProbe g_progress_probe{nullptr};
+const void *g_progress_context{nullptr};
 portMUX_TYPE g_watchdog_lock = portMUX_INITIALIZER_UNLOCKED;
 
 vehicle_core::MonotonicTimestamp now_us() noexcept {
@@ -121,6 +129,10 @@ public:
 };
 
 QueueSink g_queue_sink;
+// Lighting publishers go through the gate; a progress stall writes black past
+// it to the queue, so the supervisor itself makes no LED driver call.
+internal::StallGatedSink g_gated_sink{g_queue_sink};
+internal::ProgressFailOff g_progress_fail_off{g_gated_sink, g_queue_sink};
 led_strip_handle_t g_onboard_strip{nullptr};
 led_strip_handle_t g_vehicle_strip{nullptr};
 StaticQueue_t g_queue_storage{};
@@ -129,6 +141,20 @@ QueueHandle_t g_queue{nullptr};
 TaskHandle_t g_worker{nullptr};
 TaskHandle_t g_supervisor{nullptr};
 bool g_started{false};
+
+// Logs progress transitions the supervisor applied. Runs on the worker, whose
+// stack already carries ESP_LOG calls.
+void report_progress() noexcept {
+  const internal::ProgressReport report = g_progress_fail_off.take_report();
+  if (report.stalls != 0) {
+    ESP_LOGE(kTag, "watched progress stalled (%lu); strip failed off",
+             static_cast<unsigned long>(report.stalls));
+  }
+  if (report.resumes != 0) {
+    ESP_LOGW(kTag, "watched progress resumed (%lu); next command may light the strip",
+             static_cast<unsigned long>(report.resumes));
+  }
+}
 
 void worker(void *) noexcept {
   for (;;) {
@@ -141,8 +167,29 @@ void worker(void *) noexcept {
     } else if (!g_controller.tick(now_us())) {
       ESP_LOGE(kTag, "pixel fail-off clear retry failed");
     }
+    report_progress();
   }
 }
+
+// Samples the watched progress count, if any. The probe runs outside the
+// critical section; only the watchdog state is updated under the lock.
+internal::ProgressTransition sample_progress() noexcept {
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const ProgressProbe probe = g_progress_probe;
+  const void *const context = g_progress_context;
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  if (probe == nullptr) {
+    return internal::ProgressTransition::None;
+  }
+  const std::uint32_t progress = probe(context);
+  const auto sampled_us = now_us();
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const auto transition = g_progress_watchdog.sample(progress, sampled_us);
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  return transition;
+}
+
+void supervise_progress() noexcept { g_progress_fail_off.apply(sample_progress()); }
 
 void supervisor(void *) noexcept {
   for (;;) {
@@ -159,6 +206,7 @@ void supervisor(void *) noexcept {
       // before CAN can restart.
       esp_restart();
     }
+    supervise_progress();
   }
 }
 
@@ -179,7 +227,7 @@ bool QueueSink::publish(const internal::LightingCommand &command) noexcept {
 
 namespace internal {
 
-LightingSink &sink() noexcept { return g_queue_sink; }
+LightingSink &sink() noexcept { return g_gated_sink; }
 
 } // namespace internal
 
@@ -285,6 +333,24 @@ void fail_off() noexcept {
   if (!g_started || g_queue == nullptr || xQueueOverwrite(g_queue, &command) != pdPASS) {
     (void)g_sink.write(kBlack);
   }
+}
+
+bool watch_progress(const ProgressProbe probe, const void *const context) noexcept {
+  if (!g_started || probe == nullptr) {
+    return false;
+  }
+  // Read the baseline before taking the lock; the probe may not be cheap.
+  const std::uint32_t baseline = probe(context);
+  const auto armed_us = now_us();
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const bool accepted = g_progress_probe == nullptr;
+  if (accepted) {
+    g_progress_probe = probe;
+    g_progress_context = context;
+    g_progress_watchdog.arm(baseline, armed_us);
+  }
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  return accepted;
 }
 
 } // namespace local_argb

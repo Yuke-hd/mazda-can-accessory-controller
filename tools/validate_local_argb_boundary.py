@@ -392,6 +392,11 @@ def main() -> int:
         "if (worker_created == pdPASS)": "post-creation lease arm",
         "disarm_worker_lease()": "startup-failure lease disarm",
         "esp_restart()": "supervised stall reset recovery",
+        "    supervise_progress();": "dispatcher-stall fail-off supervision",
+        "g_progress_fail_off{g_gated_sink, g_queue_sink}": "dispatcher-stall publish gate",
+        "g_progress_fail_off.apply(sample_progress());": "dispatcher-stall fail-off policy",
+        "    report_progress();": "worker-side progress stall logging",
+        "LightingSink &sink() noexcept { return g_gated_sink; }": "gated renderer queue sink",
     }
     for needle, label in requirements.items():
         if needle not in idf_source:
@@ -432,6 +437,8 @@ def main() -> int:
         ("telemetry.engine_rpm()", "engine RPM polling"),
         ("telemetry.start()", "facade-owned startup"),
         ("vTaskDelay(pdMS_TO_TICKS(100))", "application polling cadence"),
+        ("local_argb::watch_progress(&notification_dispatch_progress, &telemetry)",
+         "dispatcher progress watch"),
     ):
         if needle not in structure:
             failures.append(f"{label} is missing from vehicle integration: {needle}")
@@ -440,7 +447,7 @@ def main() -> int:
     # that app_main does not make is a violation. _fail_off_failures reports
     # the two start calls.
     app_main_body = _app_main_body(structure) or ""
-    for call in ("board::initialize_safe_defaults()", "engine.attach()"):
+    for call in ("board::initialize_safe_defaults()", "engine.attach()", "local_argb::watch_progress("):
         if call not in app_main_body:
             failures.append(f"{call} is not called in app_main")
     for earlier, later, label in (
@@ -452,6 +459,10 @@ def main() -> int:
          "engine attachment does not precede telemetry/CAN startup"),
         ("local_argb::start()", "telemetry.start()",
          "local ARGB startup does not precede telemetry/CAN startup"),
+        ("local_argb::start()", "local_argb::watch_progress(",
+         "local ARGB startup does not precede the dispatcher progress watch"),
+        ("local_argb::watch_progress(", "telemetry.start()",
+         "dispatcher progress watch does not precede telemetry/CAN startup"),
     ):
         earlier_index = app_main_body.find(earlier)
         later_index = app_main_body.find(later)

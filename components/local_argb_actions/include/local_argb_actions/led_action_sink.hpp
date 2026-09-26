@@ -18,10 +18,13 @@ namespace local_argb_actions {
 // engine sends Deactivate, so every lit command is held with no deadline.
 // Loss of data is handled upstream: the engine turns every NoData, Stale or
 // Unavailable reading into Deactivate, which publishes a non-actionable black
-// command. Nothing here bounds a provider that stops delivering notices, and
-// stopping the provider or detaching the engine sends no Deactivate: the
-// composition root must fail the renderer off (local_argb::fail_off()) when
-// it does either. See docs/development/local-led-actions.md.
+// command. Nothing here bounds a provider that stops delivering notices; the
+// composition root has the renderer watch the provider's dispatcher progress
+// (local_argb::watch_progress()), which fails off and rejects publishes while
+// it is stalled. Stopping the provider or detaching the engine sends no
+// Deactivate: the composition root must fail the renderer off
+// (local_argb::fail_off()) when it does either. See
+// docs/development/local-led-actions.md.
 //
 // Every command for a bound action publishes the full effect state, so the
 // engine's explicit initial Deactivate sets a black baseline. On/off effects
@@ -31,9 +34,10 @@ namespace local_argb_actions {
 // commands for unbound actions.
 //
 // Precondition: while the engine is attached, this adapter is the lighting
-// sink's only publisher and the sink accepts every publish, so start the
-// renderer first. A rejected publish is not retried, and the engine does not
-// resend a deduplicated level.
+// sink's only publisher, so start the renderer first. The sink accepts every
+// publish except while the renderer's progress watch has closed it. A
+// rejected publish is not retried, and the engine does not resend a
+// deduplicated level.
 //
 // Setup: bind() runs before the engine attaches. execute() then runs on the
 // engine's serialized command context, never blocks, and publishes through
