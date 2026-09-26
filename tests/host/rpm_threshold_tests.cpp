@@ -11,6 +11,7 @@
 #include "action_engine/engine.hpp"
 #include "controller_config/rpm_level_fill.hpp"
 #include "controller_config/rpm_threshold.hpp"
+#include "controller_config/signals.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
 #include "support/fake_signal_provider.hpp"
@@ -108,14 +109,16 @@ public:
   ThresholdController(const ThresholdController &) = delete;
   ThresholdController &operator=(const ThresholdController &) = delete;
 
-  // Samples `rpm` as the Mazda provider reports it and returns the commands
-  // that sample emitted.
-  std::vector<ActionCommand> sample(const float rpm) {
-    provider.set_reading(kEngineRpm, unverified_rpm(rpm));
+  // Samples `reading` and returns the commands that sample emitted.
+  std::vector<ActionCommand> sample(const SignalReading &reading) {
+    provider.set_reading(kEngineRpm, reading);
     sink.commands.clear();
     REQUIRE(engine.sample_polled_rules() == SignalStatus::Ok);
     return sink.commands;
   }
+
+  // Samples `rpm` as the Mazda provider reports it.
+  std::vector<ActionCommand> sample(const float rpm) { return sample(unverified_rpm(rpm)); }
 
   test_support::FakeSignalProvider provider{kView};
   RecordingActionSink sink{};
@@ -139,6 +142,10 @@ public:
 TEST_CASE("the default RPM threshold is 6000 rpm") {
   const RpmThresholdConfig config{};
   CHECK(config.threshold.rpm == 6000.0F);
+}
+
+TEST_CASE("the RPM features share the vehicle.engine_rpm signal key") {
+  CHECK(controller_config::kEngineRpmSignal == std::string_view{"vehicle.engine_rpm"});
 }
 
 TEST_CASE("the threshold rule is vehicle.engine_rpm Greater threshold, accepting unverified "
@@ -187,10 +194,7 @@ TEST_CASE("a configured threshold moves the switching point") {
 TEST_CASE("losing the RPM reading deactivates an active threshold action") {
   ThresholdController controller{RpmThreshold{}};
   CHECK(controller.sample(6500.0F) == Commands{kActivate});
-  controller.provider.set_reading(kEngineRpm, SignalReading{});
-  controller.sink.commands.clear();
-  REQUIRE(controller.engine.sample_polled_rules() == SignalStatus::Ok);
-  CHECK(controller.sink.commands == Commands{kDeactivate});
+  CHECK(controller.sample(SignalReading{}) == Commands{kDeactivate});
 }
 
 TEST_CASE("a non-finite threshold is rejected") {
