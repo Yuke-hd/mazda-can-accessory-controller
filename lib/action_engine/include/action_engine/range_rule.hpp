@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <optional>
 
 #include "action_engine/action.hpp"
@@ -10,33 +12,47 @@
 
 namespace action_engine {
 
-// Clamped linear map from an ascending input range onto an output range:
-// x <= input.from gives exactly output.from, x >= input.to gives exactly
-// output.to, and values in between are interpolated. The endpoint branches
-// also keep extreme inputs from overflowing the interpolation. The output may
-// be descending (inverse) or equal (constant). `value` must be finite. The
-// constructor does not validate; resolve_range_rule() rejects ranges that
-// would make the result non-finite.
+// Clamped linear or piecewise-linear map. The NumericRange constructor
+// preserves the original two-endpoint mapping API. The curve constructor
+// copies its borrowed points into fixed storage. `value` must be finite. The
+// constructors do not validate; resolve_range_rule() rejects configurations
+// that would make interpolation non-finite.
 class LinearMapping final {
 public:
   constexpr LinearMapping() noexcept = default;
   constexpr LinearMapping(NumericRange input, NumericRange output) noexcept
-      : input_(input), output_(output) {}
+      : points_{{{input.from, output.from}, {input.to, output.to}}}, point_count_(2) {}
+  constexpr explicit LinearMapping(NumericCurveView curve) noexcept {
+    if (curve.data == nullptr || curve.count < 2 || curve.count > points_.size()) {
+      return;
+    }
+    point_count_ = curve.count;
+    for (std::size_t index = 0; index < curve.count; ++index) {
+      points_[index] = curve.data[index];
+    }
+  }
 
   [[nodiscard]] constexpr float map(float value) const noexcept {
-    if (value <= input_.from) {
-      return output_.from;
+    if (value <= points_[0].input) {
+      return points_[0].output;
     }
-    if (value >= input_.to) {
-      return output_.to;
+    for (std::size_t index = 1; index < point_count_; ++index) {
+      const NumericControlPoint &right = points_[index];
+      if (value == right.input) {
+        return right.output;
+      }
+      if (value < right.input) {
+        const NumericControlPoint &left = points_[index - 1];
+        const float fraction = (value - left.input) / (right.input - left.input);
+        return left.output + fraction * (right.output - left.output);
+      }
     }
-    const float fraction = (value - input_.from) / (input_.to - input_.from);
-    return output_.from + fraction * (output_.to - output_.from);
+    return points_[point_count_ - 1].output;
   }
 
 private:
-  NumericRange input_{};
-  NumericRange output_{};
+  std::array<NumericControlPoint, NumericCurveView::kMaxPoints> points_{};
+  std::size_t point_count_{2};
 };
 
 // Runtime range rule, sampled at the caller's cadence. Each sample is the
@@ -79,8 +95,9 @@ struct RangeRuleResolution {
 
 // Resolves a persisted range rule against `catalog`. Failures, in check order:
 // UnknownSignal, UnsupportedCapability (no Read), TypeMismatch (not Number),
-// InvalidRange (a non-finite bound or span, or input.from >= input.to). The
-// ActionId is checked by the engine.
+// InvalidRange (invalid selected legacy ranges, or a present curve with a null
+// non-empty view, fewer than two or more than eight points, non-finite values
+// or spans, or non-ascending inputs). The ActionId is checked by the engine.
 [[nodiscard]] RangeRuleResolution resolve_range_rule(vehicle_signals::SignalCatalogView catalog,
                                                      const RangeRuleConfig &config) noexcept;
 

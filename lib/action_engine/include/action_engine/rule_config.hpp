@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -125,10 +126,27 @@ struct NumericRange {
   float to{0.0F};
 };
 
+// One point of a numeric mapping curve. Inputs are ordered along the signal
+// domain; outputs may move in either direction or remain equal.
+struct NumericControlPoint {
+  float input{0.0F};
+  float output{0.0F};
+};
+
+// Allocation-free borrowed view used while a range rule is configured. The
+// pointed-to storage only needs to outlive add_range_rule(); the resolved
+// runtime rule owns a bounded copy.
+struct NumericCurveView {
+  static constexpr std::size_t kMaxPoints = 8;
+
+  const NumericControlPoint *data{nullptr};
+  std::size_t count{0};
+};
+
 // Level rule sampled at the caller's cadence: reads a Read-capable Number
-// signal and maps it linearly from `input` onto `output`, clamping outside
-// `input`. `input` must be ascending (from < to); `output` may be ascending,
-// descending (an inverse mapping) or equal (a constant level). Non-actionable
+// signal using either the legacy `input`/`output` linear mapping or an optional
+// ordered piecewise-linear `curve`, clamping outside the selected domain. A
+// present curve takes precedence over the legacy ranges. Non-actionable
 // readings and failed reads are fail-off (Deactivate). A range rule owns its
 // ActionId like a state rule does.
 struct RangeRuleConfig {
@@ -137,6 +155,7 @@ struct RangeRuleConfig {
   NumericRange output{};
   ActionId action{};
   FreshnessRequirement freshness{FreshnessRequirement::Fresh};
+  std::optional<NumericCurveView> curve{};
 };
 
 } // namespace action_engine

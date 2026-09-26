@@ -19,7 +19,7 @@ enum class ConfigStatus : std::uint8_t {
   UnknownChoice,         // The enum choice key is not a choice of the signal.
   InvalidOperand,        // A Number operand is NaN or infinite.
   UnsupportedComparison, // An ordered comparison on a non-Number signal.
-  InvalidRange,          // A non-finite range bound or span, or input.from >= input.to.
+  InvalidRange,          // An invalid range-rule mapping range or control-point curve.
 };
 
 } // namespace action_engine
