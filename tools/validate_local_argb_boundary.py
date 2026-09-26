@@ -296,14 +296,17 @@ def _binding_failures(code: str, structure: str) -> List[str]:
     ):
         failures.append("turn-state rule loop does not add a strict rule for every kTurnRules entry")
     counts = {
-        # The RPM level fill binds and adds its range rule through
-        # controller_config::apply(), so main.cpp never calls them directly.
+        # The RPM level fill and the RPM red zone bind and add their polled
+        # rules through controller_config::apply(), so main.cpp never calls
+        # them directly.
         "controller_config::apply(kRpmLevelFill,led_actions,engine)": 1,
+        "controller_config::apply(kRpmRedZone,led_actions,engine)": 1,
         "led_actions.bind(": 1,
         "engine.add_state_rule(": 1,
         "engine.add_sink(": 1,
         "engine.add_event_rule(": 0,
         "engine.add_range_rule(": 0,
+        "engine.add_sampled_state_rule(": 0,
     }
     squashed = _squash(structure)
     for needle, expected_count in counts.items():
@@ -420,6 +423,7 @@ def main() -> int:
         ("action_engine/engine.hpp", "generic action engine include"),
         ("local_argb_actions/led_action_sink.hpp", "local LED action sink include"),
         ("controller_config/rpm_level_fill.hpp", "RPM level fill configuration include"),
+        ("controller_config/rpm_threshold.hpp", "RPM threshold configuration include"),
     ):
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
             failures.append(f'{label} is missing from vehicle integration: #include "{header}"')

@@ -402,6 +402,28 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("vehicle integration must call engine.add_range_rule() exactly 0 time(s)")
 
+    def test_missing_rpm_red_zone_apply_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "controller_config::apply(kRpmRedZone, led_actions, engine)",
+            "controller_config::RpmThresholdStatus{}",
+        )
+        self.assert_rejected(
+            "vehicle integration must call "
+            "controller_config::apply(kRpmRedZone,led_actions,engine)) exactly 1 time(s)"
+        )
+
+    def test_direct_sampled_state_rule_in_main_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_sampled_state_rule(controller_config::threshold_rule(kRpmRedZone));\n"
+            "  return true;\n}\n} // namespace",
+        )
+        self.assert_rejected(
+            "vehicle integration must call engine.add_sampled_state_rule() exactly 0 time(s)"
+        )
+
     def test_missing_polled_sampling_is_rejected(self) -> None:
         self.edit(MAIN, "    (void)engine.sample_polled_rules();\n", "")
         self.assert_rejected("the runtime loop after telemetry startup does not call")
