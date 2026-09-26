@@ -46,6 +46,16 @@ if(BUILD_TESTING)
   target_compile_features(local_argb_zone_tests PRIVATE cxx_std_17)
   add_test(NAME local_argb_zone_tests COMMAND local_argb_zone_tests)
 
+  add_executable(local_argb_progress_fail_off_tests tests/progress_fail_off_tests.cpp)
+  target_include_directories(
+    local_argb_progress_fail_off_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+  )
+  target_link_libraries(
+    local_argb_progress_fail_off_tests PRIVATE local_argb local_argb_sink_contract
+  )
+  target_compile_features(local_argb_progress_fail_off_tests PRIVATE cxx_std_17)
+  add_test(NAME local_argb_progress_fail_off_tests COMMAND local_argb_progress_fail_off_tests)
+
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
   add_test(
     NAME local_argb_public_boundary

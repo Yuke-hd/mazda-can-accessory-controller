@@ -1,6 +1,8 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
+#include "local_argb/stall_gated_sink.hpp"
 
 #include "board/board_config.h"
 #include "driver/spi_master.h"
@@ -36,6 +38,9 @@ constexpr TickType_t kWorkerPollTicks =
 
 internal::DriverWatchdog g_driver_watchdog{};
 internal::WorkerLease g_worker_lease{};
+internal::ProgressWatchdog g_progress_watchdog{};
+ProgressProbe g_progress_probe{nullptr};
+const void *g_progress_context{nullptr};
 portMUX_TYPE g_watchdog_lock = portMUX_INITIALIZER_UNLOCKED;
 
 vehicle_core::MonotonicTimestamp now_us() noexcept {
@@ -121,6 +126,8 @@ public:
 };
 
 QueueSink g_queue_sink;
+// Lighting publishers go through the gate; fail_off() writes past it.
+internal::StallGatedSink g_gated_sink{g_queue_sink};
 led_strip_handle_t g_onboard_strip{nullptr};
 led_strip_handle_t g_vehicle_strip{nullptr};
 StaticQueue_t g_queue_storage{};
@@ -144,6 +151,41 @@ void worker(void *) noexcept {
   }
 }
 
+// Samples the watched progress count, if any. The probe runs outside the
+// critical section; only the watchdog state is updated under the lock.
+internal::ProgressTransition sample_progress() noexcept {
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const ProgressProbe probe = g_progress_probe;
+  const void *const context = g_progress_context;
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  if (probe == nullptr) {
+    return internal::ProgressTransition::None;
+  }
+  const std::uint32_t progress = probe(context);
+  const auto sampled_us = now_us();
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const auto transition = g_progress_watchdog.sample(progress, sampled_us);
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  return transition;
+}
+
+void supervise_progress() noexcept {
+  switch (sample_progress()) {
+  case internal::ProgressTransition::Stalled:
+    // Close before clearing: a publish racing this close re-sends black.
+    g_gated_sink.close();
+    fail_off();
+    ESP_LOGE(kTag, "watched progress stalled; strip failed off");
+    break;
+  case internal::ProgressTransition::Resumed:
+    g_gated_sink.open();
+    ESP_LOGW(kTag, "watched progress resumed; next command may light the strip");
+    break;
+  case internal::ProgressTransition::None:
+    break;
+  }
+}
+
 void supervisor(void *) noexcept {
   for (;;) {
     vTaskDelay(kWorkerPollTicks);
@@ -159,6 +201,7 @@ void supervisor(void *) noexcept {
       // before CAN can restart.
       esp_restart();
     }
+    supervise_progress();
   }
 }
 
@@ -179,7 +222,7 @@ bool QueueSink::publish(const internal::LightingCommand &command) noexcept {
 
 namespace internal {
 
-LightingSink &sink() noexcept { return g_queue_sink; }
+LightingSink &sink() noexcept { return g_gated_sink; }
 
 } // namespace internal
 
@@ -285,6 +328,24 @@ void fail_off() noexcept {
   if (!g_started || g_queue == nullptr || xQueueOverwrite(g_queue, &command) != pdPASS) {
     (void)g_sink.write(kBlack);
   }
+}
+
+bool watch_progress(const ProgressProbe probe, const void *const context) noexcept {
+  if (!g_started || probe == nullptr) {
+    return false;
+  }
+  // Read the baseline before taking the lock; the probe may not be cheap.
+  const std::uint32_t baseline = probe(context);
+  const auto armed_us = now_us();
+  taskENTER_CRITICAL(&g_watchdog_lock);
+  const bool accepted = g_progress_probe == nullptr;
+  if (accepted) {
+    g_progress_probe = probe;
+    g_progress_context = context;
+    g_progress_watchdog.arm(baseline, armed_us);
+  }
+  taskEXIT_CRITICAL(&g_watchdog_lock);
+  return accepted;
 }
 
 } // namespace local_argb

@@ -139,13 +139,23 @@ The composition root owns the cases the engine cannot see:
   `ActionEngine::detach()` sends no `Deactivate`. Call `local_argb::fail_off()`
   after the provider's `stop()` or the engine's `detach()` returns, so that no
   late command can relight the strip.
-- If notice delivery stops while the provider runs (a hung dispatcher), a
-  held effect stays lit until a reset or a later command. The renderer's
-  watchdogs cover only a stuck LED driver or LED worker, not the provider.
-  The legacy binding published from the receive worker with a per-command
-  deadline of at most the 250 ms turn freshness or the transport-silence
-  timeout. Restoring such a bound needs a provider liveness signal, which is
-  outside #11.
+- If notice delivery stops while the provider runs (a hung dispatcher), no
+  `Deactivate` can arrive, so the renderer bounds it instead (#34). The
+  telemetry facade counts completed dispatcher loop passes
+  (`VehicleTelemetry::dispatch_progress()`). The count advances on idle passes
+  too, so stable vehicle state with no notices is healthy; it stops only
+  while the dispatcher is stuck, for example in a callback. The composition
+  root registers the count with `local_argb::watch_progress()`, and the
+  renderer's existing `argb_guard` supervisor samples it on its 10 ms poll.
+  If the count does not change for `kProgressStallFailOffUs` (2 s), the
+  supervisor closes the renderer queue to lighting publishers and calls
+  `fail_off()`, so the strip is black within `kProgressFailOffBoundUs`
+  (2 s plus two polls) of the last dispatcher pass. While closed, a publish
+  from another context, such as a polled `SetLevel`, is rejected, and a
+  publish that races the close is followed by black. The fault does not
+  latch: once the count changes again the queue reopens, and the next
+  command lights the strip. Nothing is re-emitted, so the strip stays black
+  until then. The engine and this adapter know nothing about the watch.
 
 Write-fault recovery also differs from the legacy binding. After a failed
 pixel write the renderer writes black and latches its fault until the next
@@ -176,7 +186,17 @@ level change. This is fail-safe but visible.
   plus recovery and the latched write fault. It also renders a fill in every
   direction at levels 0, 0.25, 0.5 and 1.0, and drives one from an engine
   range rule on a generic numeric signal, which fails off on Stale data, and
-  renders a higher-priority turn over a gauge fill and releases it.
+  renders a higher-priority turn over a gauge fill and releases it. For #34
+  it stalls a fake dispatcher progress count under a held turn: the engine
+  sends no `Deactivate`, the strip is black within the bound, a publish
+  during the stall stays black, and after progress resumes a later notice
+  lights the strip. An idle dispatcher keeps a held turn lit.
+- `components/local_argb/tests/progress_fail_off_tests.cpp` covers the
+  progress watchdog (bound, idle progress, wrap, one-shot stall and resume
+  reports, re-detection, a backwards clock, re-arming) and the publish gate,
+  including a close that races a publish. The telemetry service tests show
+  `dispatch_progress()` advancing while idle, stopping in a blocked callback
+  and advancing after it returns.
 - `architecture_contracts` restricts the adapter to the engine action port,
   the renderer sink contract, core time values and standard headers. It
   rejects any provider, Mazda, CAN, LED driver, RTOS/SDK or WLED dependency,
@@ -202,7 +222,10 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
    `vehicle.engine_rpm`. See [RPM level fill](#rpm-level-fill);
 4. registers the typed turn notice log and attaches the engine. These are the
    turn channel's two subscriber slots;
-5. starts the facade, then calls `engine.sample_polled_rules()` on every
+5. registers the facade's dispatcher progress with
+   `local_argb::watch_progress()`, so a stalled dispatcher fails the strip
+   off (see [Fail-off policy: held level](#fail-off-policy-held-level));
+6. starts the facade, then calls `engine.sample_polled_rules()` on every
    100 ms pass of its runtime loop.
 
 Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
@@ -235,8 +258,8 @@ covers the defaults, endpoints, linear midpoints, clamping, a configured
 range, unverified and missing readings, and both failure paths.
 
 This step is where the documented differences from the legacy binding reach
-the hardware: a hung dispatcher holds the strip lit, and a write fault stays
-dark until the next level change. See
+the hardware: a write fault stays dark until the next level change. A hung
+dispatcher no longer holds the strip lit: it fails off within about 2 s (#34). See
 [Fail-off policy: held level](#fail-off-policy-held-level).
 
 The migration keeps the visible turn and hazard behavior of the legacy

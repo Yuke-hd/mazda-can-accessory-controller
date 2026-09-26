@@ -259,6 +259,10 @@ public:
   [[nodiscard]] StatusResult start() noexcept;
   [[nodiscard]] StatusResult stop() noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
+  // Wrapping count of completed dispatcher loop passes, idle or not.
+  [[nodiscard]] std::uint32_t dispatch_progress() const noexcept {
+    return dispatch_progress_.load(std::memory_order_acquire);
+  }
 
   [[nodiscard]] Reading<float> speed_kph() const noexcept { return publication_.speed_kph(); }
   [[nodiscard]] Reading<float> engine_rpm() const noexcept { return publication_.engine_rpm(); }
@@ -465,6 +469,7 @@ private:
   std::atomic<bool> run_requested_{false};
   std::atomic<bool> dispatcher_done_{true};
   std::atomic<std::size_t> dispatch_cursor_{0};
+  std::atomic<std::uint32_t> dispatch_progress_{0};
 #if defined(ESP_PLATFORM)
   void *dispatcher_task_{nullptr};
 #else

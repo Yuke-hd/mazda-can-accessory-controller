@@ -101,6 +101,12 @@ bool reading_is_actionable(const mazda::Reading<float> &reading) noexcept {
           reading.availability == mazda::Availability::FreshnessUnverified);
 }
 
+// The renderer supervisor watches this count: if the notification dispatcher
+// stops completing loop passes, the strip fails off without a Deactivate.
+std::uint32_t notification_dispatch_progress(const void *context) noexcept {
+  return static_cast<const mazda::VehicleTelemetry *>(context)->dispatch_progress();
+}
+
 // The facade owns a 32 KiB opaque service allocation. Keep it, the provider,
 // the engine, the LED sink and the typed callback context in application-owned
 // storage instead of the 3.5 KiB app_main task stack. The LED sink is the
@@ -183,6 +189,11 @@ extern "C" void app_main(void) {
   if (engine.attach() != vehicle_signals::SignalStatus::Ok) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");
+    return;
+  }
+  if (!local_argb::watch_progress(&notification_dispatch_progress, &telemetry)) {
+    local_argb::fail_off();
+    ESP_LOGE(kTag, "dispatcher progress watch failed; refusing to start CAN");
     return;
   }
 
