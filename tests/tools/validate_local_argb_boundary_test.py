@@ -326,6 +326,10 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("must call controller_config::apply_lighting_profile()")
 
+    def test_unreachable_shared_profile_application_is_rejected(self) -> None:
+        self.edit(MAIN, "if (!configure_engine_lighting()) {", "if (false) {")
+        self.assert_rejected("configure_engine_lighting() is not called in app_main")
+
     def test_direct_turn_rule_in_main_is_rejected(self) -> None:
         self.edit(
             MAIN,

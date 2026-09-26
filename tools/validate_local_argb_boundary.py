@@ -403,7 +403,12 @@ def main() -> int:
     # that app_main does not make is a violation. _fail_off_failures reports
     # the two start calls.
     app_main_body = _app_main_body(structure) or ""
-    for call in ("board::initialize_safe_defaults()", "engine.attach()", "local_argb::watch_progress("):
+    for call in (
+        "board::initialize_safe_defaults()",
+        "configure_engine_lighting()",
+        "engine.attach()",
+        "local_argb::watch_progress(",
+    ):
         if call not in app_main_body:
             failures.append(f"{call} is not called in app_main")
     for earlier, later, label in (
@@ -411,6 +416,8 @@ def main() -> int:
          "board safe defaults do not precede local ARGB startup"),
         ("local_argb::start()", "engine.attach()",
          "local ARGB startup does not precede engine attachment"),
+        ("configure_engine_lighting()", "engine.attach()",
+         "lighting profile application does not precede engine attachment"),
         ("engine.attach()", "telemetry.start()",
          "engine attachment does not precede telemetry/CAN startup"),
         ("local_argb::start()", "telemetry.start()",
