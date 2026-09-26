@@ -12,8 +12,10 @@
 namespace gvret {
 
 // A parsed GVRET row with the source bus retained for downstream filtering.
-// The frame timestamp and the convenience timestamp_us field are both kept in
-// the source unit. Timestamp normalization belongs to the replay layer.
+// `bus` is the sole source-bus authority. The embedded frame keeps its
+// RawCanFrame default bus_id until replay selects the frame-bus semantics.
+// The frame timestamp and convenience timestamp_us field are both kept in the
+// source unit. Timestamp normalization belongs to the replay layer.
 struct ParsedGvretFrame {
   std::uint64_t timestamp_us{0};
   std::uint32_t bus{0};

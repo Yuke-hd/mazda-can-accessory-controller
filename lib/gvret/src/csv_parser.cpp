@@ -147,9 +147,9 @@ ParseResult parse_csv(const std::string_view csv) {
       parsed.timestamp_us = timestamp_us;
       parsed.bus = bus;
       parsed.frame.timestamp_us = timestamp_us;
-      // ParsedGvretFrame::bus retains the complete source value for filtering;
-      // RawCanFrame's legacy bus_id field is only an eight-bit transport hint.
-      parsed.frame.bus_id = static_cast<std::uint8_t>(bus);
+      // ParsedGvretFrame::bus retains the complete source value. Keep the
+      // embedded frame's narrow bus_id neutral until A2 selects replay-bus
+      // semantics; narrowing here would alias distinct source buses.
       parsed.frame.identifier = identifier;
       parsed.frame.identifier_format = extended ? vehicle_core::CanIdentifierFormat::Extended
                                                 : vehicle_core::CanIdentifierFormat::Standard;

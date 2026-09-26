@@ -39,7 +39,7 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
   CHECK(frame.timestamp_us == 973);
   CHECK(frame.bus == 3);
   CHECK(frame.frame.timestamp_us == 973);
-  CHECK(frame.frame.bus_id == 3);
+  CHECK(frame.frame.bus_id == 0);
   CHECK(frame.frame.identifier == 0x13B);
   CHECK(frame.frame.is_extended() == false);
   CHECK(frame.frame.dlc == 3);
@@ -56,7 +56,7 @@ TEST_CASE("parser preserves source bus values wider than RawCanFrame bus_id") {
   REQUIRE(parsed.ok());
   REQUIRE(parsed.frames.size() == 1);
   CHECK(parsed.frames.front().bus == 300);
-  CHECK(parsed.frames.front().frame.bus_id == static_cast<std::uint8_t>(300));
+  CHECK(parsed.frames.front().frame.bus_id == 0);
   CHECK(parsed.frames.front().frame.is_valid());
 }
 
