@@ -119,6 +119,17 @@ TEST_CASE("configured turn effects and RPM rules preserve production behavior an
   REQUIRE(controller.provider.publish(turn(1, Availability::Stale)) == 1);
   CHECK_FALSE(controller.lighting.commands.back().actionable);
 
+  REQUIRE(controller.provider.publish(turn(2)) == 1);
+  CHECK(controller.lighting.commands.back().left_turn);
+  CHECK_FALSE(controller.lighting.commands.back().right_turn);
+
+  REQUIRE(controller.provider.publish(turn(3)) == 1);
+  CHECK(controller.lighting.commands.back().left_turn);
+  CHECK(controller.lighting.commands.back().right_turn);
+
+  REQUIRE(controller.provider.publish(turn(1, Availability::FreshnessUnverified)) == 1);
+  CHECK_FALSE(controller.lighting.commands.back().actionable);
+
   controller.provider.set_reading(kEngineRpm, rpm(3250.0F));
   REQUIRE(controller.engine.sample_polled_rules() == SignalStatus::Ok);
   REQUIRE_FALSE(controller.lighting.commands.empty());
