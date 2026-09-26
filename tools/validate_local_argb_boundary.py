@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from pathlib import Path
 import re
 import sys
@@ -19,18 +18,6 @@ from check_architecture import _strip_cpp_comments  # noqa: E402
 _STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\\n])*"')
 _FAIL_OFF = re.compile(r"\blocal_argb::fail_off\s*\(\s*\)\s*;")
 _SHUTDOWN_CALL = re.compile(r"\b(?:telemetry\.stop|engine\.detach)\s*\(\s*\)")
-
-# The strip is mounted mirrored, as in the retired telemetry binding: the
-# vehicle's left indicator lights the renderer's right_turn region and vice
-# versa, and hazard lights both. The tables must hold exactly these entries.
-_TURN_RULES = ('"left",kTurnLeftAction', '"right",kTurnRightAction', '"hazard",kHazardAction')
-_EFFECT_BINDINGS = (
-    "kTurnLeftAction,local_argb_actions::LedEffect::RightTurn",
-    "kTurnRightAction,local_argb_actions::LedEffect::LeftTurn",
-    "kHazardAction,local_argb_actions::LedEffect::LeftTurn",
-    "kHazardAction,local_argb_actions::LedEffect::RightTurn",
-)
-
 
 def _squash(text: str) -> str:
     return re.sub(r"\s+", "", text)
@@ -237,15 +224,6 @@ def _fail_off_failures(structure: str) -> List[str]:
     return failures
 
 
-def _table_entries(structure: str, name: str) -> Optional[List[str]]:
-    match = re.search(rf"\b{name}\s*\[\s*\]\s*=\s*\{{", structure)
-    if match is None:
-        return None
-    open_index = match.end() - 1
-    table = structure[open_index + 1 : _matching_close(structure, open_index)]
-    return [_squash(entry) for entry in re.findall(r"\{([^{}]*)\}", table)]
-
-
 def _loop_body(structure: str, pattern: str) -> Optional[str]:
     match = re.search(pattern, structure)
     if match is None:
@@ -256,64 +234,34 @@ def _loop_body(structure: str, pattern: str) -> Optional[str]:
     return structure[open_index + 1 : _matching_close(structure, open_index)]
 
 
-def _binding_failures(code: str, structure: str) -> List[str]:
-    """Require the mirrored tables and loops that apply exactly those tables."""
+def _binding_failures(structure: str) -> List[str]:
+    """Require the firmware to consume the shared profile application API."""
 
     failures: List[str] = []
-    for name, expected in (("kTurnRules", _TURN_RULES), ("kEffectBindings", _EFFECT_BINDINGS)):
-        entries = _table_entries(code, name)
-        if entries is None or Counter(entries) != Counter(expected):
-            failures.append(f"{name} must hold exactly the mirrored entries {list(expected)}")
-    actions = dict(re.findall(r"\bActionId\s+(k\w+Action)\s*\{\s*(\d+)\s*\}", structure))
-    values = [actions.get(name) for name in ("kTurnLeftAction", "kTurnRightAction", "kHazardAction")]
-    if None in values or "0" in values or len(set(values)) != len(values):
-        failures.append("turn actions must be three distinct nonzero ActionIds")
-    if re.search(r'\bkTurnStateSignal\s*\{\s*"vehicle\.turn_state"\s*\}', code) is None:
-        failures.append('kTurnStateSignal must name the "vehicle.turn_state" signal')
-
-    binding_loop = _loop_body(
-        structure, r"\bfor\s*\(\s*const\s+auto\s*&\s*binding\s*:\s*kEffectBindings\s*\)"
-    )
-    # A continue or break would skip table entries.
-    loop_exit = re.compile(r"\b(?:continue|break)\b")
-    if (
-        binding_loop is None
-        or "led_actions.bind(binding.action,binding.effect)" not in _squash(binding_loop)
-        or loop_exit.search(binding_loop)
-    ):
-        failures.append("LED effect binding loop does not bind every kEffectBindings entry")
-    rule_loop = _loop_body(
-        structure, r"\bfor\s*\(\s*const\s+auto\s*&\s*rule\s*:\s*kTurnRules\s*\)"
-    )
-    if rule_loop is None or loop_exit.search(rule_loop) or not all(
-        needle in _squash(rule_loop)
-        for needle in (
-            "{kTurnStateSignal,action_engine::Comparison::Equal,"
-            "action_engine::RuleOperand::choice(rule.choice)},rule.action,"
-            "action_engine::FreshnessRequirement::Fresh}",
-            "engine.add_state_rule(config)",
-        )
-    ):
-        failures.append("turn-state rule loop does not add a strict rule for every kTurnRules entry")
-    counts = {
-        # The RPM level fill and the RPM red zone bind and add their polled
-        # rules through controller_config::apply(), so main.cpp never calls
-        # them directly.
-        "controller_config::apply(kRpmLevelFill,led_actions,engine)": 1,
-        "controller_config::apply(kRpmRedZone,led_actions,engine)": 1,
-        "led_actions.bind(": 1,
-        "engine.add_state_rule(": 1,
-        "engine.add_sink(": 1,
-        "engine.add_event_rule(": 0,
-        "engine.add_range_rule(": 0,
-        "engine.add_sampled_state_rule(": 0,
-    }
     squashed = _squash(structure)
-    for needle, expected_count in counts.items():
-        if squashed.count(needle) != expected_count:
-            failures.append(
-                f"vehicle integration must call {needle}) exactly {expected_count} time(s)"
-            )
+    profile_apply = (
+        "controller_config::apply_lighting_profile("
+        "controller_config::kDefaultLightingProfile,led_actions,engine)"
+    )
+    if squashed.count(profile_apply) != 1:
+        failures.append(
+            "vehicle integration must call controller_config::apply_lighting_profile() "
+            "with kDefaultLightingProfile exactly 1 time(s)"
+        )
+    for forbidden, label in (
+        ("kTurnRules", "duplicated turn rules"),
+        ("kEffectBindings", "duplicated LED effect bindings"),
+        ("kRpmLevelFill", "duplicated RPM level-fill configuration"),
+        ("kRpmRedZone", "duplicated RPM red-zone configuration"),
+        ("led_actions.bind(", "direct LED effect binding"),
+        ("engine.add_sink(", "direct LED sink registration"),
+        ("engine.add_state_rule(", "direct turn-state rule registration"),
+        ("engine.add_event_rule(", "direct event rule registration"),
+        ("engine.add_range_rule(", "direct RPM level rule registration"),
+        ("engine.add_sampled_state_rule(", "direct RPM threshold rule registration"),
+    ):
+        if forbidden in squashed:
+            failures.append(f"vehicle integration retains {label}: {forbidden}")
     return failures
 
 
@@ -422,8 +370,9 @@ def main() -> int:
         ("mazda/signal_provider.hpp", "generic signal provider include"),
         ("action_engine/engine.hpp", "generic action engine include"),
         ("local_argb_actions/led_action_sink.hpp", "local LED action sink include"),
-        ("controller_config/rpm_level_fill.hpp", "RPM level fill configuration include"),
-        ("controller_config/rpm_threshold.hpp", "RPM threshold configuration include"),
+        ("controller_config/lighting_profile.hpp", "shared lighting profile include"),
+        ("controller_config/lighting_profile_application.hpp",
+         "shared lighting profile application include"),
     ):
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
             failures.append(f'{label} is missing from vehicle integration: #include "{header}"')
@@ -434,7 +383,10 @@ def main() -> int:
         ("static action_engine::ActionEngine engine{signal_provider}", "static action engine"),
         ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()}",
          "static LED action sink bound to the renderer queue"),
-        ("engine.add_sink(led_actions)", "LED action sink registration"),
+        ("controller_config::kDefaultLightingProfile", "shared default lighting profile"),
+        ("controller_config::apply_lighting_profile(", "shared lighting profile application"),
+        ("kDefaultLightingProfile.rpm_level_fill.fill.zone.length",
+         "profile-to-board strip capability assertion"),
         ("engine.attach()", "engine attachment"),
         ("telemetry.on_turn_state_changed", "typed turn notification registration"),
         ("telemetry.speed_kph()", "speed polling"),
@@ -451,7 +403,12 @@ def main() -> int:
     # that app_main does not make is a violation. _fail_off_failures reports
     # the two start calls.
     app_main_body = _app_main_body(structure) or ""
-    for call in ("board::initialize_safe_defaults()", "engine.attach()", "local_argb::watch_progress("):
+    for call in (
+        "board::initialize_safe_defaults()",
+        "configure_engine_lighting()",
+        "engine.attach()",
+        "local_argb::watch_progress(",
+    ):
         if call not in app_main_body:
             failures.append(f"{call} is not called in app_main")
     for earlier, later, label in (
@@ -459,6 +416,8 @@ def main() -> int:
          "board safe defaults do not precede local ARGB startup"),
         ("local_argb::start()", "engine.attach()",
          "local ARGB startup does not precede engine attachment"),
+        ("configure_engine_lighting()", "engine.attach()",
+         "lighting profile application does not precede engine attachment"),
         ("engine.attach()", "telemetry.start()",
          "engine attachment does not precede telemetry/CAN startup"),
         ("local_argb::start()", "telemetry.start()",
@@ -473,7 +432,7 @@ def main() -> int:
         if earlier_index >= 0 and later_index >= 0 and earlier_index > later_index:
             failures.append(label)
     failures.extend(_fail_off_failures(structure))
-    failures.extend(_binding_failures(code, structure))
+    failures.extend(_binding_failures(structure))
     failures.extend(_polled_sampling_failures(structure))
     for forbidden, label in (
         ("semantic_led_policy", "legacy semantic application adapter"),
