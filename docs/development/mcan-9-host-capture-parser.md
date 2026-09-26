@@ -1,14 +1,20 @@
-# MCAN-9 host capture parser and replay (retired)
+# MCAN-9 host capture parser and replay
 
-> Retired 2026-09-08 by S1-D / [#59](https://github.com/Yuke-hd/esp32-vehicle-can-core/issues/59).
-> The custom `raw_capture` reader, writer, replay harness, capture-only tests,
-> fixture, and validator were removed. SavvyCAN is the selected capture and
-> replay tool; this repository does not provide a replacement parser, format,
-> or adapter.
+The custom `raw_capture` format, writer, replay harness, capture-only tests,
+fixture, and validator remain retired. SavvyCAN/GVRET CSV is the supported
+host ingestion format for the replay work tracked by epic #52.
 
-This file is retained as historical design context for the superseded MCAN-9
-work. It is not an implementation guide or an active product requirement.
-Requirements associated with historical #5, #8, #9, and #40, and the
-canonical-exporter wording of #39, are superseded by the capture-retirement
-decision in #54 and #59. Deterministic decoder and freshness tests now inject
-synthetic typed frames directly through test-only helpers.
+Ticket A1 provides the host-only `gvret_parser` library in
+`lib/gvret/`. It parses the expected SavvyCAN header and rows into validated
+`vehicle_core::RawCanFrame` values while retaining the source timestamp and
+bus. It does not open files, normalize timestamps, select a bus, schedule
+replay, or couple to Mazda or firmware code. Those concerns belong to the
+follow-up A2 and A3 tickets.
+
+The parser accepts synthetic CSV in host tests only. Private vehicle captures
+may be supplied at runtime but must not be committed, attached to Issues or
+PRs, or echoed into logs. Deterministic decoder and freshness tests continue
+to inject synthetic typed frames directly through test-only helpers.
+
+The historical MCAN-9 requirements associated with the custom format remain
+retired; the current parser is an independent GVRET CSV boundary.

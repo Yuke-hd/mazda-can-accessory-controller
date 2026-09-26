@@ -56,6 +56,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(MAZDA_BUILD_HOST_TESTS "Build Mazda accessory host tests" ${BUILD_TESTING})
 
 add_subdirectory(lib/mazda)
+add_subdirectory(lib/gvret)
 add_subdirectory(lib/vehicle_lighting_policy)
 add_subdirectory(components/local_argb_sink_contract)
 add_subdirectory(components/local_argb)
