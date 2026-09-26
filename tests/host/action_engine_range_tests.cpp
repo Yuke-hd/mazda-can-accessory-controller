@@ -351,17 +351,15 @@ TEST_CASE("curve validation rejects malformed control points and accepts the fix
   constexpr NumericControlPoint descending_input[] = {{1.0F, 0.0F}, {0.0F, 1.0F}};
   constexpr NumericControlPoint non_finite_input[] = {{0.0F, 0.0F}, {kInfinity, 1.0F}};
   constexpr NumericControlPoint non_finite_output[] = {{0.0F, 0.0F}, {1.0F, kNaN}};
-  constexpr NumericControlPoint overflowing_input_span[] = {
-      {-3.0e38F, 0.0F}, {3.0e38F, 1.0F}};
-  constexpr NumericControlPoint overflowing_output_span[] = {
-      {0.0F, -3.0e38F}, {1.0F, 3.0e38F}};
+  constexpr NumericControlPoint overflowing_input_span[] = {{-3.0e38F, 0.0F}, {3.0e38F, 1.0F}};
+  constexpr NumericControlPoint overflowing_output_span[] = {{0.0F, -3.0e38F}, {1.0F, 3.0e38F}};
   constexpr NumericControlPoint maximum[] = {
-      {0.0F, 0.0F},  {1.0F, 0.125F}, {2.0F, 0.25F}, {3.0F, 0.375F},
-      {4.0F, 0.5F},  {5.0F, 0.625F}, {6.0F, 0.75F}, {7.0F, 0.875F},
+      {0.0F, 0.0F}, {1.0F, 0.125F}, {2.0F, 0.25F}, {3.0F, 0.375F},
+      {4.0F, 0.5F}, {5.0F, 0.625F}, {6.0F, 0.75F}, {7.0F, 0.875F},
   };
-  constexpr NumericControlPoint over_capacity[] = {
-      {0.0F, 0.0F}, {1.0F, 0.1F}, {2.0F, 0.2F}, {3.0F, 0.3F}, {4.0F, 0.4F},
-      {5.0F, 0.5F}, {6.0F, 0.6F}, {7.0F, 0.7F}, {8.0F, 0.8F}};
+  constexpr NumericControlPoint over_capacity[] = {{0.0F, 0.0F}, {1.0F, 0.1F}, {2.0F, 0.2F},
+                                                   {3.0F, 0.3F}, {4.0F, 0.4F}, {5.0F, 0.5F},
+                                                   {6.0F, 0.6F}, {7.0F, 0.7F}, {8.0F, 0.8F}};
 
   const NumericCurveView invalid[] = {
       {},
