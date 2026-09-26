@@ -22,6 +22,31 @@ namespace {
          config.input.from < config.input.to;
 }
 
+[[nodiscard]] bool valid_curve(NumericCurveView curve) noexcept {
+  if (curve.data == nullptr || curve.count < 2 || curve.count > NumericCurveView::kMaxPoints) {
+    return false;
+  }
+  for (std::size_t index = 0; index < curve.count; ++index) {
+    const NumericControlPoint point = curve.data[index];
+    if (!std::isfinite(point.input) || !std::isfinite(point.output)) {
+      return false;
+    }
+    if (index == 0) {
+      continue;
+    }
+    const NumericControlPoint previous = curve.data[index - 1];
+    if (point.input <= previous.input || !std::isfinite(point.input - previous.input) ||
+        !std::isfinite(point.output - previous.output)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[nodiscard]] bool valid_mapping(const RangeRuleConfig &config) noexcept {
+  return config.curve.has_value() ? valid_curve(*config.curve) : valid_ranges(config);
+}
+
 [[nodiscard]] RangeRuleResolution failure(ConfigStatus status) noexcept {
   return RangeRuleResolution{status, std::nullopt};
 }
@@ -59,12 +84,14 @@ RangeRuleResolution resolve_range_rule(vehicle_signals::SignalCatalogView catalo
   if (signal->type != SignalType::Number) {
     return failure(ConfigStatus::TypeMismatch);
   }
-  if (!valid_ranges(config)) {
+  if (!valid_mapping(config)) {
     return failure(ConfigStatus::InvalidRange);
   }
+  const LinearMapping mapping = config.curve.has_value()
+                                    ? LinearMapping{*config.curve}
+                                    : LinearMapping{config.input, config.output};
   return RangeRuleResolution{ConfigStatus::Ok,
-                             RangeRule{signal->id, LinearMapping{config.input, config.output},
-                                       config.action, config.freshness}};
+                             RangeRule{signal->id, mapping, config.action, config.freshness}};
 }
 
 } // namespace action_engine

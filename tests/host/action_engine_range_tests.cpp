@@ -25,6 +25,8 @@ using action_engine::Comparison;
 using action_engine::ConfigStatus;
 using action_engine::FreshnessRequirement;
 using action_engine::LinearMapping;
+using action_engine::NumericControlPoint;
+using action_engine::NumericCurveView;
 using action_engine::NumericRange;
 using action_engine::RangeRule;
 using action_engine::RangeRuleConfig;
@@ -193,6 +195,32 @@ TEST_CASE("extreme values beyond a narrow input range clamp exactly instead of o
   CHECK(LinearMapping{narrow, NumericRange{0.75F, 0.75F}}.map(-3.0e38F) == 0.75F);
 }
 
+TEST_CASE("a numeric curve interpolates each segment and returns exact configured points") {
+  constexpr NumericControlPoint points[] = {
+      {0.0F, 0.0F}, {10.0F, 1.0F}, {30.0F, 0.5F}, {40.0F, 0.5F}};
+  constexpr LinearMapping mapping{NumericCurveView{points, 4}};
+
+  CHECK(mapping.map(-1.0F) == 0.0F);
+  CHECK(mapping.map(0.0F) == 0.0F);
+  CHECK(mapping.map(5.0F) == 0.5F);
+  CHECK(mapping.map(10.0F) == 1.0F);
+  CHECK(mapping.map(20.0F) == 0.75F);
+  CHECK(mapping.map(30.0F) == 0.5F);
+  CHECK(mapping.map(35.0F) == 0.5F);
+  CHECK(mapping.map(40.0F) == 0.5F);
+  CHECK(mapping.map(41.0F) == 0.5F);
+}
+
+TEST_CASE("a two-point curve is equivalent to the legacy linear mapping") {
+  constexpr NumericControlPoint points[] = {{0.0F, 1.0F}, {6500.0F, 0.0F}};
+  constexpr LinearMapping legacy{kRpmRange, NumericRange{1.0F, 0.0F}};
+  constexpr LinearMapping curve{NumericCurveView{points, 2}};
+
+  for (const float value : {-100.0F, 0.0F, 1625.0F, 3250.0F, 6500.0F, 8000.0F}) {
+    CHECK(curve.map(value) == legacy.map(value));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Range rule sampling
 
@@ -315,6 +343,81 @@ TEST_CASE("range rule configuration errors follow the documented check order") {
   constant.action = ActionId{kTachometer + 1};
   constant.output = NumericRange{0.5F, 0.5F};
   CHECK(engine.add_range_rule(constant) == ConfigStatus::Ok);
+}
+
+TEST_CASE("curve validation rejects malformed control points and accepts the fixed capacity") {
+  constexpr NumericControlPoint one_point[] = {{0.0F, 0.0F}};
+  constexpr NumericControlPoint duplicate_input[] = {{0.0F, 0.0F}, {0.0F, 1.0F}};
+  constexpr NumericControlPoint descending_input[] = {{1.0F, 0.0F}, {0.0F, 1.0F}};
+  constexpr NumericControlPoint non_finite_input[] = {{0.0F, 0.0F}, {kInfinity, 1.0F}};
+  constexpr NumericControlPoint non_finite_output[] = {{0.0F, 0.0F}, {1.0F, kNaN}};
+  constexpr NumericControlPoint overflowing_input_span[] = {
+      {-3.0e38F, 0.0F}, {3.0e38F, 1.0F}};
+  constexpr NumericControlPoint overflowing_output_span[] = {
+      {0.0F, -3.0e38F}, {1.0F, 3.0e38F}};
+  constexpr NumericControlPoint maximum[] = {
+      {0.0F, 0.0F},  {1.0F, 0.125F}, {2.0F, 0.25F}, {3.0F, 0.375F},
+      {4.0F, 0.5F},  {5.0F, 0.625F}, {6.0F, 0.75F}, {7.0F, 0.875F},
+  };
+  constexpr NumericControlPoint over_capacity[] = {
+      {0.0F, 0.0F}, {1.0F, 0.1F}, {2.0F, 0.2F}, {3.0F, 0.3F}, {4.0F, 0.4F},
+      {5.0F, 0.5F}, {6.0F, 0.6F}, {7.0F, 0.7F}, {8.0F, 0.8F}};
+
+  const NumericCurveView invalid[] = {
+      {},
+      {nullptr, 2},
+      {one_point, 1},
+      {duplicate_input, 2},
+      {descending_input, 2},
+      {non_finite_input, 2},
+      {non_finite_output, 2},
+      {overflowing_input_span, 2},
+      {overflowing_output_span, 2},
+      {over_capacity, NumericCurveView::kMaxPoints + 1},
+  };
+  for (const NumericCurveView curve : invalid) {
+    RangeRuleConfig config = tachometer();
+    config.curve = curve;
+    CHECK(resolve_range_rule(kView, config).status == ConfigStatus::InvalidRange);
+  }
+
+  static_assert(NumericCurveView::kMaxPoints == 8);
+  RangeRuleConfig at_capacity = tachometer();
+  at_capacity.curve = NumericCurveView{maximum, NumericCurveView::kMaxPoints};
+  auto resolution = resolve_range_rule(kView, at_capacity);
+  REQUIRE(resolution.status == ConfigStatus::Ok);
+  REQUIRE(resolution.rule.has_value());
+  CHECK(resolution.rule->on_sample(rpm_read(0.0F)) == set_level(kTachometer, 0.0F));
+  CHECK(resolution.rule->on_sample(rpm_read(3.5F)) == set_level(kTachometer, 0.4375F));
+  CHECK(resolution.rule->on_sample(rpm_read(7.0F)) == set_level(kTachometer, 0.875F));
+}
+
+TEST_CASE("a present curve takes precedence over legacy ranges") {
+  constexpr NumericControlPoint points[] = {{0.0F, 0.0F}, {10.0F, 1.0F}, {20.0F, 0.25F}};
+  RangeRuleConfig config = tachometer();
+  config.input = NumericRange{kNaN, kNaN};
+  config.output = NumericRange{kInfinity, kInfinity};
+  config.curve = NumericCurveView{points, 3};
+
+  auto resolution = resolve_range_rule(kView, config);
+  REQUIRE(resolution.status == ConfigStatus::Ok);
+  REQUIRE(resolution.rule.has_value());
+  CHECK(resolution.rule->on_sample(rpm_read(15.0F)) == set_level(kTachometer, 0.625F));
+}
+
+TEST_CASE("a resolved curve owns a bounded copy of borrowed control points") {
+  NumericControlPoint points[] = {{0.0F, 0.0F}, {10.0F, 1.0F}, {20.0F, 0.0F}};
+  RangeRuleConfig config = tachometer();
+  config.curve = NumericCurveView{points, 3};
+  auto resolution = resolve_range_rule(kView, config);
+  REQUIRE(resolution.status == ConfigStatus::Ok);
+  REQUIRE(resolution.rule.has_value());
+
+  points[1] = NumericControlPoint{10.0F, 0.25F};
+  points[2] = NumericControlPoint{20.0F, 1.0F};
+
+  CHECK(resolution.rule->on_sample(rpm_read(10.0F)) == set_level(kTachometer, 1.0F));
+  CHECK(resolution.rule->on_sample(rpm_read(15.0F)) == set_level(kTachometer, 0.5F));
 }
 
 TEST_CASE("range and state rules share one level-action namespace") {

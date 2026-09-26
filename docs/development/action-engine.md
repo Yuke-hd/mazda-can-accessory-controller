@@ -62,7 +62,7 @@ a condition through `provider.catalog()` when the rule is added. The runtime rul
 | `InvalidOperand` | A Number operand is NaN or infinite. |
 | `UnsupportedComparison` | An ordered comparison is used on a Boolean or Enum signal. |
 | `UnknownChoice` | The choice key is not a choice of the Enum signal. |
-| `InvalidRange` | Range rules only: a range bound or span is not finite, or `input.from >= input.to`. |
+| `InvalidRange` | Range rules only: the selected legacy ranges or control-point curve is invalid. |
 | `CapacityExceeded` | 16 state/event rules, 8 polled (range plus sampled state) rules, or 4 sinks are already registered. |
 
 A range rule's signal must be a Number (`TypeMismatch` otherwise). Its checks
@@ -121,14 +121,29 @@ event rule has no baseline, and a polled rule has emitted nothing.
 
 ## Range rules
 
-A `RangeRuleConfig` is `{signal_key, input, output, action, freshness}`, where
-`input` and `output` are `NumericRange{from, to}`. For example,
+A `RangeRuleConfig` is `{signal_key, input, output, action, freshness, curve}`,
+where `input` and `output` are `NumericRange{from, to}`. For example,
 `engine.rpm 0..6500 -> 0..1` drives a tachometer progress level.
 
-- Mapping: `x <= input.from` gives exactly `output.from`; `x >= input.to`
-  gives exactly `output.to`; values in between are interpolated linearly. The
-  input must be ascending. The output may be ascending, descending (an inverse
-  mapping) or equal (a constant level).
+- Legacy mapping: when `curve` is absent, `x <= input.from` gives exactly
+  `output.from`; `x >= input.to` gives exactly `output.to`; values in between
+  are interpolated linearly. The input must be ascending. The output may be
+  ascending, descending (an inverse mapping) or equal (a constant level).
+- Curve mapping: a present `NumericCurveView` takes precedence over `input`
+  and `output`, which are not validated in that case. It contains two through
+  eight ordered `NumericControlPoint{input, output}` values. Inputs must be
+  strictly ascending. Every coordinate and every adjacent input and output
+  span must be finite. Outputs may independently ascend, descend or remain
+  equal, so a curve can contain inverse segments and plateaus. Values outside
+  the curve domain clamp to the first or last output; configured control-point
+  inputs return their exact configured outputs; values between points use
+  deterministic linear interpolation on that segment. A present empty curve,
+  a non-empty view with null data, or a curve over the fixed capacity is
+  `InvalidRange`.
+- Ownership and bounds: `NumericCurveView` borrows configuration storage only
+  for the `add_range_rule()` call. Resolution copies at most
+  `NumericCurveView::kMaxPoints` (8) points into the runtime rule's fixed
+  storage. Evaluation scans that bounded copy and performs no allocation.
 - Cadence: range rules are polled; see [Polled sampling](#polled-sampling).
 - Output: `SetLevel(level)` when the level differs from the last emitted
   command, or when nothing was emitted since `attach()`. Unchanged levels,

@@ -1,0 +1,48 @@
+dependencies:
+  can_bus:
+    component_hash: b669bca660aadb336ce8c6a07d05843c4f0e7db1bc5ae97616c58f9530a78af6
+    dependencies: []
+    source:
+      git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+      path: components/can_bus
+      type: git
+    version: f30764b36868952ffb593a146d5d81bc15a4381e
+  espressif/led_strip:
+    component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.0.3
+  idf:
+    source:
+      type: idf
+    version: 5.5.4
+  vehicle_core:
+    component_hash: 619b3b4b5c36e856480c139182f0022c6e627fa7f20d6bd5bf59da12dec255a9
+    dependencies: []
+    source:
+      git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+      path: components/vehicle_core
+      type: git
+    version: f30764b36868952ffb593a146d5d81bc15a4381e
+  vehicle_telemetry:
+    component_hash: 70744a729297602f8d6c581a71e6f16e2796f2f5c6281d3cc5eb21de2358413e
+    dependencies: []
+    source:
+      git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
+      path: components/vehicle_telemetry
+      type: git
+    version: f30764b36868952ffb593a146d5d81bc15a4381e
+direct_dependencies:
+- can_bus
+- espressif/led_strip
+- idf
+- vehicle_core
+- vehicle_telemetry
+manifest_hash: 87477a12072077baeed78ce18d36b6279d173ad73700cc57b132c85db68fd834
+target: esp32
+version: 2.0.0
