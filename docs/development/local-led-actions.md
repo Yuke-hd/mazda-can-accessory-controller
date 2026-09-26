@@ -201,7 +201,8 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
    effects at the default 100 draw over it) and adds a range rule on
    `vehicle.engine_rpm`. See [RPM level fill](#rpm-level-fill);
 4. binds the RPM red zone action to `Brake` at priority 200, so the red
-   warning draws over the fill and the turns, then applies
+   warning draws over the level fill (the brake region shares no pixels with
+   the turn regions), then applies
    `controller_config::RpmThresholdConfig` (`vehicle.engine_rpm > 6000`). See
    [RPM red zone](#rpm-red-zone);
 5. registers the typed turn notice log and attaches the engine. These are the
@@ -260,8 +261,14 @@ adapter nor the renderer knows about it.
   action can drive any sink. A non-finite threshold is rejected with
   `InvalidOperand`.
 - The firmware binds the action separately, to the existing `Brake` region at
-  priority 200. The red warning draws over the fill (50) and the turns (100).
-  The fill keeps its own action and keeps tracking RPM underneath.
+  priority 200. The red warning draws over the level fill (50); the brake
+  region (LEDs 35..64) shares no pixels with the turn regions. The fill keeps
+  its own action and keeps tracking RPM underneath.
+- Side effect: the onboard single-pixel status LED
+  (`onboard_status_color()` in the renderer) shows brake status whenever the
+  brake region is lit, and brake takes precedence over turn status. While the
+  red zone is active it therefore shows brake red, even during a turn. The
+  renderer behavior is unchanged.
 
 `tools/validate_local_argb_boundary.py` requires the include, exactly one
 `controller_config::apply(kRpmRedZone, engine)` and the `Brake` binding, and
@@ -293,7 +300,9 @@ above:
   the success path after any `telemetry.stop()` or `engine.detach()`, before
   any return;
 - exactly the mirrored `kTurnRules` and `kEffectBindings` entries, applied
-  by the only bind and rule loops, with no `continue` or `break`;
+  by the only rule loop and the `kEffectBindings` bind loop, with no
+  `continue` or `break`. The only other bind is the single RPM red zone
+  `Brake` binding, next to `controller_config::apply(kRpmRedZone, engine)`;
 - no `FreshOrUnverified`.
 
 `tests/tools/validate_local_argb_boundary_test.py` covers these rules,

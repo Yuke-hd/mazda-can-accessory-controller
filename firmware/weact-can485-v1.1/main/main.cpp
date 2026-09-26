@@ -63,8 +63,9 @@ constexpr controller_config::RpmLevelFillConfig kRpmLevelFill{
 // RPM red zone: engine speed strictly above the configured threshold
 // (controller_config::RpmThresholdConfig, here 6000 rpm) activates its
 // own action, independently of the level fill. Here it lights the existing
-// brake region as a warning at priority 200, above the fill and the turn
-// effects; any other adapter could bind the same action instead. The
+// brake region as a warning at priority 200, above the level fill (the brake
+// region shares no pixels with the turn regions); any other adapter could bind
+// the same action instead. The
 // threshold stays in controller configuration, never in the renderer.
 constexpr action_engine::ActionId kRpmRedZoneAction{5};
 constexpr controller_config::RpmThresholdConfig kRpmRedZone{6000.0F, kRpmRedZoneAction};

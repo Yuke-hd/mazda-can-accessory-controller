@@ -3,6 +3,7 @@
 #include "action_engine/config_status.hpp"
 #include "action_engine/engine.hpp"
 #include "action_engine/rule_config.hpp"
+#include "controller_config/engine_rpm_signal.hpp"
 
 namespace controller_config {
 
@@ -24,7 +25,9 @@ struct RpmThresholdConfig {
 [[nodiscard]] action_engine::SampledStateRuleConfig
 sampled_state_rule(const RpmThresholdConfig &config) noexcept;
 
-// Adds sampled_state_rule(config) to `engine`. Call it during setup, while the
+// Returns a bare ConfigStatus, unlike the RPM level fill's apply(), because
+// there is no output binding to report. Adds sampled_state_rule(config) to
+// `engine`. Call it during setup, while the
 // engine is detached; a non-finite threshold is InvalidOperand. It binds no
 // output: the composition root binds config.action to its chosen adapter.
 [[nodiscard]] action_engine::ConfigStatus apply(const RpmThresholdConfig &config,
