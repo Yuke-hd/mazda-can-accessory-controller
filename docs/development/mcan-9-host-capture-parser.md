@@ -11,6 +11,14 @@ bus. It does not open files, normalize timestamps, select a bus, schedule
 replay, or couple to Mazda or firmware code. Those concerns belong to the
 follow-up A2 and A3 tickets.
 
+A2 applies the parser result to one selected source bus and rewrites timestamps
+to a zero-based relative replay clock. A3 provides the host-only file loader
+and `gvret-replay inspect <capture.csv> --bus <number>` command. The command
+prints the selected bus, selected-frame count, relative duration, standard and
+extended counts, and CAN ID bounds. It does not print payload rows or absolute
+capture timestamps. A private GVRET file can be supplied at runtime without
+being copied into the repository or build output.
+
 The parser accepts synthetic CSV in host tests only. Private vehicle captures
 may be supplied at runtime but must not be committed, attached to Issues or
 PRs, or echoed into logs. Deterministic decoder and freshness tests continue
