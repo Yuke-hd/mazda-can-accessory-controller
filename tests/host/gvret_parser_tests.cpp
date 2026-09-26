@@ -49,6 +49,17 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
   CHECK(frame.frame.data[3] == 0);
 }
 
+TEST_CASE("parser preserves source bus values wider than RawCanFrame bus_id") {
+  const auto parsed =
+      gvret::parse_csv(one_row(csv_row("973", "0000013B", "false", "300", "0", "")));
+
+  REQUIRE(parsed.ok());
+  REQUIRE(parsed.frames.size() == 1);
+  CHECK(parsed.frames.front().bus == 300);
+  CHECK(parsed.frames.front().frame.bus_id == static_cast<std::uint8_t>(300));
+  CHECK(parsed.frames.front().frame.is_valid());
+}
+
 TEST_CASE("parser accepts extended IDs and true or numeric Extended flags") {
   const auto parsed = gvret::parse_csv(
       std::string(kHeader) + "\n" + csv_row("2009", "1ABCDE", "1", "0", "1", "a5,,,,,,,") + "\n" +

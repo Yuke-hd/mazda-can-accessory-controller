@@ -129,9 +129,6 @@ ParseResult parse_csv(const std::string_view csv) {
       if (!parse_integer(fields.values[3], 10, bus)) {
         return failure(line_number, "invalid bus number");
       }
-      if (bus > std::numeric_limits<std::uint8_t>::max()) {
-        return failure(line_number, "bus number exceeds RawCanFrame capacity");
-      }
 
       std::uint32_t dlc = 0;
       if (!parse_integer(fields.values[4], 10, dlc) || dlc > kPayloadColumns) {
@@ -150,6 +147,8 @@ ParseResult parse_csv(const std::string_view csv) {
       parsed.timestamp_us = timestamp_us;
       parsed.bus = bus;
       parsed.frame.timestamp_us = timestamp_us;
+      // ParsedGvretFrame::bus retains the complete source value for filtering;
+      // RawCanFrame's legacy bus_id field is only an eight-bit transport hint.
       parsed.frame.bus_id = static_cast<std::uint8_t>(bus);
       parsed.frame.identifier = identifier;
       parsed.frame.identifier_format = extended ? vehicle_core::CanIdentifierFormat::Extended
