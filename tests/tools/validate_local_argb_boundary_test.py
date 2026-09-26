@@ -296,34 +296,6 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("telemetry.stop() is not followed by local_argb::fail_off()")
 
-    def test_loop_exit_in_bind_or_rule_loop_is_rejected(self) -> None:
-        for label, anchor, message in (
-            (
-                "continue in bind loop",
-                "  for (const auto &binding : kEffectBindings) {\n",
-                "LED effect binding loop does not bind every kEffectBindings entry",
-            ),
-            (
-                "break in rule loop",
-                "  for (const auto &rule : kTurnRules) {\n",
-                "turn-state rule loop does not add a strict rule for every kTurnRules entry",
-            ),
-        ):
-            exit_statement = "continue" if "continue" in label else "break"
-            original = (self.root / MAIN).read_text(encoding="utf-8")
-            with self.subTest(label):
-                try:
-                    self.edit(
-                        MAIN,
-                        anchor,
-                        anchor
-                        + "    if (application_state.turn_notifications != 0U)\n"
-                        + f"      {exit_statement};\n",
-                    )
-                    self.assert_rejected(message)
-                finally:
-                    (self.root / MAIN).write_text(original, encoding="utf-8")
-
     def test_detach_followed_by_fail_off_passes(self) -> None:
         self.edit(
             MAIN,
@@ -336,41 +308,50 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_accepted()
 
-    def test_unmirrored_turn_binding_is_rejected(self) -> None:
+    def test_duplicate_turn_configuration_in_firmware_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "{kTurnRightAction, local_argb_actions::LedEffect::LeftTurn}",
-            "{kTurnRightAction, local_argb_actions::LedEffect::RightTurn}",
+            "bool configure_engine_lighting() noexcept {",
+            "constexpr int kTurnRules[] = {1};\n"
+            "bool configure_engine_lighting() noexcept {",
         )
-        self.assert_rejected("kEffectBindings must hold exactly the mirrored entries")
+        self.assert_rejected("vehicle integration retains duplicated turn rules")
 
-    def test_extra_turn_rule_entry_is_rejected(self) -> None:
+    def test_missing_shared_profile_application_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            '{"hazard", kHazardAction}',
-            '{"hazard", kHazardAction}, {"hazard", kTurnLeftAction}',
+            "controller_config::apply_lighting_profile(\n"
+            "      controller_config::kDefaultLightingProfile, led_actions, engine);",
+            "(void)led_actions;",
         )
-        self.assert_rejected("kTurnRules must hold exactly the mirrored entries")
+        self.assert_rejected("must call controller_config::apply_lighting_profile()")
 
-    def test_binding_loop_over_other_table_is_rejected(self) -> None:
-        self.edit(MAIN, ": kEffectBindings)", ": kOtherBindings)")
-        self.assert_rejected("LED effect binding loop does not bind every kEffectBindings entry")
-
-    def test_rule_added_outside_the_table_loop_is_rejected(self) -> None:
+    def test_direct_turn_rule_in_main_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "  return true;\n}",
-            "  (void)engine.add_state_rule({});\n  return true;\n}",
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_state_rule({});\n  return true;\n}\n} // namespace",
         )
-        self.assert_rejected("must call engine.add_state_rule() exactly 1 time(s)")
+        self.assert_rejected("vehicle integration retains direct turn-state rule registration")
 
-    def test_weakened_turn_freshness_is_rejected(self) -> None:
+    def test_direct_led_binding_in_main_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "action_engine::FreshnessRequirement::Fresh",
-            "action_engine::FreshnessRequirement::FreshOrUnverified",
+            "  return true;\n}\n} // namespace",
+            "  (void)led_actions.bind(action_engine::ActionId{6}, "
+            "local_argb_actions::LedEffect::Brake);\n"
+            "  return true;\n}\n} // namespace",
         )
-        self.assert_rejected("weakened turn freshness")
+        self.assert_rejected("vehicle integration retains direct LED effect binding")
+
+    def test_direct_sink_registration_in_main_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  return true;\n}\n} // namespace",
+            "  (void)engine.add_sink(led_actions);\n"
+            "  return true;\n}\n} // namespace",
+        )
+        self.assert_rejected("vehicle integration retains direct LED sink registration")
 
     def test_missing_engine_project_component_is_rejected(self) -> None:
         self.edit(PROJECT_CMAKE, '    "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"\n', "")
@@ -382,47 +363,23 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
             "vehicle application does not require the local_argb_actions component"
         )
 
-    def test_missing_rpm_level_fill_apply_is_rejected(self) -> None:
-        self.edit(
-            MAIN,
-            "controller_config::apply(kRpmLevelFill, led_actions, engine)",
-            "controller_config::RpmLevelFillStatus{}",
-        )
-        self.assert_rejected(
-            "vehicle integration must call "
-            "controller_config::apply(kRpmLevelFill,led_actions,engine)) exactly 1 time(s)"
-        )
-
     def test_direct_range_rule_in_main_is_rejected(self) -> None:
         self.edit(
             MAIN,
             "  return true;\n}\n} // namespace",
-            "  (void)engine.add_range_rule(controller_config::range_rule(kRpmLevelFill));\n"
+            "  (void)engine.add_range_rule({});\n"
             "  return true;\n}\n} // namespace",
         )
-        self.assert_rejected("vehicle integration must call engine.add_range_rule() exactly 0 time(s)")
-
-    def test_missing_rpm_red_zone_apply_is_rejected(self) -> None:
-        self.edit(
-            MAIN,
-            "controller_config::apply(kRpmRedZone, led_actions, engine)",
-            "controller_config::RpmThresholdStatus{}",
-        )
-        self.assert_rejected(
-            "vehicle integration must call "
-            "controller_config::apply(kRpmRedZone,led_actions,engine)) exactly 1 time(s)"
-        )
+        self.assert_rejected("vehicle integration retains direct RPM level rule registration")
 
     def test_direct_sampled_state_rule_in_main_is_rejected(self) -> None:
         self.edit(
             MAIN,
             "  return true;\n}\n} // namespace",
-            "  (void)engine.add_sampled_state_rule(controller_config::threshold_rule(kRpmRedZone));\n"
+            "  (void)engine.add_sampled_state_rule({});\n"
             "  return true;\n}\n} // namespace",
         )
-        self.assert_rejected(
-            "vehicle integration must call engine.add_sampled_state_rule() exactly 0 time(s)"
-        )
+        self.assert_rejected("vehicle integration retains direct RPM threshold rule registration")
 
     def test_missing_polled_sampling_is_rejected(self) -> None:
         self.edit(MAIN, "    (void)engine.sample_polled_rules();\n", "")
