@@ -1,6 +1,6 @@
 # Generic action engine
 
-`lib/action_engine` (#9, #10, #32) turns generic signal notices and sampled
+`lib/action_engine` (#9, #10, #32, #48) turns generic signal notices and sampled
 readings into action commands.
 It knows no vehicle make, CAN frame, driver, RTOS, LED, WLED transport or
 persistence format. The only dependency is `vehicle_signals`.
@@ -63,6 +63,7 @@ a condition through `provider.catalog()` when the rule is added. The runtime rul
 | `UnsupportedComparison` | An ordered comparison is used on a Boolean or Enum signal. |
 | `UnknownChoice` | The choice key is not a choice of the Enum signal. |
 | `InvalidRange` | Range rules only: a range bound or span is not finite, or `input.from >= input.to`. |
+| `InvalidHysteresis` | A sampled state rule's release threshold is non-finite, is paired with an equality comparison, or is not beyond the activation threshold in the release direction. |
 | `CapacityExceeded` | 16 state/event rules, 8 polled (range plus sampled state) rules, or 4 sinks are already registered. |
 
 A range rule's signal must be a Number (`TypeMismatch` otherwise). Its checks
@@ -71,7 +72,8 @@ run in the order `InvalidState`, `InvalidAction`, `DuplicateAction`,
 `CapacityExceeded`. A sampled state rule's checks run in the order
 `InvalidState`, `InvalidAction`, `DuplicateAction`, `UnknownSignal`,
 `UnsupportedCapability`, `TypeMismatch`, `InvalidOperand`,
-`UnsupportedComparison`, `UnknownChoice`, `CapacityExceeded`.
+`UnsupportedComparison`, `UnknownChoice`, `InvalidHysteresis`,
+`CapacityExceeded`.
 
 `add_sink()` returns `InvalidState` while attached, `DuplicateSink` for a sink
 that is already registered (it would otherwise receive every command twice),
@@ -138,7 +140,8 @@ A `RangeRuleConfig` is `{signal_key, input, output, action, freshness}`, where
 
 ## Sampled state rules
 
-A `SampledStateRuleConfig` is `{condition, action, freshness}`: the same
+A `SampledStateRuleConfig` is
+`{condition, action, freshness, release_threshold}`: the same
 `SignalCondition` as a state rule, evaluated on sampled reads of a
 Read-capable signal instead of notices. For example,
 `engine.rpm Greater number(3000)` activates a shift light above 3000 RPM and
@@ -146,11 +149,28 @@ deactivates it at or below 3000. All six comparisons are accepted; ordered
 comparisons need a Number signal, as for state rules. Compound AND/OR
 conditions are not supported.
 
+`release_threshold` is optional and defaults to unset, preserving the single
+threshold behavior. When set, it adds a second finite boundary to an ordered
+Number condition: Greater and GreaterOrEqual require a release threshold below
+the condition's activation operand; Less and LessOrEqual require one above it.
+Equal and NotEqual conditions cannot use hysteresis. While inactive, the rule
+uses the condition's original operand to activate. While active, it applies the
+same comparison to `release_threshold`, so samples between the two boundaries
+preserve the current state. For example, Greater 3000 with release 2800 turns
+on above 3000 and stays on until the value reaches 2800 or below. Comparison
+strictness also defines the exact release edge: GreaterOrEqual remains on at
+its release value, while LessOrEqual does too.
+
+A failed read or non-actionable reading still deactivates immediately. That
+fail-off sample clears the active state; recovery must cross the activation
+boundary again. Hysteresis adds no minimum hold time, smoothing or averaging.
+
 - Output: the rule is on when the read succeeds, the reading is actionable and
   the condition holds. It emits `Activate` or `Deactivate` only when that
   output changes. After `attach()` the output is unknown, so the first sample
   always emits the explicit baseline, including `Deactivate` for a
-  non-actionable first reading.
+  non-actionable first reading. If the optional release threshold is set,
+  later active samples use that boundary until the output turns off.
 - Fail-off: a failed read or a non-actionable reading emits `Deactivate` once;
   the next actionable reading re-evaluates the condition.
 
@@ -208,10 +228,11 @@ notified, and share one capacity of 8 (`ActionEngine::kMaxPolledRules`).
   endpoints, out-of-range values, NoData, Stale, Unavailable, read failures
   and recovery, and check that sampling on one thread and notices on another
   never overlap sink calls. The sampled state tests cover `rpm > 3000` on and
-  off transitions, every comparison at its boundary, deduplication, NoData,
-  Stale, Unavailable, failed reads and recovery, both freshness policies, the
-  shared level-action namespace and polled capacity, and range and sampled
-  state rules on one signal.
+  off transitions, every comparison at its boundary, hysteresis entry/hold/
+  release in both directions, invalid release configurations, fail-off during
+  hysteresis, deduplication, NoData, Stale, Unavailable, failed reads and
+  recovery, both freshness policies, the shared level-action namespace and
+  polled capacity, and range and sampled state rules on one signal.
 - `tests/host/action_engine_composition_tests.cpp` is the only code that
   knows both the engine and Mazda. It drives real turn-signal frames through
   `MazdaSignalProvider` into the engine, and samples a real engine-RPM frame

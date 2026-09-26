@@ -1,9 +1,37 @@
 #include "action_engine/engine.hpp"
 
+#include <cmath>
+
 namespace action_engine {
 
 using vehicle_signals::SignalNotification;
 using vehicle_signals::SignalStatus;
+
+namespace {
+
+[[nodiscard]] bool has_valid_release_threshold(const SignalCondition &condition,
+                                               float release_threshold) noexcept {
+  const auto activation_threshold = condition.operand.as_number();
+  if (!activation_threshold.has_value() || !std::isfinite(*activation_threshold) ||
+      !std::isfinite(release_threshold)) {
+    return false;
+  }
+
+  switch (condition.comparison) {
+  case Comparison::Greater:
+  case Comparison::GreaterOrEqual:
+    return release_threshold < *activation_threshold;
+  case Comparison::Less:
+  case Comparison::LessOrEqual:
+    return release_threshold > *activation_threshold;
+  case Comparison::Equal:
+  case Comparison::NotEqual:
+    return false;
+  }
+  return false;
+}
+
+} // namespace
 
 ActionEngine::ActionEngine(vehicle_signals::SignalProvider &provider) noexcept
     : provider_(&provider) {}
@@ -54,6 +82,21 @@ ConfigStatus ActionEngine::add_sampled_state_rule(const SampledStateRuleConfig &
       resolve_sampled_condition(provider_->catalog(), config.condition, config.freshness);
   if (!resolution.condition.has_value()) {
     return resolution.status;
+  }
+
+  if (config.release_threshold.has_value()) {
+    if (!has_valid_release_threshold(config.condition, *config.release_threshold)) {
+      return ConfigStatus::InvalidHysteresis;
+    }
+    SignalCondition release_condition = config.condition;
+    release_condition.operand = RuleOperand::number(*config.release_threshold);
+    const auto release_resolution =
+        resolve_sampled_condition(provider_->catalog(), release_condition, config.freshness);
+    if (!release_resolution.condition.has_value()) {
+      return release_resolution.status;
+    }
+    return polled_rules_.add(
+        SampledStateRule{*resolution.condition, config.action, release_resolution.condition});
   }
   return polled_rules_.add(SampledStateRule{*resolution.condition, config.action});
 }

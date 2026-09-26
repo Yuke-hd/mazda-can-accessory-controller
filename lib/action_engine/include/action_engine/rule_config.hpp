@@ -94,15 +94,19 @@ struct StateRuleConfig {
 };
 
 // Level rule sampled at the caller's cadence: reads a Read-capable signal and
-// Activates while the condition holds on an actionable reading, Deactivating
-// otherwise (every non-actionable reading and every failed read). Only a
-// change of output is emitted. The condition follows the same rules as a
-// state rule's, so ordered comparisons apply only to Number signals. A
+// activates when the condition holds on an actionable reading. An optional
+// release threshold lets an ordered Number condition hold its current output
+// between activation and release boundaries. Non-actionable readings and
+// failed reads always deactivate. Only a change of output is emitted. A
 // sampled state rule owns its ActionId like any other level rule.
 struct SampledStateRuleConfig {
   SignalCondition condition{};
   ActionId action{};
   FreshnessRequirement freshness{FreshnessRequirement::Fresh};
+  // Optional release boundary for ordered numeric conditions. The condition's
+  // operand remains the activation boundary; release must be on the opposite
+  // side to form a non-empty hysteresis band.
+  std::optional<float> release_threshold{};
 };
 
 // Direction of the condition transition that fires an event rule.
