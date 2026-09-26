@@ -288,3 +288,15 @@ else()
   target_compile_options(lighting_profile_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 doctest_discover_tests(lighting_profile_tests)
+
+add_executable(lighting_profile_application_tests lighting_profile_application_tests.cpp)
+target_link_libraries(lighting_profile_application_tests PRIVATE controller_config
+                                                                   vehicle_signals_test_support
+                                                                   doctest::doctest)
+target_compile_features(lighting_profile_application_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(lighting_profile_application_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(lighting_profile_application_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(lighting_profile_application_tests)
