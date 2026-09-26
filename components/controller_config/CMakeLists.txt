@@ -4,7 +4,7 @@
 # neither the action engine nor the LED components learn about a signal. Only
 # the firmware composition root applies it.
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/rpm_level_fill.cpp"
+  idf_component_register(SRCS "src/rpm_level_fill.cpp" "src/rpm_threshold.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES action_engine local_argb_actions)
   return()
@@ -12,6 +12,7 @@ endif()
 
 add_library(controller_config STATIC
   src/rpm_level_fill.cpp
+  src/rpm_threshold.cpp
 )
 target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(controller_config PUBLIC action_engine local_argb_actions)

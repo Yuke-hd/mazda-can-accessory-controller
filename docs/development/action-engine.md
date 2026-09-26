@@ -169,8 +169,10 @@ notified, and share one capacity of 8 (`ActionEngine::kMaxPolledRules`).
 - Each rule reads its own signal, so two rules on the same signal may see
   different samples within one call.
 - The WeAct firmware calls it every 100 ms from its runtime loop. Its RPM
-  level fill is configured in `components/controller_config`; see
-  [local-led-actions.md](local-led-actions.md#rpm-level-fill).
+  level fill and RPM red-zone threshold are configured in
+  `components/controller_config`; see
+  [local-led-actions.md](local-led-actions.md#rpm-level-fill) and
+  [RPM threshold](local-led-actions.md#rpm-threshold-red-zone).
 
 ## Lifecycle
 

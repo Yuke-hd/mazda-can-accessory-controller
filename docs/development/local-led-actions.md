@@ -225,12 +225,17 @@ the renderer queue `local_argb::internal::sink()`. Before CAN starts it:
    a `FillEffect` over the whole strip (`CenterOut`, priority 50, so the turn
    effects at the default 100 draw over it) and adds a range rule on
    `vehicle.engine_rpm`. See [RPM level fill](#rpm-level-fill);
-4. registers the typed turn notice log and attaches the engine. These are the
+4. applies the RPM red zone through `controller_config::apply()`: it binds
+   its own action to the `Brake` effect at priority 150, above the fill and
+   the turn effects, and adds a sampled state rule
+   `vehicle.engine_rpm Greater 6000`. See
+   [RPM threshold (red zone)](#rpm-threshold-red-zone);
+5. registers the typed turn notice log and attaches the engine. These are the
    turn channel's two subscriber slots;
-5. registers the facade's dispatcher progress with
+6. registers the facade's dispatcher progress with
    `local_argb::watch_progress()`, so a stalled dispatcher fails the strip
    off (see [Fail-off policy: held level](#fail-off-policy-held-level));
-6. starts the facade, then calls `engine.sample_polled_rules()` on every
+7. starts the facade, then calls `engine.sample_polled_rules()` on every
    100 ms pass of its runtime loop.
 
 Any setup failure calls `local_argb::fail_off()` and refuses to start CAN.
@@ -258,9 +263,42 @@ engine nor this adapter learns about RPM; the fill only receives a 0.0..1.0
 
 The turn rules in `main.cpp` keep the strict `Fresh` requirement, and
 `tools/validate_local_argb_boundary.py` still forbids `FreshOrUnverified` and
-direct `add_range_rule()` calls there. `tests/host/rpm_level_fill_tests.cpp`
-covers the defaults, endpoints, linear midpoints, clamping, a configured
-range, unverified and missing readings, and both failure paths.
+direct `add_range_rule()` and `add_sampled_state_rule()` calls there.
+`tests/host/rpm_level_fill_tests.cpp` covers the defaults, endpoints, linear
+midpoints, clamping, a configured range, unverified and missing readings, and
+both failure paths.
+
+### RPM threshold (red zone)
+
+`components/controller_config` also owns the boolean RPM threshold (#33).
+The threshold is controller configuration, not renderer state: the LED sink
+only receives `Activate` and `Deactivate` for an ordinary `ActionId`, so the
+same action can be handled by any output adapter.
+
+- `controller_config::RpmThresholdConfig` holds the threshold
+  (`RpmThreshold{rpm}`, default 6000 rpm), the `ActionId`, the `LedEffect`
+  (default `Brake`) and its `EffectPriority`.
+- `threshold_rule()` builds the sampled state rule
+  `vehicle.engine_rpm Greater threshold`. RPM at or below the threshold keeps
+  the action inactive; crossing above emits `Activate` once, staying above
+  emits nothing more, and crossing back emits `Deactivate`. There is no
+  hysteresis. A non-finite threshold is rejected with `InvalidOperand`.
+- Freshness: the rule uses `FreshOrUnverified`, like the level fill. The
+  Mazda provider always reports RPM as `FreshnessUnverified`, so a strict
+  `Fresh` rule would never fire. Missing, stale or unavailable readings and
+  failed reads still deactivate the warning. This keeps `FreshOrUnverified`
+  out of `main.cpp`, where the validator forbids it.
+- `apply()` binds the effect, then adds the rule. A failed binding adds no
+  rule; a rejected rule, such as `DuplicateAction` when the action is already
+  driven by the level fill, leaves the binding, so firmware fails off.
+
+The firmware uses action 5, independent of the level fill's action 4, and the
+brake region at priority 150, so the warning draws over the gauge while the
+turn regions, which do not overlap the brake region, stay visible.
+`tests/host/rpm_threshold_tests.cpp` covers the default, the rule shape, below
+and at the threshold, the crossing in both directions without duplicates, a
+configured threshold, a lost reading, a non-finite threshold, the independent
+LED binding next to the level fill, a shared action and a failed binding.
 
 This step is where the documented differences from the legacy binding reach
 the hardware: a write fault stays dark until the next level change. A hung
@@ -271,7 +309,8 @@ The migration keeps the visible turn and hazard behavior of the legacy
 `mazda::application::bind_local_argb_sink()` binding. That binding also lit
 brake on a Fresh brake reading. Brake has no freshness timeout, so it is never
 Fresh and never lit. Brake is also not in the generic catalog, so the
-migration drops it with no visible change.
+migration drops it with no visible change. The brake region is now the RPM
+red-zone warning instead.
 
 The legacy binding is no longer bound in firmware. The renderer queue has one
 slot, so the LED sink must be its only publisher. The binding stays compiled

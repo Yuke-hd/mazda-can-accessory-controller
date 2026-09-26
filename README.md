@@ -177,10 +177,12 @@ See [`docs/development/local-led-actions.md`](docs/development/local-led-actions
   center toward the corresponding outer edge. The preserved center-out-fill
   strategy fills each region from the center outward and is the current WeAct
   runtime strategy.
-- **Brake:** the renderer can light the center 30-pixel region solid red, but
-  the firmware binds no brake action. Brake has no freshness timeout and no
-  generic catalog signal yet, so it stays off, as it did before the engine
-  migration.
+- **Brake / RPM red zone:** the renderer can light the center 30-pixel region
+  solid red. The firmware binds no brake-pedal action (brake has no freshness
+  timeout and no generic catalog signal yet); instead the region is the RPM
+  red-zone warning, lit while engine speed is above a configurable threshold
+  (6000 rpm by default). See
+  [local-led-actions.md](docs/development/local-led-actions.md#rpm-threshold-red-zone).
 - **Overlap:** turn animation and the brake region may coexist; the single
   GPIO4 status pixel prioritizes red brake status, otherwise amber turn status,
   otherwise black.
