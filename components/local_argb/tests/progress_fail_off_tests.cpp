@@ -4,6 +4,7 @@
 
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_fail_off.hpp"
 #include "local_argb/progress_watchdog.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 
@@ -12,6 +13,7 @@ namespace {
 using local_argb::kProgressStallFailOffUs;
 using local_argb::internal::LightingCommand;
 using local_argb::internal::LightingSink;
+using local_argb::internal::ProgressFailOff;
 using local_argb::internal::ProgressTransition;
 using local_argb::internal::ProgressWatchdog;
 using local_argb::internal::StallGatedSink;
@@ -167,6 +169,70 @@ void test_a_close_during_a_publish_is_followed_by_black() {
   assert(!downstream.last.left_turn);
 }
 
+// Records whether the gate already rejected a lit command when black arrived.
+struct UngatedRecorder final : public LightingSink {
+  bool publish(const LightingCommand &command) noexcept override {
+    last = command;
+    ++published;
+    gate_closed_first = !gate->publish(lit());
+    return true;
+  }
+
+  StallGatedSink *gate{nullptr};
+  LightingCommand last{};
+  unsigned published{0};
+  bool gate_closed_first{false};
+};
+
+struct FailOffFixture {
+  FailOffFixture() { ungated.gate = &gate; }
+
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  UngatedRecorder ungated{};
+  ProgressFailOff fail_off{gate, ungated};
+};
+
+void test_a_stall_closes_the_gate_before_writing_black_past_it() {
+  FailOffFixture fixture{};
+  fixture.fail_off.apply(ProgressTransition::Stalled);
+  assert(fixture.ungated.published == 1);
+  assert(!fixture.ungated.last.actionable);
+  assert(fixture.ungated.gate_closed_first);
+  assert(!fixture.gate.publish(lit()));
+  assert(fixture.downstream.published == 0);
+}
+
+void test_a_resume_opens_the_gate_without_re_emitting() {
+  FailOffFixture fixture{};
+  fixture.fail_off.apply(ProgressTransition::Stalled);
+  fixture.fail_off.apply(ProgressTransition::Resumed);
+  assert(fixture.ungated.published == 1);
+  assert(fixture.downstream.published == 0);
+  assert(fixture.gate.publish(lit()));
+}
+
+void test_no_transition_changes_nothing() {
+  FailOffFixture fixture{};
+  fixture.fail_off.apply(ProgressTransition::None);
+  assert(fixture.ungated.published == 0);
+  assert(fixture.gate.publish(lit()));
+  const auto report = fixture.fail_off.take_report();
+  assert(report.stalls == 0 && report.resumes == 0);
+}
+
+void test_transitions_are_counted_for_a_later_report_taken_once() {
+  FailOffFixture fixture{};
+  fixture.fail_off.apply(ProgressTransition::Stalled);
+  fixture.fail_off.apply(ProgressTransition::Resumed);
+  fixture.fail_off.apply(ProgressTransition::Stalled);
+  const auto report = fixture.fail_off.take_report();
+  assert(report.stalls == 2);
+  assert(report.resumes == 1);
+  const auto drained = fixture.fail_off.take_report();
+  assert(drained.stalls == 0 && drained.resumes == 0);
+}
+
 } // namespace
 
 int main() {
@@ -184,5 +250,9 @@ int main() {
   test_a_closed_gate_rejects_commands_without_forwarding();
   test_a_reopened_gate_forwards_the_next_command();
   test_a_close_during_a_publish_is_followed_by_black();
+  test_a_stall_closes_the_gate_before_writing_black_past_it();
+  test_a_resume_opens_the_gate_without_re_emitting();
+  test_no_transition_changes_nothing();
+  test_transitions_are_counted_for_a_later_report_taken_once();
   return 0;
 }

@@ -261,7 +261,7 @@ public:
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   // Wrapping count of completed dispatcher loop passes, idle or not.
   [[nodiscard]] std::uint32_t dispatch_progress() const noexcept {
-    return dispatch_progress_.load(std::memory_order_acquire);
+    return dispatch_progress_.load(std::memory_order_relaxed);
   }
 
   [[nodiscard]] Reading<float> speed_kph() const noexcept { return publication_.speed_kph(); }

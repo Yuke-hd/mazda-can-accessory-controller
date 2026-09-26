@@ -393,7 +393,9 @@ def main() -> int:
         "disarm_worker_lease()": "startup-failure lease disarm",
         "esp_restart()": "supervised stall reset recovery",
         "    supervise_progress();": "dispatcher-stall fail-off supervision",
-        "g_gated_sink.close();": "dispatcher-stall publish gate",
+        "g_progress_fail_off{g_gated_sink, g_queue_sink}": "dispatcher-stall publish gate",
+        "g_progress_fail_off.apply(sample_progress());": "dispatcher-stall fail-off policy",
+        "    report_progress();": "worker-side progress stall logging",
         "LightingSink &sink() noexcept { return g_gated_sink; }": "gated renderer queue sink",
     }
     for needle, label in requirements.items():

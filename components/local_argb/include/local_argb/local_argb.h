@@ -45,6 +45,8 @@ inline constexpr vehicle_core::Microseconds kWorkerRestartRequestBoundUs =
 // A watched progress count (see watch_progress) that stops for longer than
 // this fails the strip off. The supervisor samples it every poll, so it sees
 // the last change up to one poll late and the stall up to one poll late.
+// kProgressFailOffBoundUs bounds when black is commanded (queued past the
+// closed gate); the worker renders it on its next pass, a few ms later.
 inline constexpr vehicle_core::Microseconds kProgressStallFailOffUs = 2'000'000;
 inline constexpr vehicle_core::Microseconds kProgressFailOffBoundUs =
     kProgressStallFailOffUs + 2 * kSupervisorPollUs;

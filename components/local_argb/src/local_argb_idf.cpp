@@ -1,5 +1,6 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_fail_off.hpp"
 #include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
 #include "local_argb/stall_gated_sink.hpp"
@@ -30,6 +31,8 @@ constexpr spi_host_device_t kVehicleStripSpiBus = SPI3_HOST;
 constexpr UBaseType_t kWorkerPriority = tskIDLE_PRIORITY + 2;
 // The guard performs no LED/RMT work and is above can_rx (MAX-2), so a stuck
 // lower-priority LED call cannot prevent the configured reset bound.
+// It never formats log output either: its stack is sized for watchdog reads,
+// so it only counts progress transitions and the worker logs them.
 constexpr UBaseType_t kSupervisorPriority = configMAX_PRIORITIES - 1;
 constexpr std::uint32_t kWorkerStackDepth = 4096;
 constexpr std::uint32_t kSupervisorStackDepth = 2048;
@@ -126,8 +129,10 @@ public:
 };
 
 QueueSink g_queue_sink;
-// Lighting publishers go through the gate; fail_off() writes past it.
+// Lighting publishers go through the gate; a progress stall writes black past
+// it to the queue, so the supervisor itself makes no LED driver call.
 internal::StallGatedSink g_gated_sink{g_queue_sink};
+internal::ProgressFailOff g_progress_fail_off{g_gated_sink, g_queue_sink};
 led_strip_handle_t g_onboard_strip{nullptr};
 led_strip_handle_t g_vehicle_strip{nullptr};
 StaticQueue_t g_queue_storage{};
@@ -136,6 +141,20 @@ QueueHandle_t g_queue{nullptr};
 TaskHandle_t g_worker{nullptr};
 TaskHandle_t g_supervisor{nullptr};
 bool g_started{false};
+
+// Logs progress transitions the supervisor applied. Runs on the worker, whose
+// stack already carries ESP_LOG calls.
+void report_progress() noexcept {
+  const internal::ProgressReport report = g_progress_fail_off.take_report();
+  if (report.stalls != 0) {
+    ESP_LOGE(kTag, "watched progress stalled (%lu); strip failed off",
+             static_cast<unsigned long>(report.stalls));
+  }
+  if (report.resumes != 0) {
+    ESP_LOGW(kTag, "watched progress resumed (%lu); next command may light the strip",
+             static_cast<unsigned long>(report.resumes));
+  }
+}
 
 void worker(void *) noexcept {
   for (;;) {
@@ -148,6 +167,7 @@ void worker(void *) noexcept {
     } else if (!g_controller.tick(now_us())) {
       ESP_LOGE(kTag, "pixel fail-off clear retry failed");
     }
+    report_progress();
   }
 }
 
@@ -169,22 +189,7 @@ internal::ProgressTransition sample_progress() noexcept {
   return transition;
 }
 
-void supervise_progress() noexcept {
-  switch (sample_progress()) {
-  case internal::ProgressTransition::Stalled:
-    // Close before clearing: a publish racing this close re-sends black.
-    g_gated_sink.close();
-    fail_off();
-    ESP_LOGE(kTag, "watched progress stalled; strip failed off");
-    break;
-  case internal::ProgressTransition::Resumed:
-    g_gated_sink.open();
-    ESP_LOGW(kTag, "watched progress resumed; next command may light the strip");
-    break;
-  case internal::ProgressTransition::None:
-    break;
-  }
-}
+void supervise_progress() noexcept { g_progress_fail_off.apply(sample_progress()); }
 
 void supervisor(void *) noexcept {
   for (;;) {

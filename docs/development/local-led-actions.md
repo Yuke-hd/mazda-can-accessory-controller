@@ -148,9 +148,12 @@ The composition root owns the cases the engine cannot see:
   root registers the count with `local_argb::watch_progress()`, and the
   renderer's existing `argb_guard` supervisor samples it on its 10 ms poll.
   If the count does not change for `kProgressStallFailOffUs` (2 s), the
-  supervisor closes the renderer queue to lighting publishers and calls
-  `fail_off()`, so the strip is black within `kProgressFailOffBoundUs`
-  (2 s plus two polls) of the last dispatcher pass. While closed, a publish
+  supervisor closes the renderer queue to lighting publishers and queues
+  black past the closed gate, so black is commanded within
+  `kProgressFailOffBoundUs` (2 s plus two polls) of the last dispatcher
+  pass; the worker renders it on its next pass, a few ms later. The
+  supervisor only counts stalls and resumes; the lower-priority worker logs
+  them, so the small guard stack never formats log output. While closed, a publish
   from another context, such as a polled `SetLevel`, is rejected, and a
   publish that races the close is followed by black. The fault does not
   latch: once the count changes again the queue reopens, and the next
@@ -188,13 +191,15 @@ level change. This is fail-safe but visible.
   range rule on a generic numeric signal, which fails off on Stale data, and
   renders a higher-priority turn over a gauge fill and releases it. For #34
   it stalls a fake dispatcher progress count under a held turn: the engine
-  sends no `Deactivate`, the strip is black within the bound, a publish
+  sends no `Deactivate`, black is commanded within the bound, a publish
   during the stall stays black, and after progress resumes a later notice
   lights the strip. An idle dispatcher keeps a held turn lit.
 - `components/local_argb/tests/progress_fail_off_tests.cpp` covers the
   progress watchdog (bound, idle progress, wrap, one-shot stall and resume
-  reports, re-detection, a backwards clock, re-arming) and the publish gate,
-  including a close that races a publish. The telemetry service tests show
+  reports, re-detection, a backwards clock, re-arming), the publish gate,
+  including a close that races a publish, and the shared fail-off policy
+  (`ProgressFailOff`: close before black, resume without re-emitting, and
+  transition counts reported once for logging). The telemetry service tests show
   `dispatch_progress()` advancing while idle, stopping in a blocked callback
   and advancing after it returns.
 - `architecture_contracts` restricts the adapter to the engine action port,

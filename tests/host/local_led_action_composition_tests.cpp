@@ -8,6 +8,7 @@
 #include "action_engine/engine.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
+#include "local_argb/progress_fail_off.hpp"
 #include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
 #include "local_argb/stall_gated_sink.hpp"
@@ -337,8 +338,8 @@ public:
 };
 
 // The #34 composition: LedActionSink publishes through the stall gate, and a
-// fake supervisor samples a fake dispatcher progress count every poll. On a
-// stall it closes the gate and writes black past it, as fail_off() does.
+// fake supervisor samples a fake dispatcher progress count every poll and
+// applies the same ProgressFailOff policy as the firmware supervisor.
 struct StallHarness final {
   StallHarness() {
     REQUIRE(renderer.start());
@@ -369,17 +370,7 @@ struct StallHarness final {
   // One supervisor poll.
   void supervise_at(vehicle_core::MonotonicTimestamp now_us) {
     lighting.now_us = now_us;
-    switch (watchdog.sample(progress, now_us)) {
-    case local_argb::internal::ProgressTransition::Stalled:
-      gate.close();
-      (void)lighting.publish(local_argb::internal::LightingCommand{});
-      break;
-    case local_argb::internal::ProgressTransition::Resumed:
-      gate.open();
-      break;
-    case local_argb::internal::ProgressTransition::None:
-      break;
-    }
+    fail_off.apply(watchdog.sample(progress, now_us));
   }
 
   [[nodiscard]] const PixelFrame &frame_at(vehicle_core::MonotonicTimestamp now_us) {
@@ -391,6 +382,7 @@ struct StallHarness final {
   local_argb::internal::RendererController renderer{pixels};
   RendererLightingSink lighting{renderer};
   local_argb::internal::StallGatedSink gate{lighting};
+  local_argb::internal::ProgressFailOff fail_off{gate, lighting};
   LedActionSink led{gate};
   RecordingActionSink commands{};
   test_support::FakeSignalProvider provider{kView};
@@ -424,6 +416,7 @@ TEST_CASE("a stalled dispatcher fails a held turn off in bound and a later actio
   CHECK(harness.frame_at(now_us) == local_argb::kBlackFrame);
   CHECK(now_us > kActivatedUs + local_argb::kProgressStallFailOffUs);
   CHECK(now_us <= kActivatedUs + local_argb::kProgressFailOffBoundUs);
+  CHECK(harness.fail_off.take_report().stalls == 1);
 
   // A command from another context during the stall cannot relight the strip.
   harness.led.execute({kTurnRightAction, action_engine::ActionCommandKind::Activate});
@@ -433,6 +426,7 @@ TEST_CASE("a stalled dispatcher fails a held turn off in bound and a later actio
   ++harness.progress;
   now_us += local_argb::kSupervisorPollUs;
   harness.supervise_at(now_us);
+  CHECK(harness.fail_off.take_report().resumes == 1);
   CHECK(harness.frame_at(now_us) == local_argb::kBlackFrame);
 
   // 6. A subsequent valid action lights the strip again.
@@ -454,6 +448,7 @@ TEST_CASE("an idle dispatcher under stable state keeps a held turn lit") {
 
   CHECK(now_us > local_argb::kProgressFailOffBoundUs);
   CHECK(left_lit(harness.frame_at(now_us)));
+  CHECK(harness.fail_off.take_report().stalls == 0);
 }
 
 namespace {

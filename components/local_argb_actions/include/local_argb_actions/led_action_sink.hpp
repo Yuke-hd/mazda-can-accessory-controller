@@ -34,9 +34,10 @@ namespace local_argb_actions {
 // commands for unbound actions.
 //
 // Precondition: while the engine is attached, this adapter is the lighting
-// sink's only publisher and the sink accepts every publish, so start the
-// renderer first. A rejected publish is not retried, and the engine does not
-// resend a deduplicated level.
+// sink's only publisher, so start the renderer first. The sink accepts every
+// publish except while the renderer's progress watch has closed it. A
+// rejected publish is not retried, and the engine does not resend a
+// deduplicated level.
 //
 // Setup: bind() runs before the engine attaches. execute() then runs on the
 // engine's serialized command context, never blocks, and publishes through

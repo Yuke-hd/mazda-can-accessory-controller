@@ -131,6 +131,22 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("dispatcher-stall fail-off supervision is missing")
 
+    def test_progress_stall_without_gated_fail_off_policy_is_rejected(self) -> None:
+        self.edit(
+            Path("components/local_argb/src/local_argb_idf.cpp"),
+            "g_progress_fail_off.apply(sample_progress());",
+            "(void)sample_progress();",
+        )
+        self.assert_rejected("dispatcher-stall fail-off policy is missing")
+
+    def test_progress_stall_without_worker_report_is_rejected(self) -> None:
+        self.edit(
+            Path("components/local_argb/src/local_argb_idf.cpp"),
+            "    report_progress();\n  }\n}",
+            "  }\n}",
+        )
+        self.assert_rejected("worker-side progress stall logging is missing")
+
     def test_commented_out_engine_attach_is_rejected(self) -> None:
         self.edit(MAIN, "engine.attach()", "vehicle_signals::SignalStatus::Ok")
         self.edit(MAIN, BEFORE_CAN_START, "  // (void)engine.attach();\n" + BEFORE_CAN_START)

@@ -850,7 +850,9 @@ void VehicleTelemetryService::dispatcher_loop() noexcept {
     callback_context_identity_.store(kNoExecutionIdentity, std::memory_order_release);
     // Record loop progress, not delivery: an idle pass under stable vehicle
     // state is healthy. Only a pass stuck in a callback stops this count.
-    dispatch_progress_.fetch_add(1, std::memory_order_release);
+    // Relaxed: readers only compare successive values; nothing is published
+    // through this count.
+    dispatch_progress_.fetch_add(1, std::memory_order_relaxed);
     if (delivered == 0) {
 #if defined(ESP_PLATFORM)
       vTaskDelay(kMinimumTaskDelayTicks);
