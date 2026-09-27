@@ -157,6 +157,9 @@ timestamps and 100 RGB pixel values; supply an explicit replay horizon with
 capture can reconstruct RPM bands and turn or hazard timing, so it follows the
 same privacy and publication restrictions as the capture. Publish only output
 generated from synthetic fixtures.
+`--signals` adds decoded
+[signal records](docs/development/mcan-94-signal-observers.md) to the same
+stream under the same restrictions.
 
 ## Architecture and Data Flow
 

@@ -18,7 +18,17 @@ enum class ReplayScheduleStatus : std::uint8_t {
   ControllerFailure,
 };
 
-enum class ReplayEventKind : std::uint8_t { Frame, EndOfStream, Timeout, Poll, OutputTick };
+// Declaration order is not dispatch order: SignalSample is appended to keep
+// the existing values stable, but at a shared timestamp it runs before
+// OutputTick (see run_replay()).
+enum class ReplayEventKind : std::uint8_t {
+  Frame,
+  EndOfStream,
+  Timeout,
+  Poll,
+  OutputTick,
+  SignalSample,
+};
 
 struct ReplayEvent {
   vehicle_core::MonotonicTimestamp time_us{0};
@@ -39,6 +49,10 @@ struct ReplayScheduleOptions {
   // Output-stage cadence. Unset uses the stage's own tick_period_us().
   std::optional<vehicle_core::Microseconds> output_tick_period_us{};
   vehicle_core::Microseconds poll_period_us{controller_config::kPolledRuleSamplePeriodUs};
+  // Polled-signal sampling cadence for SignalObservers. Unset uses
+  // poll_period_us. Not scheduled without observers, but zero is rejected
+  // with InvalidOptions either way.
+  std::optional<vehicle_core::Microseconds> signal_sample_period_us{};
 };
 
 struct ReplayScheduleResult {
@@ -49,6 +63,7 @@ struct ReplayScheduleResult {
   std::uint64_t timeout_publications{0};
   std::uint64_t polled_samples{0};
   std::uint64_t output_ticks{0};
+  std::uint64_t signal_samples{0};
   bool end_of_stream{false};
 
   [[nodiscard]] constexpr bool ok() const noexcept { return status == ReplayScheduleStatus::Ok; }
@@ -62,12 +77,23 @@ struct ReplayScheduleResult {
 // treat that status as host scheduling failure, not replay-time divergence.
 // The input must be the normalized, ordered sequence from gvret::prepare_replay(). At a
 // shared timestamp, all frames are delivered in source order, followed by
-// EOF (once), a due availability timeout, a polled-rule sample, and an
-// output-stage tick. Poll and output ticks run at time zero; availability
-// begins after its first period.
+// EOF (once), a due availability timeout, a polled-rule sample, a polled
+// signal sample (only with observers), and an output-stage tick. Poll,
+// signal-sample and output ticks run at time zero; availability begins after
+// its first period. Notified signals reach observers while the frame, EOF or
+// timeout that changed them is processed, so they precede that timestamp's
+// signal sample and output tick.
 // Invalid input/options are rejected before the controller or stage is started.
 [[nodiscard]] ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames,
                                               ReplayClock &clock, OutputStage &output,
+                                              ReplayScheduleOptions options,
+                                              ReplayEventSink *events = nullptr);
+
+// As above, with SignalObservers injected into the controller alongside the
+// output stage. An empty list is identical to the overload above.
+[[nodiscard]] ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames,
+                                              ReplayClock &clock, OutputStage &output,
+                                              SignalObservers observers,
                                               ReplayScheduleOptions options,
                                               ReplayEventSink *events = nullptr);
 

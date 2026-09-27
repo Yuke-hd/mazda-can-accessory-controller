@@ -35,7 +35,8 @@ consumers should treat a stream without that marker as truncated:
 ```
 
 Consumers must ignore record types they do not recognize, so new record types
-(for example decoded signal records, #94) can be added without a version bump.
+(for example the `signal` records described in
+[replay signal observers](mcan-94-signal-observers.md)) can be added without a version bump.
 The version changes only when an existing record's meaning or shape changes.
 
 The timestamp is supplied by the caller-owned replay clock after GVRET
@@ -49,8 +50,10 @@ trip data under the repository's privacy and publication rules. Synthetic
 fixtures are the only output safe to publish.
 
 The scheduler processes equal-time events in this order: all CAN frames in
-source order, end of stream, availability timeout, polled-rule sample, and
-output-stage tick. No wall-clock sleep or playback pacing is used. The output
+source order, end of stream, availability timeout, polled-rule sample, signal
+sample (only when signal observers are injected; see
+[replay signal observers](mcan-94-signal-observers.md)), and output-stage
+tick. No wall-clock sleep or playback pacing is used. The output
 sink can also be used directly by host tests to retain timestamped
 `PixelFrame` values in memory.
 
