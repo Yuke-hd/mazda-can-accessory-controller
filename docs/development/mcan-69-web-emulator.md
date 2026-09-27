@@ -1,0 +1,25 @@
+# MCAN-69 local LED emulator
+
+`gvret-led-emulator` serves the replay browser adapter only on loopback. It
+loads a caller-supplied GVRET CSV, reports an ephemeral local URL, and serves
+embedded HTML, CSS, and JavaScript assets:
+
+```sh
+gvret-led-emulator capture.csv
+```
+
+The default listener is `127.0.0.1`. Pass `--ipv6` (or `--bind ::1`) to use
+IPv6, or `--port <number>` to choose a local port. No non-loopback bind
+address is accepted, and the server has no upload endpoint or outbound network
+client.
+
+The browser connects to `/ws`. Each WebSocket session receives the same D1
+messages as the C5 `PixelFrame` JSONL output: a `header`, timestamped
+`pixels` records, and an `end` marker. The emulator intentionally does not
+visualize pixels or add replay controls; those are separate follow-up work.
+Closing the process or sending SIGINT/SIGTERM stops the replay controller,
+closes the active connection, and releases the loopback listener.
+
+The command consumes capture data locally. Do not publish raw captures,
+vehicle identifiers, absolute timestamps, or replay output derived from a real
+vehicle. Host tests use synthetic frames only.
