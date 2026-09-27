@@ -153,6 +153,18 @@ TEST_CASE("empty replay supports timeout work and remains one-shot after clean s
   CHECK(controller.start() == gvret::ReplayControllerStatus::InvalidState);
 }
 
+TEST_CASE("stop releases the Runtime waiting at the input gate with a frozen clock") {
+  gvret::ReplayClock clock{9'000'000};
+  RecordingPixelSink pixels;
+  gvret::ReplayController controller{{}, clock, pixels};
+
+  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.running());
+  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(clock.now() == 9'000'000);
+  CHECK(is_black(pixels.frames().back()));
+}
+
 TEST_CASE("renderer failure attempts black and stop keeps the host output failed off") {
   gvret::ReplayClock clock;
   RecordingPixelSink pixels;
