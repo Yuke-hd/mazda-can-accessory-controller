@@ -1,6 +1,6 @@
-#include "gvret/replay_clock.hpp"
+#include "replay/clock.hpp"
 
-namespace gvret {
+namespace replay {
 
 ReplayClock::ReplayClock(const vehicle_core::MonotonicTimestamp initial_time_us) noexcept
     : now_us_(initial_time_us) {}
@@ -17,4 +17,4 @@ bool ReplayClock::advance_to(const vehicle_core::MonotonicTimestamp target_time_
   return target_time_us == observed_time_us;
 }
 
-} // namespace gvret
+} // namespace replay

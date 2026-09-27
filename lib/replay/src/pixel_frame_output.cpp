@@ -1,11 +1,11 @@
-#include "gvret/pixel_frame_output.hpp"
+#include "replay/pixel_frame_output.hpp"
 
 #include <charconv>
 #include <cstdint>
 #include <string>
 #include <string_view>
 
-namespace gvret {
+namespace replay {
 namespace {
 
 bool append_literal(std::string &output, const std::string_view text) {
@@ -104,4 +104,4 @@ bool JsonlPixelFrameSink::write(const local_argb::PixelFrame &frame) noexcept {
   }
 }
 
-} // namespace gvret
+} // namespace replay

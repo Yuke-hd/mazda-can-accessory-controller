@@ -84,13 +84,13 @@ def main() -> int:
         failures.append("IDF local_argb frame include path does not resolve to the frame root")
 
     # Frame consumers take the frame-only target, not the sink contract.
-    gvret_text = (root / "lib/gvret/CMakeLists.txt").read_text(encoding="utf-8")
-    output_links = re.search(r"target_link_libraries\(\s*gvret_replay_output\s+([^\)]*)\)", gvret_text)
+    replay_text = (root / "lib/replay/CMakeLists.txt").read_text(encoding="utf-8")
+    output_links = re.search(r"target_link_libraries\(\s*replay_pixel_output\s+([^\)]*)\)", replay_text)
     output_deps = output_links.group(1).split() if output_links else []
     if "local_argb_pixel_frame" not in output_deps:
-        failures.append("gvret_replay_output does not link local_argb_pixel_frame")
+        failures.append("replay_pixel_output does not link local_argb_pixel_frame")
     if {"local_argb", "local_argb_sink_contract"} & set(output_deps):
-        failures.append("gvret_replay_output links more than the pixel frame contract")
+        failures.append("replay_pixel_output links more than the pixel frame contract")
 
     compiler = shutil.which(args.compiler) or args.compiler
     with tempfile.TemporaryDirectory(prefix="local-argb-boundary-") as directory:

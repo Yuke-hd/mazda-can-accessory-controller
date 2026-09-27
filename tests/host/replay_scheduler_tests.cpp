@@ -8,8 +8,10 @@
 #include <vector>
 
 #include "controller_config/timing.hpp"
-#include "gvret/replay_scheduler.hpp"
+#include "local_argb/local_argb.h"
 #include "mazda/facade_contracts.hpp"
+#include "replay/local_argb_stage.hpp"
+#include "replay/scheduler.hpp"
 
 namespace {
 
@@ -20,7 +22,7 @@ struct OutputFrame {
 
 class RecordingPixels final : public local_argb::PixelFrameSink {
 public:
-  explicit RecordingPixels(const gvret::ReplayClock &clock) : clock_(clock) {}
+  explicit RecordingPixels(const replay::ReplayClock &clock) : clock_(clock) {}
 
   bool write(const local_argb::PixelFrame &frame) noexcept override {
     if (fail_write_number_ == frames_.size() + 1) {
@@ -35,18 +37,18 @@ public:
   [[nodiscard]] const std::vector<OutputFrame> &frames() const noexcept { return frames_; }
 
 private:
-  const gvret::ReplayClock &clock_;
+  const replay::ReplayClock &clock_;
   std::vector<OutputFrame> frames_{};
   std::size_t fail_write_number_{0};
 };
 
-class RecordingEvents final : public gvret::ReplayEventSink {
+class RecordingEvents final : public replay::ReplayEventSink {
 public:
-  void record(const gvret::ReplayEvent event) noexcept override { events_.push_back(event); }
-  [[nodiscard]] const std::vector<gvret::ReplayEvent> &events() const noexcept { return events_; }
+  void record(const replay::ReplayEvent event) noexcept override { events_.push_back(event); }
+  [[nodiscard]] const std::vector<replay::ReplayEvent> &events() const noexcept { return events_; }
 
 private:
-  std::vector<gvret::ReplayEvent> events_{};
+  std::vector<replay::ReplayEvent> events_{};
 };
 
 gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp time_us,
@@ -87,9 +89,10 @@ std::size_t colored_pixels(const local_argb::PixelFrame &frame) {
 } // namespace
 
 TEST_CASE("held turn animates at output-stage ticks without new CAN frames") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  const auto result = gvret::run_replay({left_turn(0)}, clock, pixels, {40'000});
+  replay::LocalArgbOutputStage stage{pixels};
+  const auto result = replay::run_replay({left_turn(0)}, clock, stage, {40'000});
 
   REQUIRE(result.ok());
   CHECK(result.frames_delivered == 1);
@@ -109,10 +112,11 @@ TEST_CASE("held turn animates at output-stage ticks without new CAN frames") {
 }
 
 TEST_CASE("RPM frame takes effect at the next 100 ms sample") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   const auto result =
-      gvret::run_replay({timed_frame(0, 0x777, {0}), half_rpm(1)}, clock, pixels, {110'000});
+      replay::run_replay({timed_frame(0, 0x777, {0}), half_rpm(1)}, clock, stage, {110'000});
 
   REQUIRE(result.ok());
   const auto &output = pixels.frames();
@@ -125,59 +129,63 @@ TEST_CASE("RPM frame takes effect at the next 100 ms sample") {
 }
 
 TEST_CASE("equal-time rows precede timeout, poll, and output tick in source order") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   RecordingEvents events;
   const auto result =
-      gvret::run_replay({left_turn(0), turn_off(0)}, clock, pixels, {10'000}, &events);
+      replay::run_replay({left_turn(0), turn_off(0)}, clock, stage, {10'000}, &events);
 
   REQUIRE(result.ok());
   REQUIRE(events.events().size() == 7);
-  CHECK(events.events()[0].kind == gvret::ReplayEventKind::Frame);
-  CHECK(events.events()[1].kind == gvret::ReplayEventKind::Frame);
-  CHECK(events.events()[2].kind == gvret::ReplayEventKind::EndOfStream);
-  CHECK(events.events()[3].kind == gvret::ReplayEventKind::Poll);
-  CHECK(events.events()[4].kind == gvret::ReplayEventKind::OutputTick);
-  CHECK(events.events()[5].kind == gvret::ReplayEventKind::Timeout);
-  CHECK(events.events()[6].kind == gvret::ReplayEventKind::OutputTick);
+  CHECK(events.events()[0].kind == replay::ReplayEventKind::Frame);
+  CHECK(events.events()[1].kind == replay::ReplayEventKind::Frame);
+  CHECK(events.events()[2].kind == replay::ReplayEventKind::EndOfStream);
+  CHECK(events.events()[3].kind == replay::ReplayEventKind::Poll);
+  CHECK(events.events()[4].kind == replay::ReplayEventKind::OutputTick);
+  CHECK(events.events()[5].kind == replay::ReplayEventKind::Timeout);
+  CHECK(events.events()[6].kind == replay::ReplayEventKind::OutputTick);
   CHECK(events.events()[0].time_us == 0);
   CHECK(events.events()[5].time_us == 10'000);
   CHECK(result.frames_delivered == 2);
 }
 
 TEST_CASE("frame, EOF, timeout, poll, and output tick ties follow the documented order") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   RecordingEvents events;
-  const gvret::ReplayScheduleOptions options{10'000, 10'000, 10'000, 10'000};
+  const replay::ReplayScheduleOptions options{10'000, 10'000, 10'000, 10'000};
 
   const auto result =
-      gvret::run_replay({timed_frame(0, 0x777, {0}), left_turn(10'000), turn_off(10'000)}, clock,
-                        pixels, options, &events);
+      replay::run_replay({timed_frame(0, 0x777, {0}), left_turn(10'000), turn_off(10'000)}, clock,
+                         stage, options, &events);
 
   REQUIRE(result.ok());
   REQUIRE(events.events().size() == 9);
   CHECK(events.events()[3].time_us == 10'000);
-  CHECK(events.events()[3].kind == gvret::ReplayEventKind::Frame);
-  CHECK(events.events()[4].kind == gvret::ReplayEventKind::Frame);
-  CHECK(events.events()[5].kind == gvret::ReplayEventKind::EndOfStream);
-  CHECK(events.events()[6].kind == gvret::ReplayEventKind::Timeout);
-  CHECK(events.events()[7].kind == gvret::ReplayEventKind::Poll);
-  CHECK(events.events()[8].kind == gvret::ReplayEventKind::OutputTick);
+  CHECK(events.events()[3].kind == replay::ReplayEventKind::Frame);
+  CHECK(events.events()[4].kind == replay::ReplayEventKind::Frame);
+  CHECK(events.events()[5].kind == replay::ReplayEventKind::EndOfStream);
+  CHECK(events.events()[6].kind == replay::ReplayEventKind::Timeout);
+  CHECK(events.events()[7].kind == replay::ReplayEventKind::Poll);
+  CHECK(events.events()[8].kind == replay::ReplayEventKind::OutputTick);
 }
 
 TEST_CASE("repeated replay produces identical event and pixel traces") {
   const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
-  gvret::ReplayClock first_clock;
-  gvret::ReplayClock second_clock;
+  replay::ReplayClock first_clock;
+  replay::ReplayClock second_clock;
   RecordingPixels first_pixels{first_clock};
+  replay::LocalArgbOutputStage first_stage{first_pixels};
   RecordingPixels second_pixels{second_clock};
+  replay::LocalArgbOutputStage second_stage{second_pixels};
   RecordingEvents first_events;
   RecordingEvents second_events;
 
-  const auto first = gvret::run_replay(input, first_clock, first_pixels, {120'000}, &first_events);
+  const auto first = replay::run_replay(input, first_clock, first_stage, {120'000}, &first_events);
   const auto second =
-      gvret::run_replay(input, second_clock, second_pixels, {120'000}, &second_events);
+      replay::run_replay(input, second_clock, second_stage, {120'000}, &second_events);
 
   REQUIRE(first.ok());
   REQUIRE(second.ok());
@@ -194,9 +202,10 @@ TEST_CASE("repeated replay produces identical event and pixel traces") {
 }
 
 TEST_CASE("timeout publications stale a sparse turn after EOF") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  const auto result = gvret::run_replay({left_turn(0)}, clock, pixels, {260'000});
+  replay::LocalArgbOutputStage stage{pixels};
+  const auto result = replay::run_replay({left_turn(0)}, clock, stage, {260'000});
 
   REQUIRE(result.ok());
   CHECK(result.timeout_publications == 26);
@@ -210,10 +219,11 @@ TEST_CASE("timeout publications stale a sparse turn after EOF") {
 }
 
 TEST_CASE("empty replay reports EOF and runs inclusive tail cadence") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   RecordingEvents events;
-  const auto result = gvret::run_replay({}, clock, pixels, {20'000}, &events);
+  const auto result = replay::run_replay({}, clock, stage, {20'000}, &events);
 
   REQUIRE(result.ok());
   CHECK(result.end_of_stream);
@@ -222,24 +232,30 @@ TEST_CASE("empty replay reports EOF and runs inclusive tail cadence") {
   CHECK(result.polled_samples == 1);
   CHECK(result.output_ticks == 3);
   CHECK(clock.now() == 20'000);
-  CHECK(events.events().front().kind == gvret::ReplayEventKind::EndOfStream);
+  CHECK(events.events().front().kind == replay::ReplayEventKind::EndOfStream);
   CHECK(is_black(pixels.frames().back().pixels));
 }
 
 TEST_CASE("default cadences follow the firmware poll and local ARGB output stage") {
-  const gvret::ReplayScheduleOptions options{};
+  const replay::ReplayScheduleOptions options{};
 
   CHECK(options.availability_period_us == mazda::kDefaultAvailabilityServiceTargetUs);
   CHECK(options.poll_period_us == controller_config::kPolledRuleSamplePeriodUs);
-  CHECK(options.output_tick_period_us == local_argb::kSupervisorPollUs);
-  CHECK(options.output_tick_period_us == 10'000);
+  CHECK_FALSE(options.output_tick_period_us.has_value());
+
+  replay::ReplayClock clock;
+  RecordingPixels pixels{clock};
+  const replay::LocalArgbOutputStage stage{pixels};
+  CHECK(stage.tick_period_us() == local_argb::kSupervisorPollUs);
+  CHECK(stage.tick_period_us() == 10'000);
 }
 
 TEST_CASE("an end between cadence ticks still ends at the exact replay horizon") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
 
-  const auto result = gvret::run_replay({}, clock, pixels, {10'001});
+  const auto result = replay::run_replay({}, clock, stage, {10'001});
 
   CHECK(result.ok());
   CHECK(result.timeout_publications == 1);
@@ -249,59 +265,63 @@ TEST_CASE("an end between cadence ticks still ends at the exact replay horizon")
 
 TEST_CASE("invalid input and options fail before touching the sink or clock") {
   const auto check_invalid = [](std::vector<gvret::TimedCanFrame> input,
-                                const gvret::ReplayScheduleOptions options,
-                                const gvret::ReplayScheduleStatus expected) {
-    gvret::ReplayClock clock;
+                                const replay::ReplayScheduleOptions options,
+                                const replay::ReplayScheduleStatus expected) {
+    replay::ReplayClock clock;
     RecordingPixels pixels{clock};
-    const auto result = gvret::run_replay(std::move(input), clock, pixels, options);
+    replay::LocalArgbOutputStage stage{pixels};
+    const auto result = replay::run_replay(std::move(input), clock, stage, options);
     CHECK(result.status == expected);
     CHECK(pixels.frames().empty());
     CHECK(clock.now() == 0);
   };
 
-  check_invalid({left_turn(0)}, {0, 0}, gvret::ReplayScheduleStatus::InvalidOptions);
-  check_invalid({left_turn(0)}, {0, 10'000, 0}, gvret::ReplayScheduleStatus::InvalidOptions);
+  check_invalid({left_turn(0)}, {0, 0}, replay::ReplayScheduleStatus::InvalidOptions);
+  check_invalid({left_turn(0)}, {0, 10'000, 0}, replay::ReplayScheduleStatus::InvalidOptions);
   check_invalid({left_turn(0)}, {0, 10'000, 10'000, 0},
-                gvret::ReplayScheduleStatus::InvalidOptions);
+                replay::ReplayScheduleStatus::InvalidOptions);
   check_invalid({left_turn(0)}, {std::numeric_limits<std::uint64_t>::max(), 1, 1, 1},
-                gvret::ReplayScheduleStatus::InvalidOptions);
-  check_invalid({left_turn(0), left_turn(10)}, {9}, gvret::ReplayScheduleStatus::InvalidOptions);
-  check_invalid({left_turn(10)}, {10}, gvret::ReplayScheduleStatus::InvalidInput);
+                replay::ReplayScheduleStatus::InvalidOptions);
+  check_invalid({left_turn(0), left_turn(10)}, {9}, replay::ReplayScheduleStatus::InvalidOptions);
+  check_invalid({left_turn(10)}, {10}, replay::ReplayScheduleStatus::InvalidInput);
   check_invalid({left_turn(0), left_turn(5), left_turn(4)}, {10},
-                gvret::ReplayScheduleStatus::InvalidInput);
+                replay::ReplayScheduleStatus::InvalidInput);
   auto mismatched = left_turn(0);
   mismatched.frame.timestamp_us = 1;
-  check_invalid({mismatched}, {0}, gvret::ReplayScheduleStatus::InvalidInput);
+  check_invalid({mismatched}, {0}, replay::ReplayScheduleStatus::InvalidInput);
 
-  gvret::ReplayClock nonzero_clock{1};
+  replay::ReplayClock nonzero_clock{1};
   RecordingPixels pixels{nonzero_clock};
-  const auto nonzero = gvret::run_replay({}, nonzero_clock, pixels, {1});
-  CHECK(nonzero.status == gvret::ReplayScheduleStatus::InvalidOptions);
+  replay::LocalArgbOutputStage stage{pixels};
+  const auto nonzero = replay::run_replay({}, nonzero_clock, stage, {1});
+  CHECK(nonzero.status == replay::ReplayScheduleStatus::InvalidOptions);
   CHECK(pixels.frames().empty());
   CHECK(nonzero_clock.now() == 1);
 }
 
 TEST_CASE("renderer failure stops and attempts a final black frame") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   pixels.fail_write_number(2);
 
-  const auto result = gvret::run_replay({left_turn(0)}, clock, pixels, {10'000});
+  const auto result = replay::run_replay({left_turn(0)}, clock, stage, {10'000});
 
-  CHECK(result.status == gvret::ReplayScheduleStatus::ControllerFailure);
-  CHECK(result.controller_status == gvret::ReplayControllerStatus::RendererFault);
-  CHECK(result.stop_status == gvret::ReplayControllerStatus::Ok);
+  CHECK(result.status == replay::ReplayScheduleStatus::ControllerFailure);
+  CHECK(result.controller_status == replay::ReplayControllerStatus::OutputFault);
+  CHECK(result.stop_status == replay::ReplayControllerStatus::Ok);
   REQUIRE_FALSE(pixels.frames().empty());
   CHECK(is_black(pixels.frames().back().pixels));
 }
 
 TEST_CASE("maximum timestamp with sparse cadence completes without deadline wrap") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   const auto largest = std::numeric_limits<std::uint64_t>::max();
-  const gvret::ReplayScheduleOptions options{largest, largest, largest, largest};
+  const replay::ReplayScheduleOptions options{largest, largest, largest, largest};
 
-  const auto result = gvret::run_replay({}, clock, pixels, options);
+  const auto result = replay::run_replay({}, clock, stage, options);
 
   CHECK(result.ok());
   CHECK(clock.now() == largest);

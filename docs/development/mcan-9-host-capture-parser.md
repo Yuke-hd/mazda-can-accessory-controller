@@ -13,11 +13,16 @@ follow-up A2 and A3 tickets.
 
 A2 applies the parser result to one selected source bus and rewrites timestamps
 to a zero-based relative replay clock. A3 provides the host-only file loader
-and `gvret-replay inspect <capture.csv> --bus <number>` command. The command
+and `can-replay inspect <capture.csv> --bus <number>` command. The command
 prints the selected bus, selected-frame count, relative duration, standard and
 extended counts, and CAN ID bounds. It does not print payload rows or absolute
 capture timestamps. A private GVRET file can be supplied at runtime without
 being copied into the repository or build output.
+
+The parser library owns only `gvret_parser`. The replay clock, acquisition
+source, controller, scheduler, output stages, and `can-replay` CLI live in the
+host-only `lib/replay` library under the `replay` namespace, so the parser
+links no replay, controller, action, or renderer target.
 
 The host replay scheduler advances a caller-owned monotonic clock directly;
 it does not pace events against wall time. This makes event ordering and

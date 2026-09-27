@@ -5,11 +5,11 @@
 #include <optional>
 #include <vector>
 
-#include "gvret/replay_clock.hpp"
 #include "gvret/replay_stream.hpp"
-#include "local_argb/local_argb.h"
+#include "replay/clock.hpp"
+#include "replay/output_stage.hpp"
 
-namespace gvret {
+namespace replay {
 
 enum class ReplayControllerStatus : std::uint8_t {
   Ok,
@@ -17,7 +17,7 @@ enum class ReplayControllerStatus : std::uint8_t {
   ConfigurationFailed,
   SynchronizationTimeout,
   TelemetryFault,
-  RendererFault,
+  OutputFault,
 };
 
 enum class ReplayInputResult : std::uint8_t { Frame, Timeout, EndOfStream, Fault };
@@ -29,15 +29,16 @@ struct ReplayStepResult final {
   [[nodiscard]] constexpr bool ok() const noexcept { return status == ReplayControllerStatus::Ok; }
 };
 
-// Host composition of the production telemetry, policy and renderer path.
-// The controller is one-shot: construct a new instance for each replay. Its
-// synchronous methods are the scheduling boundary used by replay tooling;
-// none advances the caller-owned clock. Call every lifecycle and operation
-// method from the same host thread; the PixelFrameSink callback runs there.
+// Host composition of the production telemetry and policy path, driving an
+// injected OutputStage. The controller is one-shot: construct a new instance
+// for each replay; the caller-owned stage must outlive it. Its synchronous
+// methods are the scheduling boundary used by replay tooling; none advances
+// the caller-owned clock. Call every lifecycle and operation method from the
+// same host thread; every OutputStage call runs there.
 class ReplayController final {
 public:
-  ReplayController(std::vector<TimedCanFrame> frames, ReplayClock &clock,
-                   local_argb::PixelFrameSink &pixels,
+  ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
+                   OutputStage &output,
                    vehicle_core::Microseconds synchronization_timeout_us = 500'000);
   ~ReplayController() noexcept;
 
@@ -53,7 +54,8 @@ public:
   // Runtime diagnostic is published before the worker exits.
   [[nodiscard]] ReplayStepResult process_source_fault() noexcept;
   [[nodiscard]] ReplayControllerStatus sample_polled_rules() noexcept;
-  [[nodiscard]] ReplayControllerStatus render() noexcept;
+  // One output-stage tick at the current replay time.
+  [[nodiscard]] ReplayControllerStatus tick_output() noexcept;
   [[nodiscard]] ReplayControllerStatus stop() noexcept;
 
   [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp> next_frame_time() const noexcept;
@@ -64,4 +66,4 @@ private:
   std::unique_ptr<Implementation> implementation_;
 };
 
-} // namespace gvret
+} // namespace replay

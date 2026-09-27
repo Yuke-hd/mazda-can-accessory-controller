@@ -6,11 +6,11 @@
 #include <optional>
 #include <vector>
 
-#include "gvret/replay_clock.hpp"
 #include "gvret/replay_stream.hpp"
+#include "replay/clock.hpp"
 #include "vehicle_telemetry/receive.hpp"
 
-namespace gvret {
+namespace replay {
 
 // Adapts a prepared replay sequence to the production acquisition boundary.
 // The caller owns clock advancement; receive() never skips scheduled work by
@@ -19,7 +19,7 @@ namespace gvret {
 // restart without changing frame timestamps.
 class ReplayAcquisitionSource final : public vehicle_telemetry::AcquisitionSource {
 public:
-  ReplayAcquisitionSource(std::vector<TimedCanFrame> frames, ReplayClock &clock);
+  ReplayAcquisitionSource(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock);
 
   [[nodiscard]] vehicle_telemetry::StatusResult start() noexcept override;
   [[nodiscard]] vehicle_telemetry::StatusResult stop() noexcept override;
@@ -33,7 +33,7 @@ public:
   [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp> next_frame_time() const noexcept;
 
 private:
-  const std::vector<TimedCanFrame> frames_;
+  const std::vector<gvret::TimedCanFrame> frames_;
   ReplayClock &clock_;
   mutable std::mutex mutex_;
   std::size_t next_frame_{0};
@@ -42,4 +42,4 @@ private:
   bool started_once_{false};
 };
 
-} // namespace gvret
+} // namespace replay

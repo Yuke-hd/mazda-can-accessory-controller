@@ -1,4 +1,4 @@
-#include "gvret/replay_controller.hpp"
+#include "replay/controller.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -10,19 +10,14 @@
 #include <utility>
 
 #include "action_engine/engine.hpp"
-#include "controller_config/lighting_profile.hpp"
-#include "controller_config/lighting_profile_application.hpp"
-#include "gvret/replay_acquisition_source.hpp"
-#include "local_argb/lighting_sink.hpp"
-#include "local_argb/renderer.hpp"
-#include "local_argb_actions/led_action_sink.hpp"
 #include "mazda/signal_provider.hpp"
 #include "mazda/vehicle_telemetry.hpp"
 #include "mazda/vehicle_telemetry_internal.hpp"
 #include "mazda/vehicle_telemetry_service.hpp"
+#include "replay/acquisition_source.hpp"
 #include "vehicle_telemetry/receive.hpp"
 
-namespace gvret {
+namespace replay {
 namespace {
 
 class GatedReplaySource final : public vehicle_telemetry::AcquisitionSource {
@@ -176,21 +171,6 @@ private:
   bool cancelled_{false};
 };
 
-class MailboxLightingSink final : public local_argb::internal::LightingSink {
-public:
-  explicit MailboxLightingSink(local_argb::internal::Mailbox &mailbox) noexcept
-      : mailbox_(&mailbox) {}
-
-  [[nodiscard]] bool
-  publish(const local_argb::internal::LightingCommand &command) noexcept override {
-    mailbox_->submit(command);
-    return true;
-  }
-
-private:
-  local_argb::internal::Mailbox *mailbox_;
-};
-
 [[nodiscard]] ReplayControllerStatus map_telemetry_status(const mazda::ResultCode status) noexcept {
   switch (status) {
   case mazda::ResultCode::Ok:
@@ -226,19 +206,14 @@ valid_synchronization_timeout(const vehicle_core::Microseconds timeout_us) noexc
 
 class ReplayController::Implementation final {
 public:
-  Implementation(std::vector<TimedCanFrame> frames, ReplayClock &clock,
-                 local_argb::PixelFrameSink &pixels,
+  Implementation(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock, OutputStage &output,
                  const vehicle_core::Microseconds synchronization_timeout_us)
       : clock_(&clock), source_(std::move(frames), clock), gated_source_(source_),
-        signal_provider_(telemetry_), engine_(signal_provider_), mailbox_sink_(mailbox_),
-        led_actions_(mailbox_sink_),
-        renderer_(pixels, local_argb::internal::kCenterOutFillAnimation),
+        signal_provider_(telemetry_), engine_(signal_provider_), output_(&output),
         synchronization_timeout_us_(synchronization_timeout_us) {
     mazda::internal::VehicleTelemetryAccess::emplace_host_service(
         telemetry_, clock, gated_source_, telemetry_lighting_, {}, {&publication_barrier_, true});
-    configured_ = controller_config::apply_lighting_profile(
-                      controller_config::kDefaultLightingProfile, led_actions_, engine_)
-                      .ok();
+    configured_ = output_->configure(engine_);
   }
 
   ~Implementation() noexcept {
@@ -257,12 +232,15 @@ public:
     if (!valid_synchronization_timeout(synchronization_timeout_us_))
       return ReplayControllerStatus::ConfigurationFailed;
     state_ = State::Starting;
-    if (!renderer_.start()) {
+    if (!output_->start(clock_->now())) {
+      // A stage may have changed output or acquired resources before its
+      // start failed.
+      (void)release_output();
       state_ = State::Stopped;
-      return ReplayControllerStatus::RendererFault;
+      return ReplayControllerStatus::OutputFault;
     }
     if (!configured_) {
-      (void)fail_off_renderer();
+      (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::ConfigurationFailed;
     }
@@ -271,7 +249,7 @@ public:
     if (attach_status != vehicle_signals::SignalStatus::Ok) {
       if (engine_.attached())
         (void)engine_.detach();
-      (void)fail_off_renderer();
+      (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::TelemetryFault;
     }
@@ -288,9 +266,9 @@ public:
       cleanup_failed_start();
       return ReplayControllerStatus::TelemetryFault;
     }
-    if (render_current() != ReplayControllerStatus::Ok) {
+    if (tick_current() != ReplayControllerStatus::Ok) {
       cleanup_failed_start();
-      return ReplayControllerStatus::RendererFault;
+      return ReplayControllerStatus::OutputFault;
     }
     state_ = State::Running;
     return ReplayControllerStatus::Ok;
@@ -321,14 +299,13 @@ public:
     return fail(ReplayControllerStatus::TelemetryFault);
   }
 
-  [[nodiscard]] ReplayControllerStatus render() noexcept {
+  [[nodiscard]] ReplayControllerStatus tick_output() noexcept {
     if (state_ != State::Running)
       return ReplayControllerStatus::InvalidState;
-    const auto status = render_current();
+    const auto status = tick_current();
     if (status == ReplayControllerStatus::Ok)
       return status;
-    state_ = State::Failed;
-    return status;
+    return fail(status);
   }
 
   [[nodiscard]] ReplayControllerStatus stop() noexcept {
@@ -342,7 +319,9 @@ public:
     if (telemetry_quiescent && engine_.attached())
       (void)engine_.detach();
 
-    const auto renderer_status = fail_off_renderer();
+    // Every stop fails the output off before releasing the stage, so a
+    // completed replay cannot leave its last output active.
+    const auto output_status = release_output();
     if (!telemetry_quiescent) {
       state_ = State::Failed;
       return telemetry_status.status == mazda::ResultCode::Timeout
@@ -355,7 +334,7 @@ public:
       return ReplayControllerStatus::TelemetryFault;
     if (!telemetry_status.ok())
       return map_telemetry_status(telemetry_status.status);
-    return renderer_status;
+    return output_status;
   }
 
   [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp> next_frame_time() const noexcept {
@@ -401,7 +380,7 @@ private:
 
   [[nodiscard]] ReplayControllerStatus fail(const ReplayControllerStatus status) noexcept {
     state_ = State::Failed;
-    (void)fail_off_renderer();
+    (void)fail_off_output();
     return status;
   }
 
@@ -409,19 +388,26 @@ private:
     return {fail(status), ReplayInputResult::Fault};
   }
 
-  [[nodiscard]] ReplayControllerStatus render_current() noexcept {
-    local_argb::internal::LightingCommand command{};
-    const bool rendered = mailbox_.take(command) ? renderer_.apply(command, clock_->now())
-                                                 : renderer_.tick(clock_->now());
-    return rendered ? ReplayControllerStatus::Ok : ReplayControllerStatus::RendererFault;
+  [[nodiscard]] ReplayControllerStatus tick_current() noexcept {
+    return output_->tick(clock_->now()) ? ReplayControllerStatus::Ok
+                                        : ReplayControllerStatus::OutputFault;
   }
 
-  [[nodiscard]] ReplayControllerStatus fail_off_renderer() noexcept {
-    return renderer_.apply(local_argb::internal::LightingCommand{}, clock_->now())
-               ? ReplayControllerStatus::Ok
-               : ReplayControllerStatus::RendererFault;
+  [[nodiscard]] ReplayControllerStatus fail_off_output() noexcept {
+    return output_->fail_off(clock_->now()) ? ReplayControllerStatus::Ok
+                                            : ReplayControllerStatus::OutputFault;
   }
 
+  // Fails the output off, then releases the stage.
+  [[nodiscard]] ReplayControllerStatus release_output() noexcept {
+    const bool output_off = fail_off_output() == ReplayControllerStatus::Ok;
+    const bool output_stopped = output_->stop(clock_->now());
+    return output_off && output_stopped ? ReplayControllerStatus::Ok
+                                        : ReplayControllerStatus::OutputFault;
+  }
+
+  // A controller left Failed releases the stage through a later stop() or
+  // its destructor; one left Stopped releases it here.
   void cleanup_failed_start() noexcept {
     publication_barrier_.cancel();
     if (telemetry_.diagnostics().lifecycle != mazda::LifecycleState::Stopped)
@@ -430,8 +416,11 @@ private:
         telemetry_.diagnostics().lifecycle == mazda::LifecycleState::Stopped;
     if (telemetry_quiescent && engine_.attached())
       (void)engine_.detach();
-    (void)fail_off_renderer();
     state_ = telemetry_quiescent && !engine_.attached() ? State::Stopped : State::Failed;
+    if (state_ == State::Stopped)
+      (void)release_output();
+    else
+      (void)fail_off_output();
   }
 
   ReplayClock *clock_;
@@ -442,19 +431,16 @@ private:
   mazda::VehicleTelemetry telemetry_{};
   mazda::MazdaSignalProvider signal_provider_;
   action_engine::ActionEngine engine_;
-  local_argb::internal::Mailbox mailbox_{};
-  MailboxLightingSink mailbox_sink_;
-  local_argb_actions::LedActionSink led_actions_;
-  local_argb::internal::RendererController renderer_;
+  OutputStage *output_;
   vehicle_core::Microseconds synchronization_timeout_us_;
   State state_{State::Ready};
   bool configured_{false};
 };
 
-ReplayController::ReplayController(std::vector<TimedCanFrame> frames, ReplayClock &clock,
-                                   local_argb::PixelFrameSink &pixels,
+ReplayController::ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
+                                   OutputStage &output,
                                    const vehicle_core::Microseconds synchronization_timeout_us)
-    : implementation_(std::make_unique<Implementation>(std::move(frames), clock, pixels,
+    : implementation_(std::make_unique<Implementation>(std::move(frames), clock, output,
                                                        synchronization_timeout_us)) {}
 
 ReplayController::~ReplayController() noexcept = default;
@@ -477,7 +463,9 @@ ReplayControllerStatus ReplayController::sample_polled_rules() noexcept {
   return implementation_->sample_polled_rules();
 }
 
-ReplayControllerStatus ReplayController::render() noexcept { return implementation_->render(); }
+ReplayControllerStatus ReplayController::tick_output() noexcept {
+  return implementation_->tick_output();
+}
 
 ReplayControllerStatus ReplayController::stop() noexcept { return implementation_->stop(); }
 
@@ -487,4 +475,4 @@ std::optional<vehicle_core::MonotonicTimestamp> ReplayController::next_frame_tim
 
 bool ReplayController::running() const noexcept { return implementation_->running(); }
 
-} // namespace gvret
+} // namespace replay

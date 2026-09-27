@@ -4,10 +4,10 @@
 #include <ostream>
 #include <vector>
 
-#include "gvret/replay_clock.hpp"
 #include "local_argb/pixel_frame.hpp"
+#include "replay/clock.hpp"
 
-namespace gvret {
+namespace replay {
 
 struct TimestampedPixelFrame final {
   vehicle_core::MonotonicTimestamp timestamp_us{0};
@@ -66,4 +66,4 @@ private:
   bool wrote_end_{false};
 };
 
-} // namespace gvret
+} // namespace replay
