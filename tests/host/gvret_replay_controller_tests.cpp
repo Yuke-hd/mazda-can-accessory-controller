@@ -2,9 +2,11 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -102,6 +104,97 @@ TEST_CASE(
 
   CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
   CHECK(is_black(pixels.frames().back()));
+}
+
+TEST_CASE("a frame scheduled in the future is rejected without consuming or rendering it") {
+  gvret::ReplayClock clock;
+  RecordingPixelSink pixels;
+  gvret::ReplayController controller{{left_turn(100)}, clock, pixels};
+
+  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(pixels.frames().size() == 1);
+  const auto before = pixels.frames().size();
+
+  const auto not_due = controller.process_next_frame();
+  CHECK(not_due.status == gvret::ReplayControllerStatus::InvalidState);
+  CHECK(not_due.input == gvret::ReplayInputResult::Timeout);
+  CHECK(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{100});
+  CHECK(controller.running());
+  CHECK(pixels.frames().size() == before);
+
+  REQUIRE(clock.advance_to(100));
+  const auto frame = controller.process_next_frame();
+  REQUIRE(frame.status == gvret::ReplayControllerStatus::Ok);
+  CHECK(frame.input == gvret::ReplayInputResult::Frame);
+  CHECK_FALSE(controller.next_frame_time().has_value());
+  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+}
+
+TEST_CASE("sequential replay frames each publish once without drifting the barrier epoch") {
+  gvret::ReplayClock clock;
+  RecordingPixelSink pixels;
+  gvret::ReplayController controller{{left_turn(0), half_rpm(1'000)}, clock, pixels};
+
+  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
+  REQUIRE(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{1'000});
+  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(pixels.frames().size() == 2);
+  const auto first_frame = pixels.frames().back();
+  CHECK(region_has_color(first_frame, local_argb::kRightTurnLedStart, local_argb::kTurnLedCount));
+
+  REQUIRE(clock.advance_to(1'000));
+  const auto second_step = controller.process_next_frame();
+  REQUIRE(second_step.status == gvret::ReplayControllerStatus::Ok);
+  CHECK(second_step.input == gvret::ReplayInputResult::Frame);
+  CHECK_FALSE(controller.next_frame_time().has_value());
+  REQUIRE(controller.sample_polled_rules() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(pixels.frames().size() == 3);
+  CHECK(colored_pixels(pixels.frames().back()) > colored_pixels(first_frame));
+  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+}
+
+TEST_CASE("destroying a running replay controller fails the output off") {
+  gvret::ReplayClock clock;
+  RecordingPixelSink pixels;
+  {
+    gvret::ReplayController controller{{left_turn()}, clock, pixels};
+    REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+    REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
+    REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+    REQUIRE_FALSE(is_black(pixels.frames().back()));
+  }
+
+  REQUIRE_FALSE(pixels.frames().empty());
+  CHECK(is_black(pixels.frames().back()));
+}
+
+TEST_CASE("zero and maximum synchronization timeouts fail configuration before starting") {
+  for (const auto timeout :
+       {vehicle_core::Microseconds{0}, std::numeric_limits<vehicle_core::Microseconds>::max()}) {
+    gvret::ReplayClock clock;
+    RecordingPixelSink pixels;
+    gvret::ReplayController controller{{left_turn()}, clock, pixels, timeout};
+
+    CHECK(controller.start() == gvret::ReplayControllerStatus::ConfigurationFailed);
+    CHECK_FALSE(controller.running());
+  }
+}
+
+TEST_CASE("largest chrono microseconds timeout permits immediate timeout publication") {
+  using TimeoutRep = std::chrono::microseconds::rep;
+  const auto timeout =
+      static_cast<vehicle_core::Microseconds>(std::numeric_limits<TimeoutRep>::max());
+  gvret::ReplayClock clock;
+  RecordingPixelSink pixels;
+  gvret::ReplayController controller{{}, clock, pixels, timeout};
+
+  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  const auto step = controller.process_timeout();
+  CHECK(step.status == gvret::ReplayControllerStatus::Ok);
+  CHECK(step.input == gvret::ReplayInputResult::Timeout);
+  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("production RPM range rule emits a half-strip SetLevel through the real renderer") {
