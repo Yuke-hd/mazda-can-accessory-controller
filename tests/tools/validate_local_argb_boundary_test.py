@@ -29,7 +29,7 @@ ATTACH_FAILURE = (
     "    local_argb::fail_off();\n"
     '    ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");\n'
 )
-POLL_DELAY = "    vTaskDelay(pdMS_TO_TICKS(100));\n"
+POLL_DELAY = "    vTaskDelay(pdMS_TO_TICKS(controller_config::kPolledRuleSamplePeriodUs / 1'000));\n"
 BEFORE_CAN_START = '  ESP_LOGI(kTag,\n           "WeAct CAN485 DevBoard V1.1'
 
 

@@ -84,6 +84,17 @@ else()
 endif()
 doctest_discover_tests(gvret_replay_controller_tests)
 
+add_executable(gvret_replay_scheduler_tests gvret_replay_scheduler_tests.cpp)
+target_link_libraries(gvret_replay_scheduler_tests PRIVATE gvret_replay_scheduler
+                                                           doctest::doctest)
+target_compile_features(gvret_replay_scheduler_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(gvret_replay_scheduler_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(gvret_replay_scheduler_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(gvret_replay_scheduler_tests)
+
 add_executable(gvret_inspect_tests gvret_inspect_tests.cpp)
 target_link_libraries(gvret_inspect_tests PRIVATE gvret_parser doctest::doctest)
 target_compile_features(gvret_inspect_tests PRIVATE cxx_std_17)

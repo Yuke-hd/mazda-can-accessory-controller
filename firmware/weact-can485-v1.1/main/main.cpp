@@ -2,6 +2,7 @@
 #include "board/board_config.h"
 #include "controller_config/lighting_profile.hpp"
 #include "controller_config/lighting_profile_application.hpp"
+#include "controller_config/timing.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -168,6 +169,6 @@ extern "C" void app_main(void) {
     // The application chooses its own observation cadence. CAN receive,
     // decoding, freshness servicing, notification dispatch, and LED updates
     // remain owned by their background service tasks.
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(controller_config::kPolledRuleSamplePeriodUs / 1'000));
   }
 }

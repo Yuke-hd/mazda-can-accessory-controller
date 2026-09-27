@@ -7,7 +7,7 @@ if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/lighting_profile_application.cpp" "src/rpm_level_fill.cpp"
                               "src/rpm_threshold.cpp"
                          INCLUDE_DIRS "include"
-                         REQUIRES action_engine local_argb_actions)
+                         REQUIRES action_engine local_argb_actions vehicle_core)
   return()
 endif()
 
@@ -17,7 +17,7 @@ add_library(controller_config STATIC
   src/rpm_threshold.cpp
 )
 target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(controller_config PUBLIC action_engine local_argb_actions)
+target_link_libraries(controller_config PUBLIC action_engine local_argb_actions vehicle_core)
 target_compile_features(controller_config PUBLIC cxx_std_17)
 
 if(MSVC)
