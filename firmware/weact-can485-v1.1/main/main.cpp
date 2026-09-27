@@ -1,7 +1,7 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
-#include "controller_config/rpm_level_fill.hpp"
-#include "controller_config/rpm_threshold.hpp"
+#include "controller_config/lighting_profile.hpp"
+#include "controller_config/lighting_profile_application.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -12,65 +12,20 @@
 #include "mazda/vehicle_telemetry.hpp"
 
 #include <cstdint>
-#include <string_view>
 
 namespace {
 constexpr char kTag[] = "weact_can485_v11";
 
 // Local strip lighting runs on the generic engine path:
 // MazdaSignalProvider -> ActionEngine -> LedActionSink -> renderer queue.
-// The strip is mounted mirrored, so, as in the retired telemetry binding, the
-// vehicle's left indicator lights the renderer's right_turn region and the
-// right indicator its left_turn region; hazard lights both. The brake signal is
-// not bound; the brake region is the RPM red-zone warning below. See
+// The portable production profile owns the mirrored turn bindings, strict
+// freshness rules, RPM fill and red-zone configuration. Firmware retains the
+// lifecycle and board-specific responsibilities around that profile. See
 // docs/development/local-led-actions.md#firmware-composition.
-constexpr std::string_view kTurnStateSignal{"vehicle.turn_state"};
-constexpr action_engine::ActionId kTurnLeftAction{1};
-constexpr action_engine::ActionId kTurnRightAction{2};
-constexpr action_engine::ActionId kHazardAction{3};
-
-struct TurnRule {
-  std::string_view choice;
-  action_engine::ActionId action;
-};
-constexpr TurnRule kTurnRules[] = {
-    {"left", kTurnLeftAction}, {"right", kTurnRightAction}, {"hazard", kHazardAction}};
-
-struct EffectBinding {
-  action_engine::ActionId action;
-  local_argb_actions::LedEffect effect;
-};
-constexpr EffectBinding kEffectBindings[] = {
-    {kTurnLeftAction, local_argb_actions::LedEffect::RightTurn},
-    {kTurnRightAction, local_argb_actions::LedEffect::LeftTurn},
-    {kHazardAction, local_argb_actions::LedEffect::LeftTurn},
-    {kHazardAction, local_argb_actions::LedEffect::RightTurn},
-};
-
-// RPM level fill: engine speed over the configured range fills the whole
-// strip from its centre outward. The input range is controller configuration
-// (controller_config::RpmRange, 0..6500 rpm by default); the LED fill only
-// sees a 0.0..1.0 level. The fill ranks below the turn effects (default
-// priority 100), so an indicator always draws over the gauge.
-constexpr action_engine::ActionId kRpmLevelAction{4};
-constexpr controller_config::RpmLevelFillConfig kRpmLevelFill{
-    controller_config::RpmRange{}, kRpmLevelAction,
-    local_argb_actions::FillEffect{
-        local_argb::internal::LedZone{0, board::kWeActCan485V11.vehicle_light_strip.pixel_count,
-                                      local_argb::internal::FillDirection::CenterOut},
-        local_argb::internal::LightingRgb{0, 16, 32}, local_argb::internal::EffectPriority{50}}};
-
-// RPM red zone: above the configured threshold (controller_config::RpmThreshold,
-// 6000 rpm by default) the red brake region lights as a warning. The threshold
-// is controller configuration; the LED effect only sees Activate/Deactivate.
-// Its action is independent of the level fill's, and its priority ranks above
-// both the fill (50) and the turn effects (100), so the warning draws over the
-// gauge. The brake region does not overlap the turn regions, so indicators
-// stay visible.
-constexpr action_engine::ActionId kRpmRedZoneAction{5};
-constexpr controller_config::RpmThresholdConfig kRpmRedZone{
-    controller_config::RpmThreshold{}, kRpmRedZoneAction, local_argb_actions::LedEffect::Brake,
-    local_argb::internal::EffectPriority{150}};
+static_assert(controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.start == 0 &&
+                  controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.length ==
+                      board::kWeActCan485V11.vehicle_light_strip.pixel_count,
+              "default lighting profile must cover the WeAct vehicle strip");
 
 struct ApplicationState {
   std::uint32_t turn_notifications{0};
@@ -135,48 +90,19 @@ static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 
-// Binds the LED effects and adds the LED sink, the turn-state rules, the RPM
-// level fill and the RPM red zone. The strict Fresh turn requirement fails off
-// once the turn state goes Stale after its 250 ms freshness timeout.
+// Applies the portable profile while the engine is detached. The strict Fresh
+// turn requirement fails off once the turn state goes Stale after its 250 ms
+// freshness timeout. Lifecycle and runtime work remain in app_main below.
 bool configure_engine_lighting() noexcept {
-  for (const auto &binding : kEffectBindings) {
-    const auto status = led_actions.bind(binding.action, binding.effect);
-    if (status != local_argb_actions::BindingStatus::Ok) {
-      ESP_LOGE(kTag, "LED effect bind failed for action %u: status=%u",
-               static_cast<unsigned>(binding.action.value()), static_cast<unsigned>(status));
-      return false;
-    }
-  }
-  const auto sink_status = engine.add_sink(led_actions);
-  if (sink_status != action_engine::ConfigStatus::Ok) {
-    ESP_LOGE(kTag, "engine add_sink failed for the LED action sink: status=%u",
-             static_cast<unsigned>(sink_status));
-    return false;
-  }
-  for (const auto &rule : kTurnRules) {
-    const action_engine::StateRuleConfig config{{kTurnStateSignal, action_engine::Comparison::Equal,
-                                                 action_engine::RuleOperand::choice(rule.choice)},
-                                                rule.action,
-                                                action_engine::FreshnessRequirement::Fresh};
-    const auto status = engine.add_state_rule(config);
-    if (status != action_engine::ConfigStatus::Ok) {
-      ESP_LOGE(kTag, "engine add_state_rule failed for action %u: status=%u",
-               static_cast<unsigned>(rule.action.value()), static_cast<unsigned>(status));
-      return false;
-    }
-  }
-  const auto rpm_status = controller_config::apply(kRpmLevelFill, led_actions, engine);
-  if (!rpm_status.ok()) {
-    ESP_LOGE(kTag, "RPM level fill setup failed: binding=%u rule=%d",
-             static_cast<unsigned>(rpm_status.binding),
-             rpm_status.rule.has_value() ? static_cast<int>(*rpm_status.rule) : -1);
-    return false;
-  }
-  const auto red_zone_status = controller_config::apply(kRpmRedZone, led_actions, engine);
-  if (!red_zone_status.ok()) {
-    ESP_LOGE(kTag, "RPM red zone setup failed: binding=%u rule=%d",
-             static_cast<unsigned>(red_zone_status.binding),
-             red_zone_status.rule.has_value() ? static_cast<int>(*red_zone_status.rule) : -1);
+  const auto status = controller_config::apply_lighting_profile(
+      controller_config::kDefaultLightingProfile, led_actions, engine);
+  if (!status.ok()) {
+    ESP_LOGE(kTag,
+             "lighting profile setup failed: stage=%u validation=%u index=%u binding=%u "
+             "engine=%u",
+             static_cast<unsigned>(status.stage), static_cast<unsigned>(status.validation_error),
+             static_cast<unsigned>(status.index), static_cast<unsigned>(status.binding),
+             static_cast<unsigned>(status.engine));
     return false;
   }
   return true;

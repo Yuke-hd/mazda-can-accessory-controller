@@ -226,13 +226,20 @@ rules order as the firmware composition root. The helper returns a structured
 stage, operation status, failing index, and completed counts; it performs no
 logging, renderer or provider lifecycle operation, engine attach/detach, or
 polling. A composition root can use that result to fail off while retaining
-diagnostics about partial setup.
+diagnostics about partial setup. The WeAct firmware and future host replay
+consumers can therefore apply the same production profile without copying its
+turn, hazard or RPM values.
+
+The WeAct composition root invokes `kDefaultLightingProfile` and keeps the
+profile's full-strip RPM zone tied to the board capability with a compile-time
+assertion. This catches a board/profile pixel-count mismatch before firmware
+startup.
 
 Before CAN starts, the firmware performs this sequence:
 
-1. binds the mirrored effects: `left` to `RightTurn`, `right` to `LeftTurn`,
-   and `hazard` to both;
-2. adds the sink and three state rules, `vehicle.turn_state Equal left`,
+1. applies the shared profile's mirrored effects: `left` to `RightTurn`,
+   `right` to `LeftTurn`, and `hazard` to both;
+2. applies the profile's sink and three state rules, `vehicle.turn_state Equal left`,
    `right` and `hazard`, with the strict `Fresh` requirement;
 3. applies the RPM level fill through `controller_config::apply()`: it binds
    a `FillEffect` over the whole strip (`CenterOut`, priority 50, so the turn
@@ -274,9 +281,11 @@ engine nor this adapter learns about RPM; the fill only receives a 0.0..1.0
   a rejected rule, such as an empty or inverted range (`InvalidRange`), leaves
   the binding, so firmware treats any failure as fatal setup and fails off.
 
-The turn rules in `main.cpp` keep the strict `Fresh` requirement, and
-`tools/validate_local_argb_boundary.py` still forbids `FreshOrUnverified` and
-direct `add_range_rule()` and `add_sampled_state_rule()` calls there.
+The profile owns the strict `Fresh` turn requirement. The firmware composition
+root only invokes the profile application helper; it does not copy turn/RPM
+values or register bindings and rules directly. The boundary validator rejects
+`FreshOrUnverified`, direct sink/binding/rule calls, and duplicated profile
+configuration in the vehicle application.
 `tests/host/rpm_level_fill_tests.cpp` covers the defaults, endpoints, linear
 midpoints, clamping, a configured range, unverified and missing readings, and
 both failure paths.
@@ -340,12 +349,14 @@ above:
   and `telemetry.start()`, after the last `case` or `default` label, and on
   the success path after any `telemetry.stop()` or `engine.detach()`, before
   any return;
-- exactly the mirrored `kTurnRules` and `kEffectBindings` entries, applied
-  by the only bind and rule loops, with no `continue` or `break`;
+- one `controller_config::apply_lighting_profile()` call using
+  `kDefaultLightingProfile`, with no duplicated turn/RPM values or direct
+  sink, binding or rule registration in `main.cpp`;
 - no `FreshOrUnverified`.
 
 `tests/tools/validate_local_argb_boundary_test.py` covers these rules,
-including braceless, commented-out, nested, decoy-string, switch-label and
+including missing profile application, duplicated values, direct registration,
+braceless, commented-out, nested, decoy-string, switch-label and
 helper-wrapped bypasses.
 
 Hardware follow-up: engine evaluation and the LED publish now run on the
