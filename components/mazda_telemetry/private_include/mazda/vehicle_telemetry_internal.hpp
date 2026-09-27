@@ -23,8 +23,7 @@ public:
   // value-only public facade.
   static void emplace_host_service(VehicleTelemetry &facade, vehicle_core::MonotonicClock &clock,
                                    vehicle_telemetry::AcquisitionSource &source,
-                                   LightingSink &lighting_sink,
-                                   const TelemetryConfig &config = {},
+                                   LightingSink &lighting_sink, const TelemetryConfig &config = {},
                                    HostServiceOptions host_options = {}) noexcept;
   [[nodiscard]] static Result<std::size_t>
   drain_host_notifications(VehicleTelemetry &facade) noexcept;

@@ -414,7 +414,8 @@ VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &c
                                                  LightingSink &lighting_sink,
                                                  const TelemetryConfig config) noexcept
 #if !defined(ESP_PLATFORM)
-    : VehicleTelemetryService(clock, source, lighting_sink, config, HostServiceOptions{}) {}
+    : VehicleTelemetryService(clock, source, lighting_sink, config, HostServiceOptions{}) {
+}
 
 VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &clock,
                                                  vehicle_telemetry::AcquisitionSource &source,
@@ -425,7 +426,8 @@ VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &c
     : clock_(&clock), lighting_sink_(&lighting_sink), runtime_(source, *this, *this, clock),
       publication_(clock, config), config_(config)
 #if !defined(ESP_PLATFORM)
-      , host_options_(host_options)
+      ,
+      host_options_(host_options)
 #endif
 {
   initialize_registration_slots();
