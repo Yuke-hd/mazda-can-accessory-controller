@@ -86,6 +86,10 @@ void include_earlier(std::optional<vehicle_core::MonotonicTimestamp> &earliest,
     earliest = candidate;
 }
 
+[[nodiscard]] bool admitted(ReplayGate *gate, const vehicle_core::MonotonicTimestamp time) {
+  return gate == nullptr || gate->admit(time);
+}
+
 void record(ReplayEventSink *events, const vehicle_core::MonotonicTimestamp time,
             const ReplayEventKind kind) noexcept {
   if (events != nullptr)
@@ -96,13 +100,14 @@ void record(ReplayEventSink *events, const vehicle_core::MonotonicTimestamp time
 
 ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
                                 OutputStage &output, const ReplayScheduleOptions options,
-                                ReplayEventSink *events) {
-  return run_replay(std::move(frames), clock, output, SignalObservers{}, options, events);
+                                ReplayEventSink *events, ReplayGate *gate) {
+  return run_replay(std::move(frames), clock, output, SignalObservers{}, options, events, gate);
 }
 
 ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
                                 OutputStage &output, SignalObservers observers,
-                                const ReplayScheduleOptions options, ReplayEventSink *events) {
+                                const ReplayScheduleOptions options, ReplayEventSink *events,
+                                ReplayGate *gate) {
   Cadences cadences{options.output_tick_period_us.value_or(output.tick_period_us())};
   if (!observers.empty())
     cadences.signal_sample_period_us =
@@ -138,6 +143,10 @@ ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames, Replay
     include_earlier(due, output_tick);
     if (!due)
       break;
+    if (!admitted(gate, *due)) {
+      result.status = ReplayScheduleStatus::Interrupted;
+      break;
+    }
     if (!clock.advance_to(*due)) {
       result.status = ReplayScheduleStatus::ClockFailure;
       break;
@@ -219,6 +228,8 @@ ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames, Replay
 
   // The horizon is inclusive for scheduled work. Finish at the exact end
   // even when it falls between cadence ticks, before the final fail-off.
+  if (result.ok() && clock.now() < options.end_time_us && !admitted(gate, options.end_time_us))
+    result.status = ReplayScheduleStatus::Interrupted;
   if (result.ok() && !clock.advance_to(options.end_time_us))
     result.status = ReplayScheduleStatus::ClockFailure;
 

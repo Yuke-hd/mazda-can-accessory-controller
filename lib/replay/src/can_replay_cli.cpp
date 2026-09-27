@@ -63,6 +63,9 @@ void print_schedule_error(const replay::ReplayScheduleResult &schedule) {
       std::cerr << "; stop: " << controller_status_name(schedule.stop_status);
     std::cerr << '\n';
     break;
+  case replay::ReplayScheduleStatus::Interrupted:
+    std::cerr << "error: replay interrupted\n";
+    break;
   case replay::ReplayScheduleStatus::Ok:
     break;
   }

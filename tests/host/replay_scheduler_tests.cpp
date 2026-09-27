@@ -51,6 +51,30 @@ private:
   std::vector<replay::ReplayEvent> events_{};
 };
 
+// A replay-time gate that admits every due time until a limit, recording
+// each admitted time together with the events already processed.
+class RecordingGate final : public replay::ReplayGate {
+public:
+  RecordingGate(const RecordingEvents &events, const vehicle_core::MonotonicTimestamp limit)
+      : events_(events), limit_(limit) {}
+
+  bool admit(const vehicle_core::MonotonicTimestamp next_time_us) override {
+    requests_.push_back({next_time_us, events_.events().size()});
+    return next_time_us <= limit_;
+  }
+
+  struct Request {
+    vehicle_core::MonotonicTimestamp time_us;
+    std::size_t events_before;
+  };
+  [[nodiscard]] const std::vector<Request> &requests() const noexcept { return requests_; }
+
+private:
+  const RecordingEvents &events_;
+  vehicle_core::MonotonicTimestamp limit_;
+  std::vector<Request> requests_{};
+};
+
 gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp time_us,
                                  const std::uint32_t identifier,
                                  const std::initializer_list<std::uint8_t> bytes) {
@@ -328,4 +352,76 @@ TEST_CASE("maximum timestamp with sparse cadence completes without deadline wrap
   CHECK(result.timeout_publications == 1);
   CHECK(result.polled_samples == 2);
   CHECK(result.output_ticks == 2);
+}
+
+TEST_CASE("a gate is asked before the replay clock advances to each due time") {
+  const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
+  replay::ReplayClock clock;
+  RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
+  RecordingEvents events;
+  RecordingGate gate{events, std::numeric_limits<std::uint64_t>::max()};
+
+  const auto result = replay::run_replay(input, clock, stage, {120'000}, &events, &gate);
+
+  REQUIRE(result.ok());
+  REQUIRE_FALSE(gate.requests().empty());
+  vehicle_core::MonotonicTimestamp previous = 0;
+  for (const auto &request : gate.requests()) {
+    CHECK(request.time_us >= previous);
+    previous = request.time_us;
+    // Nothing at the requested time has been processed before admission.
+    for (std::size_t i = 0; i < request.events_before; ++i)
+      CHECK(events.events()[i].time_us < request.time_us);
+  }
+  CHECK(gate.requests().back().time_us == 120'000);
+}
+
+TEST_CASE("a gated replay is identical to an ungated replay") {
+  const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
+  replay::ReplayClock gated_clock;
+  replay::ReplayClock free_clock;
+  RecordingPixels gated_pixels{gated_clock};
+  RecordingPixels free_pixels{free_clock};
+  replay::LocalArgbOutputStage gated_stage{gated_pixels};
+  replay::LocalArgbOutputStage free_stage{free_pixels};
+  RecordingEvents gated_events;
+  RecordingEvents free_events;
+  RecordingGate gate{gated_events, std::numeric_limits<std::uint64_t>::max()};
+
+  REQUIRE(
+      replay::run_replay(input, gated_clock, gated_stage, {120'000}, &gated_events, &gate).ok());
+  REQUIRE(replay::run_replay(input, free_clock, free_stage, {120'000}, &free_events).ok());
+
+  REQUIRE(gated_events.events().size() == free_events.events().size());
+  for (std::size_t i = 0; i < free_events.events().size(); ++i) {
+    CHECK(gated_events.events()[i].time_us == free_events.events()[i].time_us);
+    CHECK(gated_events.events()[i].kind == free_events.events()[i].kind);
+  }
+  REQUIRE(gated_pixels.frames().size() == free_pixels.frames().size());
+  for (std::size_t i = 0; i < free_pixels.frames().size(); ++i) {
+    CHECK(gated_pixels.frames()[i].time_us == free_pixels.frames()[i].time_us);
+    CHECK(gated_pixels.frames()[i].pixels == free_pixels.frames()[i].pixels);
+  }
+}
+
+TEST_CASE("a refused due time interrupts the replay without advancing to it") {
+  const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
+  replay::ReplayClock clock;
+  RecordingPixels pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
+  RecordingEvents events;
+  RecordingGate gate{events, 20'000};
+
+  const auto result = replay::run_replay(input, clock, stage, {120'000}, &events, &gate);
+
+  CHECK(result.status == replay::ReplayScheduleStatus::Interrupted);
+  CHECK(result.stop_status == replay::ReplayControllerStatus::Ok);
+  CHECK(clock.now() == 20'000);
+  CHECK(result.frames_delivered == 2);
+  CHECK_FALSE(result.end_of_stream);
+  for (const auto &event : events.events())
+    CHECK(event.time_us <= 20'000);
+  REQUIRE_FALSE(pixels.frames().empty());
+  CHECK(is_black(pixels.frames().back().pixels));
 }
