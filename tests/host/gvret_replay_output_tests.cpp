@@ -1,0 +1,222 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "gvret/pixel_frame_output.hpp"
+#include "gvret/replay_scheduler.hpp"
+
+namespace {
+
+constexpr std::uint32_t kEngineDataId = 0x202;
+constexpr std::uint32_t kTurnSwitchId = 0x091;
+constexpr local_argb::Rgb kCyan{0, 16, 16};
+constexpr local_argb::Rgb kHalfCyan{0, 8, 8};
+constexpr local_argb::Rgb kAmber{128, 16, 0};
+constexpr local_argb::Rgb kRed{16, 0, 0};
+
+class GroupedPunct final : public std::numpunct<char> {
+protected:
+  char do_thousands_sep() const override { return ','; }
+  std::string do_grouping() const override { return "\3"; }
+};
+
+gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp timestamp_us,
+                                 const std::uint32_t identifier,
+                                 const std::initializer_list<std::uint8_t> bytes) {
+  gvret::TimedCanFrame timed{};
+  timed.relative_time_us = timestamp_us;
+  timed.frame.timestamp_us = timestamp_us;
+  timed.frame.identifier = identifier;
+  timed.frame.dlc = static_cast<std::uint8_t>(bytes.size());
+  std::copy(bytes.begin(), bytes.end(), timed.frame.data.begin());
+  return timed;
+}
+
+gvret::TimedCanFrame rpm(const vehicle_core::MonotonicTimestamp timestamp_us,
+                         const std::uint16_t raw_rpm_times_four) {
+  return timed_frame(timestamp_us, kEngineDataId,
+                     {static_cast<std::uint8_t>(raw_rpm_times_four >> 8),
+                      static_cast<std::uint8_t>(raw_rpm_times_four & 0xff), 0, 0, 0, 0, 0, 0});
+}
+
+gvret::TimedCanFrame turn(const vehicle_core::MonotonicTimestamp timestamp_us,
+                          const std::uint8_t state) {
+  return timed_frame(timestamp_us, kTurnSwitchId, {0, state, 0, 0, 0, 0, 0, 0});
+}
+
+const gvret::TimestampedPixelFrame &
+frame_at(const std::vector<gvret::TimestampedPixelFrame> &frames,
+         const vehicle_core::MonotonicTimestamp timestamp_us) {
+  const auto found =
+      std::find_if(frames.rbegin(), frames.rend(), [timestamp_us](const auto &frame) {
+        return frame.timestamp_us == timestamp_us;
+      });
+  REQUIRE(found != frames.rend());
+  return *found;
+}
+
+std::size_t count_color(const local_argb::PixelFrame &frame, const local_argb::Rgb color) {
+  return static_cast<std::size_t>(std::count(frame.begin(), frame.end(), color));
+}
+
+bool is_black(const local_argb::PixelFrame &frame) {
+  return std::all_of(frame.begin(), frame.end(),
+                     [](const auto pixel) { return pixel == local_argb::kBlack; });
+}
+
+} // namespace
+
+TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
+  gvret::ReplayClock clock;
+  gvret::TimestampedPixelFrameSink pixels{clock};
+
+  const auto result =
+      gvret::run_replay({rpm(0, 6500), rpm(100'000, 13'000)}, clock, pixels, {110'000});
+
+  REQUIRE(result.ok());
+  REQUIRE_FALSE(pixels.frames().empty());
+  CHECK(pixels.frames().front().timestamp_us == 0);
+  for (const auto &output : pixels.frames()) {
+    CHECK(output.timestamp_us <= 110'000);
+    CHECK(output.pixels.size() == 100);
+  }
+}
+
+TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and baseline output") {
+  gvret::ReplayClock clock;
+  gvret::TimestampedPixelFrameSink pixels{clock};
+  const std::vector<gvret::TimedCanFrame> input{
+      rpm(0, 6'500),        // 1,625 RPM: 24 full cyan + two half-bright pixels.
+      rpm(100'000, 13'000), // 3,250 RPM: half fill.
+      rpm(200'000, 26'000), // 6,500 RPM: full fill and red zone.
+      turn(300'000, 0x20),  // Vehicle left maps to strip right.
+      turn(400'000, 0x10),  // Vehicle right maps to strip left.
+      turn(500'000, 0x04),  // Hazard owns both turn regions.
+      turn(600'000, 0x00),  // Turn off, returning to the RPM baseline.
+  };
+
+  const auto result = gvret::run_replay(input, clock, pixels, {610'000});
+  REQUIRE(result.ok());
+
+  const auto &low = frame_at(pixels.frames(), 0).pixels;
+  CHECK(count_color(low, kCyan) == 24);
+  CHECK(count_color(low, kHalfCyan) == 2);
+
+  const auto &half = frame_at(pixels.frames(), 100'000).pixels;
+  CHECK(count_color(half, kCyan) == 50);
+
+  const auto &full = frame_at(pixels.frames(), 200'000).pixels;
+  CHECK(std::all_of(full.begin(), full.begin() + 35,
+                    [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(std::all_of(full.begin() + 35, full.begin() + 65,
+                    [](const auto pixel) { return pixel == kRed; }));
+  CHECK(
+      std::all_of(full.begin() + 65, full.end(), [](const auto pixel) { return pixel == kCyan; }));
+
+  const auto &left = frame_at(pixels.frames(), 300'000).pixels;
+  CHECK(left[65] == kAmber);
+  CHECK(left[66] == local_argb::kBlack);
+  CHECK(std::all_of(left.begin(), left.begin() + 35,
+                    [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(std::all_of(left.begin() + 66, left.end(),
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
+  CHECK(std::all_of(left.begin() + 35, left.begin() + 65,
+                    [](const auto pixel) { return pixel == kRed; }));
+
+  const auto &right = frame_at(pixels.frames(), 400'000).pixels;
+  CHECK(right[34] == kAmber);
+  CHECK(right[33] == local_argb::kBlack);
+  CHECK(std::all_of(right.begin(), right.begin() + 34,
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
+  CHECK(std::all_of(right.begin() + 65, right.end(),
+                    [](const auto pixel) { return pixel == kCyan; }));
+
+  const auto &hazard = frame_at(pixels.frames(), 500'000).pixels;
+  CHECK(hazard[34] == kAmber);
+  CHECK(hazard[65] == kAmber);
+  CHECK(std::all_of(hazard.begin() + 35, hazard.begin() + 65,
+                    [](const auto pixel) { return pixel == kRed; }));
+
+  const auto &baseline = frame_at(pixels.frames(), 600'000).pixels;
+  CHECK(baseline == full);
+}
+
+TEST_CASE("turn-only stale replay fails off after the inclusive freshness boundary") {
+  gvret::ReplayClock clock;
+  gvret::TimestampedPixelFrameSink pixels{clock};
+
+  const auto result = gvret::run_replay({turn(0, 0x20)}, clock, pixels, {260'000});
+
+  REQUIRE(result.ok());
+  CHECK(is_black(frame_at(pixels.frames(), 260'000).pixels));
+}
+
+TEST_CASE("transport silence leaves unavailable RPM output black") {
+  gvret::ReplayClock clock;
+  gvret::TimestampedPixelFrameSink pixels{clock};
+
+  const auto result = gvret::run_replay({}, clock, pixels, {1'000'000});
+
+  REQUIRE(result.ok());
+  CHECK(result.end_of_stream);
+  CHECK(result.polled_samples == 11);
+  REQUIRE_FALSE(pixels.frames().empty());
+  CHECK(std::all_of(pixels.frames().begin(), pixels.frames().end(),
+                    [](const auto &output) { return is_black(output.pixels); }));
+}
+
+TEST_CASE("repeated synthetic replay produces byte-identical JSONL output") {
+  const std::vector<gvret::TimedCanFrame> input{rpm(0, 6'500), rpm(100'000, 13'000),
+                                                turn(200'000, 0x20), turn(300'000, 0)};
+  std::ostringstream first_stream;
+  std::ostringstream second_stream;
+  gvret::ReplayClock first_clock;
+  gvret::ReplayClock second_clock;
+  gvret::JsonlPixelFrameSink first_pixels{first_clock, first_stream};
+  gvret::JsonlPixelFrameSink second_pixels{second_clock, second_stream};
+
+  REQUIRE(gvret::run_replay(input, first_clock, first_pixels, {310'000}).ok());
+  REQUIRE(gvret::run_replay(input, second_clock, second_pixels, {310'000}).ok());
+
+  CHECK(first_pixels.good());
+  CHECK(second_pixels.good());
+  CHECK(first_stream.str() == second_stream.str());
+  CHECK(first_stream.str().find("timestamp_us") != std::string::npos);
+  CHECK(first_stream.str().find("pixels") != std::string::npos);
+  CHECK(first_stream.str().find("0x202") == std::string::npos);
+  CHECK(first_stream.str().find("0x091") == std::string::npos);
+}
+
+TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
+  gvret::ReplayClock clock;
+  std::ostringstream output;
+  output.imbue(std::locale(output.getloc(), new GroupedPunct));
+  output << std::hex << std::showbase << std::setfill('x') << std::setw(8);
+  const auto flags = output.flags();
+  const auto fill = output.fill();
+  const auto width = output.width();
+  gvret::JsonlPixelFrameSink pixels{clock, output};
+  local_argb::PixelFrame frame = local_argb::kBlackFrame;
+  frame[0] = {128, 16, 16};
+
+  REQUIRE(pixels.write(frame));
+  CHECK(pixels.good());
+  CHECK(output.flags() == flags);
+  CHECK(output.fill() == fill);
+  CHECK(output.width() == width);
+  const std::string serialized = output.str();
+  CHECK(serialized.find("\"timestamp_us\":0") != std::string::npos);
+  CHECK(serialized.find("[128,16,16]") != std::string::npos);
+  CHECK(serialized.find("0x") == std::string::npos);
+  CHECK(serialized.find("x0") == std::string::npos);
+  CHECK(std::count(serialized.begin(), serialized.end(), '[') == 101);
+}

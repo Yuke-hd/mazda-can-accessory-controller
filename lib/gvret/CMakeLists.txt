@@ -62,8 +62,19 @@ else()
   target_compile_options(gvret_replay_scheduler PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(gvret_replay_output STATIC src/pixel_frame_output.cpp)
+target_include_directories(gvret_replay_output PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(gvret_replay_output PUBLIC gvret_parser local_argb)
+target_compile_features(gvret_replay_output PUBLIC cxx_std_17)
+
+if(MSVC)
+  target_compile_options(gvret_replay_output PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(gvret_replay_output PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 add_executable(gvret-replay src/gvret_replay.cpp)
-target_link_libraries(gvret-replay PRIVATE gvret_parser)
+target_link_libraries(gvret-replay PRIVATE gvret_replay_output gvret_replay_scheduler)
 target_compile_features(gvret-replay PRIVATE cxx_std_17)
 
 if(MSVC)

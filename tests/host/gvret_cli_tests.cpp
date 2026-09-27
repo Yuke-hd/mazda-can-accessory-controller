@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -118,6 +119,20 @@ CommandResult run_inspect(const std::filesystem::path &input_path, const std::st
   return result;
 }
 
+CommandResult run_render(const std::filesystem::path &input_path, const std::string_view bus,
+                         const std::string_view end_us, TemporaryPath &standard_output,
+                         TemporaryPath &standard_error) {
+  const std::string command =
+      shell_quote(g_replay_executable) + " render " + shell_quote(input_path) + " --bus " +
+      std::string(bus) + " --end-us " + std::string(end_us) + " > " +
+      shell_quote(standard_output.path()) + " 2> " + shell_quote(standard_error.path());
+  CommandResult result;
+  result.exit_code = std::system(command.c_str());
+  result.standard_output = read_file(standard_output.path());
+  result.standard_error = read_file(standard_error.path());
+  return result;
+}
+
 std::filesystem::path replay_executable_for(const char *test_executable) {
   const std::filesystem::path test_path =
       std::filesystem::absolute(std::filesystem::path(test_executable));
@@ -187,6 +202,55 @@ TEST_CASE("inspect command reports missing files without echoing their path") {
   CHECK(result.standard_output.empty());
   CHECK(result.standard_error == "error: unable to open GVRET input file\n");
   CHECK(result.standard_error.find(input.path().string()) == std::string::npos);
+}
+
+TEST_CASE("render command emits only relative timestamped 100-pixel JSONL") {
+  const TemporaryFile input("gvret-render-input",
+                            std::string(kHeader) +
+                                "\n123456789,00000202,false,0,8,32,C8,00,00,00,00,00,00\n" +
+                                "123556789,00000091,false,0,8,00,20,00,00,00,00,00,00\n");
+  TemporaryPath standard_output("gvret-render-stdout");
+  TemporaryPath standard_error("gvret-render-stderr");
+
+  const CommandResult result =
+      run_render(input.path(), "0", "110000", standard_output, standard_error);
+
+  REQUIRE(result.exit_code == 0);
+  CHECK(result.standard_error.empty());
+  REQUIRE_FALSE(result.standard_output.empty());
+  CHECK(result.standard_output.find("123456789") == std::string::npos);
+  CHECK(result.standard_output.find("123556789") == std::string::npos);
+  CHECK(result.standard_output.find("00000202") == std::string::npos);
+  CHECK(result.standard_output.find("00000091") == std::string::npos);
+  CHECK(result.standard_output.find("C8") == std::string::npos);
+
+  std::size_t line_count = 0;
+  std::size_t line_begin = 0;
+  while (line_begin < result.standard_output.size()) {
+    const auto line_end = result.standard_output.find('\n', line_begin);
+    REQUIRE(line_end != std::string::npos);
+    const auto line = result.standard_output.substr(line_begin, line_end - line_begin);
+    CHECK(line.find("{\"timestamp_us\":") == 0);
+    CHECK(line.find("\"pixels\":[") != std::string::npos);
+    CHECK(std::count(line.begin(), line.end(), '[') == 101);
+    ++line_count;
+    line_begin = line_end + 1;
+  }
+  CHECK(line_count >= 2);
+}
+
+TEST_CASE("render command requires an explicit bounded replay horizon") {
+  const TemporaryFile input("gvret-render-no-end",
+                            std::string(kHeader) + "\n123456789,00000202,false,0,0\n");
+  TemporaryPath standard_output("gvret-render-no-end-stdout");
+  TemporaryPath standard_error("gvret-render-no-end-stderr");
+  const std::string command =
+      shell_quote(g_replay_executable) + " render " + shell_quote(input.path()) + " --bus 0 > " +
+      shell_quote(standard_output.path()) + " 2> " + shell_quote(standard_error.path());
+
+  const int exit_code = std::system(command.c_str());
+  CHECK(exit_code != 0);
+  CHECK(read_file(standard_output.path()).empty());
 }
 
 int main(int argc, char **argv) {

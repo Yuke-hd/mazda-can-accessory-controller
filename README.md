@@ -149,6 +149,11 @@ startup logs, polarity, strip current, and fail-off behavior. Public evidence
 must not contain raw captures, VINs, credentials, precise location, or
 reconstructable trip data.
 
+Host replay output is available through
+[`gvret-replay render`](docs/development/mcan-67-pixel-frame-output.md). It
+emits only relative timestamps and 100 RGB pixel values as JSONL; supply an
+explicit replay horizon with `--end-us`.
+
 ## Architecture and Data Flow
 
 ```text
