@@ -1,13 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "controller_config/timing.hpp"
-#include "gvret/replay_controller.hpp"
 #include "mazda/facade_contracts.hpp"
+#include "replay/controller.hpp"
 
-namespace gvret {
+namespace replay {
 
 enum class ReplayScheduleStatus : std::uint8_t {
   Ok,
@@ -35,9 +36,8 @@ struct ReplayScheduleOptions {
   // when freshness, polled rules, or animation must continue after EOF.
   vehicle_core::MonotonicTimestamp end_time_us{0};
   vehicle_core::Microseconds availability_period_us{mazda::kDefaultAvailabilityServiceTargetUs};
-  // Output-stage cadence. It belongs to the local ARGB stage (its worker
-  // pass), not to replay; the stage is currently RendererController (#92).
-  vehicle_core::Microseconds output_tick_period_us{local_argb::kSupervisorPollUs};
+  // Output-stage cadence. Unset uses the stage's own tick_period_us().
+  std::optional<vehicle_core::Microseconds> output_tick_period_us{};
   vehicle_core::Microseconds poll_period_us{controller_config::kPolledRuleSamplePeriodUs};
 };
 
@@ -60,15 +60,15 @@ struct ReplayScheduleResult {
 // its worker-thread publication. A loaded host can therefore return
 // SynchronizationTimeout for an otherwise identical input; callers should
 // treat that status as host scheduling failure, not replay-time divergence.
-// The input must be the normalized, ordered sequence from prepare_replay(). At a
+// The input must be the normalized, ordered sequence from gvret::prepare_replay(). At a
 // shared timestamp, all frames are delivered in source order, followed by
 // EOF (once), a due availability timeout, a polled-rule sample, and an
 // output-stage tick. Poll and output ticks run at time zero; availability
 // begins after its first period.
-// Invalid input/options are rejected before the controller or sink is started.
-[[nodiscard]] ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &clock,
-                                              local_argb::PixelFrameSink &pixels,
+// Invalid input/options are rejected before the controller or stage is started.
+[[nodiscard]] ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames,
+                                              ReplayClock &clock, OutputStage &output,
                                               ReplayScheduleOptions options,
                                               ReplayEventSink *events = nullptr);
 
-} // namespace gvret
+} // namespace replay

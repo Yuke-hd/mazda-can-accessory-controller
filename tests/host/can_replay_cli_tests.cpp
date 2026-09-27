@@ -145,7 +145,7 @@ std::filesystem::path replay_executable_for(const char *test_executable) {
   const std::filesystem::path test_path =
       std::filesystem::absolute(std::filesystem::path(test_executable));
   const auto build_root = test_path.parent_path().parent_path().parent_path();
-  std::filesystem::path replay = build_root / "lib" / "gvret" / "gvret-replay";
+  std::filesystem::path replay = build_root / "lib" / "replay" / "can-replay";
 #ifdef _WIN32
   if (!std::filesystem::exists(replay)) {
     replay += ".exe";

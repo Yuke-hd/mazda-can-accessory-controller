@@ -1,10 +1,10 @@
-#include "gvret/replay_acquisition_source.hpp"
+#include "replay/acquisition_source.hpp"
 
 #include <utility>
 
-namespace gvret {
+namespace replay {
 
-ReplayAcquisitionSource::ReplayAcquisitionSource(std::vector<TimedCanFrame> frames,
+ReplayAcquisitionSource::ReplayAcquisitionSource(std::vector<gvret::TimedCanFrame> frames,
                                                  ReplayClock &clock)
     : frames_(std::move(frames)), clock_(clock) {}
 
@@ -62,4 +62,4 @@ ReplayAcquisitionSource::next_frame_time() const noexcept {
   return frames_[next_frame_].relative_time_us;
 }
 
-} // namespace gvret
+} // namespace replay

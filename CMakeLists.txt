@@ -66,6 +66,7 @@ add_subdirectory(lib/action_engine)
 add_subdirectory(components/local_argb_actions)
 add_subdirectory(components/controller_config)
 add_subdirectory(components/mazda_telemetry)
+add_subdirectory(lib/replay)
 
 if(MAZDA_BUILD_HOST_TESTS)
   enable_testing()

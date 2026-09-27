@@ -4,7 +4,7 @@
 
 #include "vehicle_core/time.hpp"
 
-namespace gvret {
+namespace replay {
 
 // A host-controlled monotonic clock for deterministic replay. The clock never
 // reads wall time or advances itself; a replay scheduler decides when time may
@@ -23,4 +23,4 @@ private:
   std::atomic<vehicle_core::MonotonicTimestamp> now_us_;
 };
 
-} // namespace gvret
+} // namespace replay

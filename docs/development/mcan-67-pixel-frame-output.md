@@ -4,7 +4,7 @@ The host replay CLI can expose the production renderer's deduplicated writes
 as a machine-readable JSON-lines stream:
 
 ```text
-gvret-replay render <capture.csv> --bus <number> --end-us <number>
+can-replay render <capture.csv> --bus <number> --end-us <number>
 ```
 
 The replay horizon is required and inclusive. The optional cadence settings
@@ -12,7 +12,7 @@ are bounded by the scheduler and default to the production host model:
 
 ```text
 --availability-us <number>  default 10000
---output-tick-us <number>   default 10000
+--output-tick-us <number>   default: the output stage tick period (10000)
 --poll-us <number>          default 100000
 ```
 
@@ -50,12 +50,29 @@ fixtures are the only output safe to publish.
 
 The scheduler processes equal-time events in this order: all CAN frames in
 source order, end of stream, availability timeout, polled-rule sample, and
-renderer tick. No wall-clock sleep or playback pacing is used. The output
+output-stage tick. No wall-clock sleep or playback pacing is used. The output
 sink can also be used directly by host tests to retain timestamped
 `PixelFrame` values in memory.
 
+## Output stage
+
+The replay controller and scheduler do not name the local ARGB renderer. They
+drive an injected `replay::OutputStage` (`replay/output_stage.hpp`) through a
+fixed lifecycle: `configure` registers the stage's `ActionSink`s and rules on
+the controller's `ActionEngine`, then `start`, zero or more `tick(now)` calls,
+`fail_off(now)` on a replay fault, and a final `stop(now)`. Actions reach the
+stage only through `action_engine::ActionSink`. When `--output-tick-us` is
+omitted, the scheduler uses the stage's `tick_period_us()`.
+
+`replay::LocalArgbOutputStage` (`replay/local_argb_stage.hpp`) is the only
+stage that wires the default lighting profile, `LedActionSink`, and the
+private renderer. The CLI composes it with the JSONL pixel sink; host tests
+compose it with the in-memory timestamped sink. A fake stage in
+`tests/host/replay_output_stage_tests.cpp` checks the lifecycle sequence
+without any local ARGB type.
+
 The representative scenario in
-`tests/host/gvret_replay_output_tests.cpp` uses synthetic frames only. It
+`tests/host/replay_output_tests.cpp` uses synthetic frames only. It
 covers startup and low/half/full RPM fill, the red-zone overlay, mirrored
 left/right turns, hazard, turn ownership and priority, return to baseline,
 stale turn fail-off, and byte-identical repeated JSONL output. These tests are

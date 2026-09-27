@@ -1,6 +1,7 @@
 #include "gvret/file_loader.hpp"
-#include "gvret/pixel_frame_output.hpp"
-#include "gvret/replay_scheduler.hpp"
+#include "replay/local_argb_stage.hpp"
+#include "replay/pixel_frame_output.hpp"
+#include "replay/scheduler.hpp"
 
 #include <charconv>
 #include <cstdint>
@@ -18,55 +19,55 @@ struct Arguments {
   Command command{Command::Inspect};
   std::filesystem::path input_path;
   std::uint32_t bus{0};
-  gvret::ReplayScheduleOptions schedule{};
+  replay::ReplayScheduleOptions schedule{};
   bool saw_end_time{false};
 };
 
-const char *controller_status_name(const gvret::ReplayControllerStatus status) {
+const char *controller_status_name(const replay::ReplayControllerStatus status) {
   switch (status) {
-  case gvret::ReplayControllerStatus::Ok:
+  case replay::ReplayControllerStatus::Ok:
     return "ok";
-  case gvret::ReplayControllerStatus::InvalidState:
+  case replay::ReplayControllerStatus::InvalidState:
     return "invalid state";
-  case gvret::ReplayControllerStatus::ConfigurationFailed:
+  case replay::ReplayControllerStatus::ConfigurationFailed:
     return "configuration failed";
-  case gvret::ReplayControllerStatus::SynchronizationTimeout:
+  case replay::ReplayControllerStatus::SynchronizationTimeout:
     return "synchronization timeout";
-  case gvret::ReplayControllerStatus::TelemetryFault:
+  case replay::ReplayControllerStatus::TelemetryFault:
     return "telemetry fault";
-  case gvret::ReplayControllerStatus::RendererFault:
-    return "renderer fault";
+  case replay::ReplayControllerStatus::OutputFault:
+    return "output fault";
   }
   return "unknown controller failure";
 }
 
-void print_schedule_error(const gvret::ReplayScheduleResult &schedule) {
+void print_schedule_error(const replay::ReplayScheduleResult &schedule) {
   switch (schedule.status) {
-  case gvret::ReplayScheduleStatus::InvalidInput:
+  case replay::ReplayScheduleStatus::InvalidInput:
     std::cerr << "error: invalid replay input\n";
     break;
-  case gvret::ReplayScheduleStatus::InvalidOptions:
+  case replay::ReplayScheduleStatus::InvalidOptions:
     std::cerr << "error: invalid replay options: --end-us must cover the capture duration, "
                  "and cadence periods must be non-zero\n";
     break;
-  case gvret::ReplayScheduleStatus::ClockFailure:
+  case replay::ReplayScheduleStatus::ClockFailure:
     std::cerr << "error: replay clock failure\n";
     break;
-  case gvret::ReplayScheduleStatus::ControllerFailure:
+  case replay::ReplayScheduleStatus::ControllerFailure:
     std::cerr << "error: replay controller failure: "
               << controller_status_name(schedule.controller_status);
-    if (schedule.stop_status != gvret::ReplayControllerStatus::Ok)
+    if (schedule.stop_status != replay::ReplayControllerStatus::Ok)
       std::cerr << "; stop: " << controller_status_name(schedule.stop_status);
     std::cerr << '\n';
     break;
-  case gvret::ReplayScheduleStatus::Ok:
+  case replay::ReplayScheduleStatus::Ok:
     break;
   }
 }
 
 void print_usage(std::ostream &stream) {
-  stream << "Usage: gvret-replay inspect <capture.csv> [--bus <number>]\n"
-         << "       gvret-replay render <capture.csv> --end-us <number> [options]\n"
+  stream << "Usage: can-replay inspect <gvret-capture.csv> [--bus <number>]\n"
+         << "       can-replay render <gvret-capture.csv> --end-us <number> [options]\n"
          << "Options: --bus <number> --availability-us <number> --output-tick-us <number> "
             "--poll-us <number>\n";
 }
@@ -151,12 +152,16 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
                                                           : saw_poll;
       if (saw_period)
         return false;
-      auto &period = argument == "--availability-us"  ? arguments.schedule.availability_period_us
-                     : argument == "--output-tick-us" ? arguments.schedule.output_tick_period_us
-                                                      : arguments.schedule.poll_period_us;
+      vehicle_core::Microseconds period = 0;
       if (!parse_period(argv[++index], period)) {
         return false;
       }
+      if (argument == "--availability-us")
+        arguments.schedule.availability_period_us = period;
+      else if (argument == "--output-tick-us")
+        arguments.schedule.output_tick_period_us = period;
+      else
+        arguments.schedule.poll_period_us = period;
       saw_period = true;
       continue;
     }
@@ -211,9 +216,10 @@ int main(const int argc, char **argv) {
     return 0;
   }
 
-  gvret::ReplayClock clock;
-  gvret::JsonlPixelFrameSink pixels{clock, std::cout};
-  const auto schedule = gvret::run_replay(replay.frames, clock, pixels, arguments.schedule);
+  replay::ReplayClock clock;
+  replay::JsonlPixelFrameSink pixels{clock, std::cout};
+  replay::LocalArgbOutputStage output{pixels};
+  const auto schedule = replay::run_replay(replay.frames, clock, output, arguments.schedule);
   if (!schedule.ok()) {
     print_schedule_error(schedule);
     return 1;

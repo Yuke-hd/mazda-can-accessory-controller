@@ -11,10 +11,11 @@
 #include <string>
 #include <vector>
 
-#include "gvret/pixel_frame_output.hpp"
-#include "gvret/replay_scheduler.hpp"
 #include "local_argb/local_argb.h"
 #include "mazda/freshness.hpp"
+#include "replay/local_argb_stage.hpp"
+#include "replay/pixel_frame_output.hpp"
+#include "replay/scheduler.hpp"
 
 namespace {
 
@@ -55,8 +56,8 @@ gvret::TimedCanFrame turn(const vehicle_core::MonotonicTimestamp timestamp_us,
   return timed_frame(timestamp_us, kTurnSwitchId, {0, state, 0, 0, 0, 0, 0, 0});
 }
 
-const gvret::TimestampedPixelFrame &
-frame_at(const std::vector<gvret::TimestampedPixelFrame> &frames,
+const replay::TimestampedPixelFrame &
+frame_at(const std::vector<replay::TimestampedPixelFrame> &frames,
          const vehicle_core::MonotonicTimestamp timestamp_us) {
   const auto found =
       std::find_if(frames.rbegin(), frames.rend(), [timestamp_us](const auto &frame) {
@@ -79,11 +80,12 @@ bool is_black(const local_argb::PixelFrame &frame) {
 
 TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
   static_assert(local_argb::kLedCount == 100);
-  gvret::ReplayClock clock;
-  gvret::TimestampedPixelFrameSink pixels{clock};
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
 
   const auto result =
-      gvret::run_replay({rpm(0, 6500), rpm(100'000, 13'000)}, clock, pixels, {110'000});
+      replay::run_replay({rpm(0, 6500), rpm(100'000, 13'000)}, clock, stage, {110'000});
 
   REQUIRE(result.ok());
   REQUIRE_FALSE(pixels.frames().empty());
@@ -95,8 +97,9 @@ TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
 }
 
 TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and baseline output") {
-  gvret::ReplayClock clock;
-  gvret::TimestampedPixelFrameSink pixels{clock};
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
   const std::vector<gvret::TimedCanFrame> input{
       rpm(0, 6'500),        // 1,625 RPM: 24 full cyan + two half-bright pixels.
       rpm(50'000, 10'000),  // 2,500 RPM: intermediate ramp point.
@@ -108,10 +111,10 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
       turn(600'000, 0x00),  // Turn off, returning to the RPM baseline.
   };
 
-  gvret::ReplayScheduleOptions options{};
+  replay::ReplayScheduleOptions options{};
   options.end_time_us = 610'000;
   options.poll_period_us = 50'000;
-  const auto result = gvret::run_replay(input, clock, pixels, options);
+  const auto result = replay::run_replay(input, clock, stage, options);
   REQUIRE(result.ok());
   REQUIRE_FALSE(pixels.frames().empty());
   CHECK(is_black(pixels.frames().front().pixels));
@@ -178,21 +181,23 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
 }
 
 TEST_CASE("turn-only stale replay fails off after the inclusive freshness boundary") {
-  gvret::ReplayClock clock;
-  gvret::TimestampedPixelFrameSink pixels{clock};
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
 
   constexpr auto kStaleCheckTimeUs = mazda::kTurnFreshnessTimeoutUs + local_argb::kSupervisorPollUs;
-  const auto result = gvret::run_replay({turn(0, 0x20)}, clock, pixels, {kStaleCheckTimeUs});
+  const auto result = replay::run_replay({turn(0, 0x20)}, clock, stage, {kStaleCheckTimeUs});
 
   REQUIRE(result.ok());
   CHECK(is_black(frame_at(pixels.frames(), kStaleCheckTimeUs).pixels));
 }
 
 TEST_CASE("transport silence leaves unavailable RPM output black") {
-  gvret::ReplayClock clock;
-  gvret::TimestampedPixelFrameSink pixels{clock};
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
 
-  const auto result = gvret::run_replay({}, clock, pixels, {1'000'000});
+  const auto result = replay::run_replay({}, clock, stage, {1'000'000});
 
   REQUIRE(result.ok());
   CHECK(result.end_of_stream);
@@ -207,13 +212,15 @@ TEST_CASE("repeated synthetic replay produces byte-identical JSONL output") {
                                                 turn(200'000, 0x20), turn(300'000, 0)};
   std::ostringstream first_stream;
   std::ostringstream second_stream;
-  gvret::ReplayClock first_clock;
-  gvret::ReplayClock second_clock;
-  gvret::JsonlPixelFrameSink first_pixels{first_clock, first_stream};
-  gvret::JsonlPixelFrameSink second_pixels{second_clock, second_stream};
+  replay::ReplayClock first_clock;
+  replay::ReplayClock second_clock;
+  replay::JsonlPixelFrameSink first_pixels{first_clock, first_stream};
+  replay::LocalArgbOutputStage first_stage{first_pixels};
+  replay::JsonlPixelFrameSink second_pixels{second_clock, second_stream};
+  replay::LocalArgbOutputStage second_stage{second_pixels};
 
-  REQUIRE(gvret::run_replay(input, first_clock, first_pixels, {310'000}).ok());
-  REQUIRE(gvret::run_replay(input, second_clock, second_pixels, {310'000}).ok());
+  REQUIRE(replay::run_replay(input, first_clock, first_stage, {310'000}).ok());
+  REQUIRE(replay::run_replay(input, second_clock, second_stage, {310'000}).ok());
 
   CHECK(first_pixels.good());
   CHECK(second_pixels.good());
@@ -225,14 +232,15 @@ TEST_CASE("repeated synthetic replay produces byte-identical JSONL output") {
 }
 
 TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   std::ostringstream output;
   output.imbue(std::locale(output.getloc(), new GroupedPunct));
   output << std::hex << std::showbase << std::setfill('x') << std::setw(8);
   const auto flags = output.flags();
   const auto fill = output.fill();
   const auto width = output.width();
-  gvret::JsonlPixelFrameSink pixels{clock, output};
+  replay::JsonlPixelFrameSink pixels{clock, output};
+  replay::LocalArgbOutputStage stage{pixels};
   local_argb::PixelFrame frame = local_argb::kBlackFrame;
   frame[0] = {128, 16, 16};
 
@@ -250,9 +258,10 @@ TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
 }
 
 TEST_CASE("JSONL stream starts with one header and types every record") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   std::ostringstream output;
-  gvret::JsonlPixelFrameSink pixels{clock, output};
+  replay::JsonlPixelFrameSink pixels{clock, output};
+  replay::LocalArgbOutputStage stage{pixels};
 
   REQUIRE(pixels.write_header());
   REQUIRE(pixels.write_header());
@@ -273,9 +282,10 @@ TEST_CASE("JSONL stream starts with one header and types every record") {
 }
 
 TEST_CASE("first pixel write emits the header implicitly") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   std::ostringstream output;
-  gvret::JsonlPixelFrameSink pixels{clock, output};
+  replay::JsonlPixelFrameSink pixels{clock, output};
+  replay::LocalArgbOutputStage stage{pixels};
 
   REQUIRE(pixels.write(local_argb::kBlackFrame));
 
@@ -285,9 +295,10 @@ TEST_CASE("first pixel write emits the header implicitly") {
 }
 
 TEST_CASE("JSONL stream ends with a completion marker") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   std::ostringstream output;
-  gvret::JsonlPixelFrameSink pixels{clock, output};
+  replay::JsonlPixelFrameSink pixels{clock, output};
+  replay::LocalArgbOutputStage stage{pixels};
 
   REQUIRE(pixels.write(local_argb::kBlackFrame));
   REQUIRE(pixels.write_end());

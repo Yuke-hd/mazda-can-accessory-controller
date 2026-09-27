@@ -11,7 +11,9 @@
 #include <utility>
 #include <vector>
 
-#include "gvret/replay_controller.hpp"
+#include "local_argb/local_argb.h"
+#include "replay/controller.hpp"
+#include "replay/local_argb_stage.hpp"
 
 namespace {
 
@@ -83,86 +85,90 @@ bool region_has_color(const local_argb::PixelFrame &frame, const std::size_t sta
 
 TEST_CASE(
     "timestamp-zero turn replay preserves startup black then renders production turn output") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn()}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn()}, clock, stage};
 
   CHECK(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{0});
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
   REQUIRE(pixels.frames().size() == 1);
   CHECK(is_black(pixels.frames().back()));
 
   const auto step = controller.process_next_frame();
-  REQUIRE(step.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(step.input == gvret::ReplayInputResult::Frame);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(step.status == replay::ReplayControllerStatus::Ok);
+  CHECK(step.input == replay::ReplayInputResult::Frame);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
 
   const auto &frame = pixels.frames().back();
   CHECK_FALSE(region_has_color(frame, 0, local_argb::kTurnLedCount));
   CHECK(region_has_color(frame, local_argb::kRightTurnLedStart, local_argb::kTurnLedCount));
   CHECK_FALSE(controller.next_frame_time().has_value());
 
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
   CHECK(is_black(pixels.frames().back()));
 }
 
 TEST_CASE("a frame scheduled in the future is rejected without consuming or rendering it") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn(100)}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn(100)}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
   REQUIRE(pixels.frames().size() == 1);
   const auto before = pixels.frames().size();
 
   const auto not_due = controller.process_next_frame();
-  CHECK(not_due.status == gvret::ReplayControllerStatus::InvalidState);
-  CHECK(not_due.input == gvret::ReplayInputResult::Timeout);
+  CHECK(not_due.status == replay::ReplayControllerStatus::InvalidState);
+  CHECK(not_due.input == replay::ReplayInputResult::Timeout);
   CHECK(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{100});
   CHECK(controller.running());
   CHECK(pixels.frames().size() == before);
 
   REQUIRE(clock.advance_to(100));
   const auto frame = controller.process_next_frame();
-  REQUIRE(frame.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(frame.input == gvret::ReplayInputResult::Frame);
+  REQUIRE(frame.status == replay::ReplayControllerStatus::Ok);
+  CHECK(frame.input == replay::ReplayInputResult::Frame);
   CHECK_FALSE(controller.next_frame_time().has_value());
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("sequential replay frames each publish once without drifting the barrier epoch") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn(0), half_rpm(1'000)}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn(0), half_rpm(1'000)}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
   REQUIRE(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{1'000});
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   REQUIRE(pixels.frames().size() == 2);
   const auto first_frame = pixels.frames().back();
   CHECK(region_has_color(first_frame, local_argb::kRightTurnLedStart, local_argb::kTurnLedCount));
 
   REQUIRE(clock.advance_to(1'000));
   const auto second_step = controller.process_next_frame();
-  REQUIRE(second_step.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(second_step.input == gvret::ReplayInputResult::Frame);
+  REQUIRE(second_step.status == replay::ReplayControllerStatus::Ok);
+  CHECK(second_step.input == replay::ReplayInputResult::Frame);
   CHECK_FALSE(controller.next_frame_time().has_value());
-  REQUIRE(controller.sample_polled_rules() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.sample_polled_rules() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   REQUIRE(pixels.frames().size() == 3);
   CHECK(colored_pixels(pixels.frames().back()) > colored_pixels(first_frame));
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("destroying a running replay controller fails the output off") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
+  replay::LocalArgbOutputStage stage{pixels};
   {
-    gvret::ReplayController controller{{left_turn()}, clock, pixels};
-    REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-    REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
-    REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+    replay::ReplayController controller{{left_turn()}, clock, stage};
+    REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+    REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
+    REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
     REQUIRE_FALSE(is_black(pixels.frames().back()));
   }
 
@@ -173,11 +179,12 @@ TEST_CASE("destroying a running replay controller fails the output off") {
 TEST_CASE("zero and maximum synchronization timeouts fail configuration before starting") {
   for (const auto timeout :
        {vehicle_core::Microseconds{0}, std::numeric_limits<vehicle_core::Microseconds>::max()}) {
-    gvret::ReplayClock clock;
+    replay::ReplayClock clock;
     RecordingPixelSink pixels;
-    gvret::ReplayController controller{{left_turn()}, clock, pixels, timeout};
+    replay::LocalArgbOutputStage stage{pixels};
+    replay::ReplayController controller{{left_turn()}, clock, stage, timeout};
 
-    CHECK(controller.start() == gvret::ReplayControllerStatus::ConfigurationFailed);
+    CHECK(controller.start() == replay::ReplayControllerStatus::ConfigurationFailed);
     CHECK_FALSE(controller.running());
   }
 }
@@ -186,106 +193,113 @@ TEST_CASE("largest chrono microseconds timeout permits immediate timeout publica
   using TimeoutRep = std::chrono::microseconds::rep;
   const auto timeout =
       static_cast<vehicle_core::Microseconds>(std::numeric_limits<TimeoutRep>::max());
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{}, clock, pixels, timeout};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{}, clock, stage, timeout};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
   const auto step = controller.process_timeout();
-  CHECK(step.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(step.input == gvret::ReplayInputResult::Timeout);
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(step.status == replay::ReplayControllerStatus::Ok);
+  CHECK(step.input == replay::ReplayInputResult::Timeout);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("production RPM range rule emits a half-strip SetLevel through the real renderer") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{half_rpm()}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{half_rpm()}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
-  REQUIRE(controller.sample_polled_rules() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
+  REQUIRE(controller.sample_polled_rules() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
 
   CHECK(colored_pixels(pixels.frames().back()) == 50);
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("an explicit timeout publication makes a held turn stale and renders black") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn()}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn()}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   REQUIRE_FALSE(is_black(pixels.frames().back()));
 
   REQUIRE(clock.advance_to(250'001));
   const auto timeout = controller.process_timeout();
-  REQUIRE(timeout.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(timeout.input == gvret::ReplayInputResult::Timeout);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(timeout.status == replay::ReplayControllerStatus::Ok);
+  CHECK(timeout.input == replay::ReplayInputResult::Timeout);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   CHECK(is_black(pixels.frames().back()));
 
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
 }
 
 TEST_CASE("empty replay supports timeout work and remains one-shot after clean stop") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
   CHECK_FALSE(controller.next_frame_time().has_value());
   const auto end = controller.process_next_frame();
-  REQUIRE(end.status == gvret::ReplayControllerStatus::Ok);
-  CHECK(end.input == gvret::ReplayInputResult::EndOfStream);
-  CHECK(controller.process_timeout().input == gvret::ReplayInputResult::Timeout);
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
-  CHECK(controller.start() == gvret::ReplayControllerStatus::InvalidState);
+  REQUIRE(end.status == replay::ReplayControllerStatus::Ok);
+  CHECK(end.input == replay::ReplayInputResult::EndOfStream);
+  CHECK(controller.process_timeout().input == replay::ReplayInputResult::Timeout);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
+  CHECK(controller.start() == replay::ReplayControllerStatus::InvalidState);
 }
 
 TEST_CASE("stop releases the Runtime waiting at the input gate with a frozen clock") {
-  gvret::ReplayClock clock{9'000'000};
+  replay::ReplayClock clock{9'000'000};
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
   CHECK(controller.running());
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
   CHECK(clock.now() == 9'000'000);
   CHECK(is_black(pixels.frames().back()));
 }
 
 TEST_CASE("renderer failure attempts black and stop keeps the host output failed off") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn()}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn()}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
   pixels.fail_next_write();
-  CHECK(controller.render() == gvret::ReplayControllerStatus::RendererFault);
+  CHECK(controller.tick_output() == replay::ReplayControllerStatus::OutputFault);
   CHECK_FALSE(controller.running());
   CHECK(is_black(pixels.frames().back()));
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::Ok);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
   CHECK(is_black(pixels.frames().back()));
 }
 
 TEST_CASE("source fault publication completes before faulted telemetry stops") {
-  gvret::ReplayClock clock;
+  replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  gvret::ReplayController controller{{left_turn()}, clock, pixels};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayController controller{{left_turn()}, clock, stage};
 
-  REQUIRE(controller.start() == gvret::ReplayControllerStatus::Ok);
-  REQUIRE(controller.process_next_frame().input == gvret::ReplayInputResult::Frame);
-  REQUIRE(controller.render() == gvret::ReplayControllerStatus::Ok);
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().input == replay::ReplayInputResult::Frame);
+  REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   REQUIRE_FALSE(is_black(pixels.frames().back()));
   const auto fault = controller.process_source_fault();
-  CHECK(fault.status == gvret::ReplayControllerStatus::TelemetryFault);
-  CHECK(fault.input == gvret::ReplayInputResult::Fault);
+  CHECK(fault.status == replay::ReplayControllerStatus::TelemetryFault);
+  CHECK(fault.input == replay::ReplayInputResult::Fault);
   CHECK(is_black(pixels.frames().back()));
-  CHECK(controller.stop() == gvret::ReplayControllerStatus::TelemetryFault);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::TelemetryFault);
   CHECK(is_black(pixels.frames().back()));
 }

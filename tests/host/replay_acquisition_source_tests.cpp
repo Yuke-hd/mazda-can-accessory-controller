@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 
-#include "gvret/replay_acquisition_source.hpp"
+#include "replay/acquisition_source.hpp"
 
 namespace {
 
@@ -20,8 +20,8 @@ gvret::TimedCanFrame timed_frame(const vehicle_core::Microseconds time_us,
 } // namespace
 
 TEST_CASE("empty replay times out and reports end of stream") {
-  gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{{}, clock};
+  replay::ReplayClock clock;
+  replay::ReplayAcquisitionSource source{{}, clock};
   vehicle_core::RawCanFrame frame{};
 
   CHECK(source.start().ok());
@@ -31,8 +31,8 @@ TEST_CASE("empty replay times out and reports end of stream") {
 }
 
 TEST_CASE("one frame is delivered at its scheduled clock time") {
-  gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{{timed_frame(10, 0x101)}, clock};
+  replay::ReplayClock clock;
+  replay::ReplayAcquisitionSource source{{timed_frame(10, 0x101)}, clock};
   vehicle_core::RawCanFrame frame{};
 
   REQUIRE(source.start().ok());
@@ -50,8 +50,8 @@ TEST_CASE("one frame is delivered at its scheduled clock time") {
 }
 
 TEST_CASE("multiple timed frames wait for the clock and preserve equal time order") {
-  gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{
+  replay::ReplayClock clock;
+  replay::ReplayAcquisitionSource source{
       {timed_frame(0, 0x201), timed_frame(5, 0x202), timed_frame(5, 0x203), timed_frame(10, 0x204)},
       clock};
   vehicle_core::RawCanFrame frame{};
@@ -74,8 +74,8 @@ TEST_CASE("multiple timed frames wait for the clock and preserve equal time orde
 }
 
 TEST_CASE("next scheduled time can be inspected without consuming input") {
-  gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{{timed_frame(25, 0x251), timed_frame(75, 0x252)}, clock};
+  replay::ReplayClock clock;
+  replay::ReplayAcquisitionSource source{{timed_frame(25, 0x251), timed_frame(75, 0x252)}, clock};
   vehicle_core::RawCanFrame frame{};
 
   REQUIRE(source.start().ok());
@@ -93,8 +93,8 @@ TEST_CASE("next scheduled time can be inspected without consuming input") {
 }
 
 TEST_CASE("source start and stop enforce one-shot lifecycle") {
-  gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{{timed_frame(0, 0x301), timed_frame(10, 0x302)}, clock};
+  replay::ReplayClock clock;
+  replay::ReplayAcquisitionSource source{{timed_frame(0, 0x301), timed_frame(10, 0x302)}, clock};
   vehicle_core::RawCanFrame frame{};
 
   CHECK(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::NotStarted);

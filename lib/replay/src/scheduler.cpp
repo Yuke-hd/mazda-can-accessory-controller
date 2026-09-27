@@ -1,11 +1,11 @@
-#include "gvret/replay_scheduler.hpp"
+#include "replay/scheduler.hpp"
 
 #include <cstddef>
 #include <limits>
 #include <optional>
 #include <utility>
 
-namespace gvret {
+namespace replay {
 namespace {
 
 // Bounds generated cadence work with a tiny period before any controller or
@@ -13,7 +13,9 @@ namespace {
 // caller, so they do not consume this schedule-event budget.
 constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
 
-[[nodiscard]] bool fits_event_budget(const ReplayScheduleOptions options) noexcept {
+[[nodiscard]] bool
+fits_event_budget(const ReplayScheduleOptions options,
+                  const vehicle_core::Microseconds output_tick_period_us) noexcept {
   std::uint64_t remaining = kMaximumScheduledEvents - 1; // EOF
   const auto fits = [&remaining](const std::uint64_t count) {
     if (count > remaining)
@@ -28,17 +30,18 @@ constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
     return true;
   };
   const auto availability = options.end_time_us / options.availability_period_us;
-  const auto output_ticks = options.end_time_us / options.output_tick_period_us;
+  const auto output_ticks = options.end_time_us / output_tick_period_us;
   const auto polls = options.end_time_us / options.poll_period_us;
   return fits(availability) && fits_inclusive_cadence(output_ticks) &&
          fits_inclusive_cadence(polls);
 }
 
-[[nodiscard]] ReplayScheduleStatus validate(const std::vector<TimedCanFrame> &frames,
-                                            const ReplayClock &clock,
-                                            const ReplayScheduleOptions options) noexcept {
-  if (clock.now() != 0 || options.availability_period_us == 0 ||
-      options.output_tick_period_us == 0 || options.poll_period_us == 0)
+[[nodiscard]] ReplayScheduleStatus
+validate(const std::vector<gvret::TimedCanFrame> &frames, const ReplayClock &clock,
+         const ReplayScheduleOptions options,
+         const vehicle_core::Microseconds output_tick_period_us) noexcept {
+  if (clock.now() != 0 || options.availability_period_us == 0 || output_tick_period_us == 0 ||
+      options.poll_period_us == 0)
     return ReplayScheduleStatus::InvalidOptions;
   if (!frames.empty() && (frames.front().relative_time_us != 0 ||
                           frames.back().relative_time_us > options.end_time_us))
@@ -50,8 +53,8 @@ constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
       return ReplayScheduleStatus::InvalidInput;
     previous = timed.relative_time_us;
   }
-  return fits_event_budget(options) ? ReplayScheduleStatus::Ok
-                                    : ReplayScheduleStatus::InvalidOptions;
+  return fits_event_budget(options, output_tick_period_us) ? ReplayScheduleStatus::Ok
+                                                           : ReplayScheduleStatus::InvalidOptions;
 }
 
 [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp>
@@ -78,15 +81,17 @@ void record(ReplayEventSink *events, const vehicle_core::MonotonicTimestamp time
 
 } // namespace
 
-ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &clock,
-                                local_argb::PixelFrameSink &pixels,
-                                const ReplayScheduleOptions options, ReplayEventSink *events) {
+ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
+                                OutputStage &output, const ReplayScheduleOptions options,
+                                ReplayEventSink *events) {
+  const vehicle_core::Microseconds output_tick_period_us =
+      options.output_tick_period_us.value_or(output.tick_period_us());
   ReplayScheduleResult result;
-  result.status = validate(frames, clock, options);
+  result.status = validate(frames, clock, options, output_tick_period_us);
   if (!result.ok())
     return result;
 
-  ReplayController controller{std::move(frames), clock, pixels};
+  ReplayController controller{std::move(frames), clock, output};
   result.controller_status = controller.start();
   if (result.controller_status != ReplayControllerStatus::Ok) {
     result.status = ReplayScheduleStatus::ControllerFailure;
@@ -165,14 +170,14 @@ ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &
       poll = next_deadline(*due, options.poll_period_us, options.end_time_us);
     }
     if (output_tick == due) {
-      result.controller_status = controller.render();
+      result.controller_status = controller.tick_output();
       if (result.controller_status != ReplayControllerStatus::Ok) {
         result.status = ReplayScheduleStatus::ControllerFailure;
         break;
       }
       ++result.output_ticks;
       record(events, *due, ReplayEventKind::OutputTick);
-      output_tick = next_deadline(*due, options.output_tick_period_us, options.end_time_us);
+      output_tick = next_deadline(*due, output_tick_period_us, options.end_time_us);
     }
   }
 
@@ -189,4 +194,4 @@ ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &
   return result;
 }
 
-} // namespace gvret
+} // namespace replay
