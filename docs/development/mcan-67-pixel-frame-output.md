@@ -12,7 +12,7 @@ are bounded by the scheduler and default to the production host model:
 
 ```text
 --availability-us <number>  default 10000
---render-us <number>        default 10000
+--output-tick-us <number>   default 10000
 --poll-us <number>          default 100000
 ```
 

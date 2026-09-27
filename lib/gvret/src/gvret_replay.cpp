@@ -25,7 +25,7 @@ struct Arguments {
 void print_usage(std::ostream &stream) {
   stream << "Usage: gvret-replay inspect <capture.csv> [--bus <number>]\n"
          << "       gvret-replay render <capture.csv> --end-us <number> [options]\n"
-         << "Options: --bus <number> --availability-us <number> --render-us <number> "
+         << "Options: --bus <number> --availability-us <number> --output-tick-us <number> "
             "--poll-us <number>\n";
 }
 
@@ -94,13 +94,14 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
       continue;
     }
 
-    if (argument == "--availability-us" || argument == "--render-us" || argument == "--poll-us") {
+    if (argument == "--availability-us" || argument == "--output-tick-us" ||
+        argument == "--poll-us") {
       if (arguments.command != Arguments::Command::Render || index + 1 >= argc) {
         return false;
       }
-      auto &period = argument == "--availability-us" ? arguments.schedule.availability_period_us
-                     : argument == "--render-us"     ? arguments.schedule.render_period_us
-                                                     : arguments.schedule.poll_period_us;
+      auto &period = argument == "--availability-us"  ? arguments.schedule.availability_period_us
+                     : argument == "--output-tick-us" ? arguments.schedule.output_tick_period_us
+                                                      : arguments.schedule.poll_period_us;
       if (!parse_period(argv[++index], period)) {
         return false;
       }
