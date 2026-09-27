@@ -233,6 +233,8 @@ public:
       return ReplayControllerStatus::ConfigurationFailed;
     state_ = State::Starting;
     if (!output_->start(clock_->now())) {
+      // A stage may have changed output before its start failed.
+      (void)fail_off_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::OutputFault;
     }
@@ -302,8 +304,7 @@ public:
     const auto status = tick_current();
     if (status == ReplayControllerStatus::Ok)
       return status;
-    state_ = State::Failed;
-    return status;
+    return fail(status);
   }
 
   [[nodiscard]] ReplayControllerStatus stop() noexcept {
@@ -317,7 +318,11 @@ public:
     if (telemetry_quiescent && engine_.attached())
       (void)engine_.detach();
 
-    const auto output_status = output_->stop(clock_->now()) ? ReplayControllerStatus::Ok
+    // Every stop fails the output off before releasing the stage, so a
+    // completed replay cannot leave its last output active.
+    const bool output_off = fail_off_output() == ReplayControllerStatus::Ok;
+    const bool output_stopped = output_->stop(clock_->now());
+    const auto output_status = output_off && output_stopped ? ReplayControllerStatus::Ok
                                                             : ReplayControllerStatus::OutputFault;
     if (!telemetry_quiescent) {
       state_ = State::Failed;

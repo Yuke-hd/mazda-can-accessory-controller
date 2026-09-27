@@ -80,8 +80,10 @@ bool LocalArgbOutputStage::fail_off(const vehicle_core::MonotonicTimestamp now_u
   return implementation_->fail_off(now_us);
 }
 
-bool LocalArgbOutputStage::stop(const vehicle_core::MonotonicTimestamp now_us) noexcept {
-  return implementation_->fail_off(now_us);
+// The controller has already failed the renderer off; the renderer holds
+// no resource that outlives the stage.
+bool LocalArgbOutputStage::stop(vehicle_core::MonotonicTimestamp /*now_us*/) noexcept {
+  return true;
 }
 
 // One renderer pass per supervisor poll, matching the firmware worker.

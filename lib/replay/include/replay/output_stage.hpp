@@ -14,8 +14,13 @@ namespace replay {
 //   start(now)         once, before the engine attaches;
 //   tick(now)          at the end of a successful start(), then on each
 //                      scheduled output tick;
-//   fail_off(now)      when replay fails or startup is abandoned;
-//   stop(now)          on every controller stop attempt, and may repeat.
+//   fail_off(now)      when replay fails, startup is abandoned (including a
+//                      failed start()), a tick fails, and immediately before
+//                      every stop(); it must leave the output inactive and
+//                      may repeat;
+//   stop(now)          on every controller stop attempt, after fail_off(),
+//                      and may repeat. It releases the stage; the blackout
+//                      guarantee belongs to fail_off().
 // configure() registers the stage's action_engine::ActionSink(s) and the
 // rules that route to them. The engine delivers actions through those sinks
 // while the controller processes input or samples polled rules; a stage makes
