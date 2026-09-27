@@ -65,6 +65,33 @@ def main() -> int:
     if "add_library(local_argb_sink_contract INTERFACE)" not in sink_cmake.read_text(encoding="utf-8"):
         failures.append("authorized local_argb sink contract target is missing")
 
+    # The ordinary target re-exports only the frame contract: on the host via
+    # local_argb_pixel_frame, on IDF via exactly one sibling frame root.
+    public_links = " ".join(
+        re.findall(r"target_link_libraries\(\s*local_argb\s+PUBLIC\s+([^\)]*)\)", cmake_text)
+    ).split()
+    if "local_argb_pixel_frame" not in public_links:
+        failures.append("host local_argb does not publicly link local_argb_pixel_frame")
+    if "local_argb_sink_contract" in public_links:
+        failures.append("host local_argb publicly exports the sink contract")
+    idf_include_dirs = re.search(r"\bINCLUDE_DIRS\s+([^\n]*)", cmake_text)
+    if idf_include_dirs is None or re.findall(r'"([^"]*)"', idf_include_dirs.group(1)) != [
+        "include",
+        "../local_argb_sink_contract/frame_include",
+    ]:
+        failures.append("IDF local_argb INCLUDE_DIRS must be only include and the frame root")
+    if (component_root / "../local_argb_sink_contract/frame_include").resolve() != frame_root.parent:
+        failures.append("IDF local_argb frame include path does not resolve to the frame root")
+
+    # Frame consumers take the frame-only target, not the sink contract.
+    gvret_text = (root / "lib/gvret/CMakeLists.txt").read_text(encoding="utf-8")
+    output_links = re.search(r"target_link_libraries\(\s*gvret_replay_output\s+([^\)]*)\)", gvret_text)
+    output_deps = output_links.group(1).split() if output_links else []
+    if "local_argb_pixel_frame" not in output_deps:
+        failures.append("gvret_replay_output does not link local_argb_pixel_frame")
+    if {"local_argb", "local_argb_sink_contract"} & set(output_deps):
+        failures.append("gvret_replay_output links more than the pixel frame contract")
+
     compiler = shutil.which(args.compiler) or args.compiler
     with tempfile.TemporaryDirectory(prefix="local-argb-boundary-") as directory:
         directory_path = Path(directory)
@@ -106,7 +133,7 @@ def main() -> int:
             '#include "local_argb/pixel_frame.hpp"\n'
             "struct Probe final : local_argb::PixelFrameSink {\n"
             "  bool write(const local_argb::PixelFrame &frame) noexcept override {\n"
-            "    return frame == local_argb::kBlackFrame;\n"
+            "    return frame == local_argb::kBlackFrame && frame[0] == local_argb::kBlack;\n"
             "  }\n"
             "};\n"
             "int main() { Probe probe; return probe.write(local_argb::kBlackFrame) ? 0 : 1; }\n",

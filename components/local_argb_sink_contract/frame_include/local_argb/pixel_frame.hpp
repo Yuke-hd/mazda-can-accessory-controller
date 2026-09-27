@@ -15,6 +15,8 @@ struct Rgb {
   std::uint8_t blue{0};
 };
 
+inline constexpr Rgb kBlack{};
+
 constexpr bool operator==(const Rgb &left, const Rgb &right) noexcept {
   return left.red == right.red && left.green == right.green && left.blue == right.blue;
 }
@@ -25,7 +27,8 @@ inline constexpr std::size_t kLedCount = 100;
 using PixelFrame = std::array<Rgb, kLedCount>;
 inline constexpr PixelFrame kBlackFrame{};
 
-// Strip-facing sink used by the renderer.
+// Receives each whole frame the renderer produces; implemented by strip
+// drivers, recorders, and serializers.
 class PixelFrameSink {
 public:
   virtual ~PixelFrameSink() = default;
