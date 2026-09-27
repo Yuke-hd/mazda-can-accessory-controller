@@ -203,6 +203,51 @@ test('a previously shown frame is cleared when a later message is invalid', () =
   assert.equal(state.pixels, null);
 });
 
+test('the connection is closed only when the stream first becomes invalid', () => {
+  const streamingState = streaming(1, pixels(0, [[5, 5, 5]]));
+  const invalidState = Renderer.reduce(streamingState, message('{not json'));
+  assert.equal(Renderer.shouldCloseConnection(streamingState, invalidState), true);
+  assert.equal(Renderer.shouldCloseConnection(invalidState, invalidState), false);
+  const disconnected = Renderer.reduce(streamingState, close);
+  assert.equal(Renderer.shouldCloseConnection(streamingState, disconnected), false);
+  assert.equal(Renderer.shouldCloseConnection(streamingState, streamingState), false);
+});
+
+// Minimal stand-ins for the DOM nodes LedStripView.render touches when the
+// pixel count is unchanged, counting status writes (an aria-live region).
+function fakeElements(pixelCount) {
+  const status = {
+    writes: 0,
+    value: '',
+    get textContent() {
+      return this.value;
+    },
+    set textContent(text) {
+      this.writes += 1;
+      this.value = text;
+    },
+  };
+  const strip = { children: Array.from({ length: pixelCount }, () => ({ style: {} })) };
+  return { root: { dataset: {} }, status, time: { textContent: '' }, strip, guides: {} };
+}
+
+test('the status text is rewritten only when it changes', () => {
+  const elements = fakeElements(1);
+  const first = streaming(1, pixels(0, [[1, 1, 1]]));
+  const second = Renderer.reduce(first, message(pixels(1, [[2, 2, 2]])));
+  const complete = Renderer.reduce(second, message(end()));
+  elements.status.textContent = Renderer.statusText(first);
+  elements.status.writes = 0;
+
+  Renderer.LedStripView.render(elements, second, first);
+  assert.equal(elements.status.writes, 0);
+  assert.equal(elements.strip.children[0].style.backgroundColor, 'rgb(2, 2, 2)');
+
+  Renderer.LedStripView.render(elements, complete, second);
+  assert.equal(elements.status.writes, 1);
+  assert.match(elements.status.textContent, /complete/i);
+});
+
 let failures = 0;
 for (const { name, body } of tests) {
   try {

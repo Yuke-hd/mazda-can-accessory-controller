@@ -173,7 +173,7 @@ if(NODE_EXECUTABLE)
     NAME web_emulator_renderer_js_tests
     COMMAND
       ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/web_emulator_renderer_tests.js
-      ${REPLAY_WEB_APP_JS_PATH}
+      ${PROJECT_SOURCE_DIR}/lib/replay/web/app.js
   )
 endif()
 

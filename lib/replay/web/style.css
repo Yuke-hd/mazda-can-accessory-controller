@@ -24,7 +24,9 @@ main[data-phase="invalid"] #status { color: #ff9a9a; }
 }
 .strip { min-height: 1.5rem; padding: 4px; background: #05070a; border: 1px solid #2a3440; }
 .pixel { aspect-ratio: 1 / 3; min-height: 1.25rem; background: #05070a; }
-.guides { margin-top: 0.25rem; }
+/* Same horizontal padding and border width as .strip so guide columns line
+   up with pixel columns (region boundaries at pixels 35 and 65). */
+.guides { margin-top: 0.25rem; padding: 0 4px; border: solid transparent; border-width: 0 1px; }
 .guide {
   border-top: 2px solid #56646f;
   padding-top: 0.2rem;

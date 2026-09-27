@@ -189,6 +189,7 @@ std::vector<std::string> production_d1_records(const std::vector<gvret::TimedCan
   replay::JsonlPixelFrameSink pixels{clock, output};
   REQUIRE(pixels.write_header());
   replay::LocalArgbOutputStage stage{pixels};
+  // Mirrors serve_websocket in lib/replay/src/web_emulator.cpp; keep in sync.
   schedule.end_time_us = frames.back().relative_time_us;
   REQUIRE(replay::run_replay(frames, clock, stage, schedule).ok());
   REQUIRE(pixels.write_end());

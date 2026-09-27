@@ -3,6 +3,7 @@
 
 #include "replay/web_emulator_assets.hpp"
 
+#include <iterator>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -66,11 +67,14 @@ TEST_CASE("web emulator page provides the strip, replay time, state, and region 
   CHECK_FALSE(matches(html, "(https?|wss?)://|(src|href)=\"//"));
 }
 
-TEST_CASE("web emulator renderer sizes the strip from the header pixel count") {
+// Header-driven sizing is covered behaviourally by the Node renderer tests.
+// Here we only ensure the production length is not hard-coded elsewhere.
+TEST_CASE("web emulator renderer names the production strip length only once") {
   const std::string script = asset_body("/app.js");
-  CHECK(contains(script, "record.pixel_count"));
-  CHECK(contains(script, "state.pixelCount"));
-  CHECK(contains(script, "for (let index = 0; index < pixelCount; ++index)"));
+  const std::regex literal_100("\\b100\\b");
+  CHECK(std::distance(std::sregex_iterator(script.begin(), script.end(), literal_100),
+                      std::sregex_iterator()) == 1);
+  CHECK(contains(script, "kProductionPixelCount = 100;"));
 }
 
 TEST_CASE("web emulator JavaScript contains no vehicle decoding, rules, or animation") {
