@@ -68,9 +68,9 @@ void print_schedule_error(const replay::ReplayScheduleResult &schedule) {
   }
 }
 
-// Signal records may precede the first pixel frame. The catalog arrives only
-// after the replay options were accepted, so the stream header is written
-// there and a rejected replay still emits nothing.
+// The catalog arrives only once the replay has started successfully, so the
+// stream header is written there (idempotently with the pixel sink's own) and
+// a rejected replay or failed start emits nothing from the signal path.
 class HeaderedSignalRecords final : public replay::SignalObserver {
 public:
   HeaderedSignalRecords(replay::JsonlPixelFrameSink &pixels, std::ostream &output) noexcept

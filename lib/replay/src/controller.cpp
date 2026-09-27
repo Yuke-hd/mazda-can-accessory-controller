@@ -277,6 +277,9 @@ public:
       cleanup_failed_start();
       return ReplayControllerStatus::OutputFault;
     }
+    // Only a started replay reaches the observers: the catalog and the
+    // start-time readings held since attach() are delivered now.
+    observers_.open();
     state_ = State::Running;
     return ReplayControllerStatus::Ok;
   }

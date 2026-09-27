@@ -37,6 +37,10 @@ void append_number(std::string &line, const float value) {
   line.append(buffer, static_cast<std::size_t>(result.ptr - buffer));
 }
 
+// JSON string for the catalog's static keys and choice names, which are ASCII.
+// Quotes, backslashes and control bytes are escaped; bytes >= 0x80 are copied
+// as-is without UTF-8 validation, so a non-ASCII catalog string is only valid
+// JSON if it is already well-formed UTF-8.
 void append_string(std::string &line, const std::string_view text) {
   line.push_back('"');
   for (const char character : text) {

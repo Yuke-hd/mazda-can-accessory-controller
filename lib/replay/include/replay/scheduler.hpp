@@ -18,6 +18,9 @@ enum class ReplayScheduleStatus : std::uint8_t {
   ControllerFailure,
 };
 
+// Declaration order is not dispatch order: SignalSample is appended to keep
+// the existing values stable, but at a shared timestamp it runs before
+// OutputTick (see run_replay()).
 enum class ReplayEventKind : std::uint8_t {
   Frame,
   EndOfStream,
@@ -47,7 +50,8 @@ struct ReplayScheduleOptions {
   std::optional<vehicle_core::Microseconds> output_tick_period_us{};
   vehicle_core::Microseconds poll_period_us{controller_config::kPolledRuleSamplePeriodUs};
   // Polled-signal sampling cadence for SignalObservers. Unset uses
-  // poll_period_us. Ignored, and not scheduled, without observers.
+  // poll_period_us. Not scheduled without observers, but zero is rejected
+  // with InvalidOptions either way.
   std::optional<vehicle_core::Microseconds> signal_sample_period_us{};
 };
 
@@ -76,7 +80,7 @@ struct ReplayScheduleResult {
 // EOF (once), a due availability timeout, a polled-rule sample, a polled
 // signal sample (only with observers), and an output-stage tick. Poll,
 // signal-sample and output ticks run at time zero; availability begins after
-// its first period. Notified signals reach observers while the frame or
+// its first period. Notified signals reach observers while the frame, EOF or
 // timeout that changed them is processed, so they precede that timestamp's
 // signal sample and output tick.
 // Invalid input/options are rejected before the controller or stage is started.

@@ -36,15 +36,26 @@ bool SignalObserverFanOut::attach() noexcept {
     attached_ = true;
     return true;
   }
-  const auto catalog = provider_->catalog();
-  for (auto *observer : observers_)
-    observer->on_catalog(catalog);
   if (!subscribe_notified_signals()) {
     (void)detach();
     return false;
   }
   attached_ = true;
   return true;
+}
+
+void SignalObserverFanOut::open() noexcept {
+  if (!attached_ || opened_)
+    return;
+  opened_ = true;
+  if (observers_.empty())
+    return;
+  const auto catalog = provider_->catalog();
+  for (auto *observer : observers_)
+    observer->on_catalog(catalog);
+  for (const auto &held : held_)
+    publish(held.time_us, *held.signal, held.reading);
+  held_.clear();
 }
 
 bool SignalObserverFanOut::subscribe_notified_signals() noexcept {
@@ -73,7 +84,7 @@ bool SignalObserverFanOut::sample() const noexcept {
     const auto reading = provider_->read(signal.id);
     if (!reading.ok())
       return false;
-    publish(signal, *reading.value);
+    publish(clock_->now(), signal, *reading.value);
   }
   return true;
 }
@@ -83,23 +94,40 @@ bool SignalObserverFanOut::detach() noexcept {
   for (const auto subscription : subscriptions_)
     released = provider_->unsubscribe(subscription).ok() && released;
   subscriptions_.clear();
+  held_.clear();
   attached_ = false;
+  opened_ = false;
   return released;
 }
 
 void SignalObserverFanOut::forward(
     void *context, const vehicle_signals::SignalNotification &notification) noexcept {
-  const auto *fan_out = static_cast<const SignalObserverFanOut *>(context);
+  auto *fan_out = static_cast<SignalObserverFanOut *>(context);
   const auto *signal = fan_out->provider_->catalog().find(notification.id);
   if (signal != nullptr)
-    fan_out->publish(*signal, notification.current);
+    fan_out->receive(*signal, notification.current);
 }
 
-void SignalObserverFanOut::publish(const SignalMetadata &signal,
-                                   const vehicle_signals::SignalReading &reading) const noexcept {
+void SignalObserverFanOut::receive(const SignalMetadata &signal,
+                                   const vehicle_signals::SignalReading &reading) noexcept {
   const auto now = clock_->now();
+  if (opened_) {
+    publish(now, signal, reading);
+    return;
+  }
+  try {
+    held_.push_back({now, &signal, reading});
+  } catch (...) {
+    // Out of memory while starting: the reading is dropped rather than
+    // thrown across the provider's callback.
+  }
+}
+
+void SignalObserverFanOut::publish(vehicle_core::MonotonicTimestamp now_us,
+                                   const SignalMetadata &signal,
+                                   const vehicle_signals::SignalReading &reading) const noexcept {
   for (auto *observer : observers_)
-    observer->on_reading(now, signal, reading);
+    observer->on_reading(now_us, signal, reading);
 }
 
 } // namespace replay

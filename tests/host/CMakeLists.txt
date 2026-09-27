@@ -115,7 +115,7 @@ doctest_discover_tests(replay_output_tests)
 
 add_executable(replay_signal_observer_tests replay_signal_observer_tests.cpp)
 target_include_directories(replay_signal_observer_tests PRIVATE ${CMAKE_SOURCE_DIR}/lib/replay/src)
-target_link_libraries(replay_signal_observer_tests PRIVATE replay_signal_output replay_pixel_output replay_local_argb_stage replay_scheduler mazda vehicle_signals doctest::doctest)
+target_link_libraries(replay_signal_observer_tests PRIVATE replay_signal_output replay_pixel_output replay_local_argb_stage replay_scheduler mazda mazda_telemetry vehicle_signals doctest::doctest)
 target_compile_features(replay_signal_observer_tests PRIVATE cxx_std_17)
 if(MSVC)
   target_compile_options(replay_signal_observer_tests PRIVATE /W4 /permissive-)

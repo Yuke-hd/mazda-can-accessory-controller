@@ -7,12 +7,15 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "mazda/signal_provider.hpp"
+#include "mazda/vehicle_telemetry.hpp"
 #include "replay/local_argb_stage.hpp"
 #include "replay/pixel_frame_output.hpp"
 #include "replay/scheduler.hpp"
@@ -239,9 +242,42 @@ private:
   SignalId fail_subscribe_id_{};
 };
 
+// Forwards to a real stage but fails every tick, so ReplayController::start()
+// fails after telemetry has started.
+class FailingTickStage final : public replay::OutputStage {
+public:
+  explicit FailingTickStage(replay::OutputStage &inner) noexcept : inner_(&inner) {}
+
+  [[nodiscard]] bool configure(action_engine::ActionEngine &engine) noexcept override {
+    return inner_->configure(engine);
+  }
+  [[nodiscard]] bool start(const vehicle_core::MonotonicTimestamp now_us) noexcept override {
+    return inner_->start(now_us);
+  }
+  [[nodiscard]] bool tick(vehicle_core::MonotonicTimestamp) noexcept override { return false; }
+  [[nodiscard]] bool fail_off(const vehicle_core::MonotonicTimestamp now_us) noexcept override {
+    return inner_->fail_off(now_us);
+  }
+  [[nodiscard]] bool stop(const vehicle_core::MonotonicTimestamp now_us) noexcept override {
+    return inner_->stop(now_us);
+  }
+  [[nodiscard]] vehicle_core::Microseconds tick_period_us() const noexcept override {
+    return inner_->tick_period_us();
+  }
+
+private:
+  replay::OutputStage *inner_;
+};
+
+std::size_t line_index(const std::string &lines, const std::string_view needle) {
+  const auto position = lines.find(needle);
+  REQUIRE(position != std::string::npos);
+  return static_cast<std::size_t>(std::count(lines.begin(), lines.begin() + position, '\n'));
+}
+
 } // namespace
 
-TEST_CASE("fan-out publishes the catalog once, then subscribes to every notify signal") {
+TEST_CASE("fan-out attach subscribes to every notify signal without publishing the catalog") {
   FakeProvider provider;
   replay::ReplayClock clock;
   RecordingObserver observer;
@@ -250,12 +286,56 @@ TEST_CASE("fan-out publishes the catalog once, then subscribes to every notify s
   REQUIRE(fan_out.attach());
 
   CHECK(fan_out.attached());
-  CHECK(observer.catalog_calls() == 1);
-  CHECK(observer.catalog().begin() == provider.catalog().begin());
-  CHECK(observer.catalog().size() == 3);
+  CHECK(observer.catalog_calls() == 0);
   REQUIRE(provider.subscriptions().size() == 2);
   CHECK(provider.subscriptions()[0].id == SignalId{8});
   CHECK(provider.subscriptions()[1].id == SignalId{9});
+}
+
+TEST_CASE("fan-out open publishes the catalog once, then the readings held since attach") {
+  FakeProvider provider;
+  replay::ReplayClock clock;
+  RecordingObserver observer;
+  replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
+  REQUIRE(fan_out.attach());
+  const SignalReading on{SignalValue::boolean(true), Availability::Fresh,
+                         ValidationStatus::Observed};
+  const SignalReading busy{SignalValue::enumeration(3), Availability::Fresh,
+                           ValidationStatus::Reference};
+  provider.notify(SignalId{8}, on);
+  REQUIRE(clock.advance_to(5));
+  provider.notify(SignalId{9}, busy);
+  REQUIRE(observer.readings().empty());
+
+  fan_out.open();
+  fan_out.open();
+
+  CHECK(observer.catalog_calls() == 1);
+  CHECK(observer.catalog().begin() == provider.catalog().begin());
+  CHECK(observer.catalog_before_readings());
+  REQUIRE(observer.readings().size() == 2);
+  CHECK(observer.readings()[0].key == "test.switch");
+  CHECK(observer.readings()[0].time_us == 0);
+  CHECK(same_reading(observer.readings()[0].reading, on));
+  CHECK(observer.readings()[1].key == "test.mode");
+  CHECK(observer.readings()[1].time_us == 5);
+  CHECK(same_reading(observer.readings()[1].reading, busy));
+}
+
+TEST_CASE("fan-out detach before open drops the held readings unseen") {
+  FakeProvider provider;
+  replay::ReplayClock clock;
+  RecordingObserver observer;
+  replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
+  REQUIRE(fan_out.attach());
+  provider.notify(SignalId{8},
+                  {SignalValue::boolean(true), Availability::Fresh, ValidationStatus::Observed});
+
+  REQUIRE(fan_out.detach());
+  fan_out.open();
+
+  CHECK(observer.catalog_calls() == 0);
+  CHECK(observer.readings().empty());
 }
 
 TEST_CASE("fan-out forwards a notified reading unchanged at the replay time") {
@@ -265,6 +345,7 @@ TEST_CASE("fan-out forwards a notified reading unchanged at the replay time") {
   RecordingObserver second;
   replay::SignalObserverFanOut fan_out{provider, clock, {&first, &second}};
   REQUIRE(fan_out.attach());
+  fan_out.open();
   REQUIRE(clock.advance_to(42'000));
 
   const SignalReading stale{SignalValue::enumeration(3), Availability::Stale,
@@ -287,6 +368,7 @@ TEST_CASE("fan-out samples only polled signals and passes availability through")
   RecordingObserver observer;
   replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
   REQUIRE(fan_out.attach());
+  fan_out.open();
   REQUIRE(clock.advance_to(100'000));
 
   for (const auto availability : {Availability::NoData, Availability::Fresh, Availability::Stale,
@@ -313,6 +395,7 @@ TEST_CASE("fan-out reports a failed read") {
   RecordingObserver observer;
   replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
   REQUIRE(fan_out.attach());
+  fan_out.open();
   provider.fail_reads();
 
   CHECK_FALSE(fan_out.sample());
@@ -341,6 +424,32 @@ TEST_CASE("fan-out rolls back its subscriptions when one subscribe fails") {
   CHECK_FALSE(fan_out.attach());
   CHECK_FALSE(fan_out.attached());
   CHECK(provider.active_subscriptions() == 0);
+}
+
+TEST_CASE("fan-out detach releases every subscription on the Mazda provider") {
+  mazda::VehicleTelemetry telemetry;
+  mazda::MazdaSignalProvider provider{telemetry};
+  replay::ReplayClock clock;
+  RecordingObserver observer;
+
+  // Without detach, the facade's fixed subscriber capacity runs out quickly.
+  std::vector<std::unique_ptr<replay::SignalObserverFanOut>> leaked;
+  bool exhausted = false;
+  for (int attempt = 0; attempt < 32 && !exhausted; ++attempt) {
+    leaked.push_back(std::make_unique<replay::SignalObserverFanOut>(
+        provider, clock, replay::SignalObservers{&observer}));
+    exhausted = !leaked.back()->attach();
+  }
+  REQUIRE(exhausted);
+  for (const auto &fan_out : leaked)
+    if (fan_out->attached())
+      REQUIRE(fan_out->detach());
+
+  for (int cycle = 0; cycle < 32; ++cycle) {
+    replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
+    REQUIRE(fan_out.attach());
+    REQUIRE(fan_out.detach());
+  }
 }
 
 TEST_CASE("fan-out with no observers neither subscribes nor reads") {
@@ -527,6 +636,74 @@ TEST_CASE("invalid signal sample options are rejected before the observer is att
   CHECK(pixels.frames().empty());
 }
 
+TEST_CASE("a failed controller start delivers nothing and releases the observer") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage inner{pixels};
+  FailingTickStage stage{inner};
+  RecordingObserver observer;
+  replay::ReplayController controller{rpm_then_left_turn(), clock, stage, {&observer}};
+
+  CHECK(controller.start() == replay::ReplayControllerStatus::OutputFault);
+
+  CHECK(observer.catalog_calls() == 0);
+  CHECK(observer.readings().empty());
+  CHECK_FALSE(controller.running());
+  // Stopped, not Failed: a start is only fully rolled back once telemetry is
+  // quiescent and every observer subscription is released.
+  CHECK(controller.stop() == replay::ReplayControllerStatus::InvalidState);
+}
+
+TEST_CASE("a stopped controller releases the observer and delivers nothing more") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
+  RecordingObserver observer;
+  replay::ReplayController controller{rpm_then_left_turn(), clock, stage, {&observer}};
+  REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
+  REQUIRE(controller.process_next_frame().ok());
+  const auto delivered = observer.readings().size();
+
+  CHECK(controller.stop() == replay::ReplayControllerStatus::Ok);
+
+  CHECK_FALSE(controller.running());
+  CHECK(controller.sample_signals() == replay::ReplayControllerStatus::InvalidState);
+  CHECK(controller.stop() == replay::ReplayControllerStatus::InvalidState);
+  CHECK(observer.readings().size() == delivered);
+}
+
+TEST_CASE("a polled signal without frames becomes unavailable on the production path") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink ignored{clock};
+  replay::LocalArgbOutputStage stage{ignored};
+  RecordingObserver observer;
+
+  const auto result = replay::run_replay({rpm_3250(0)}, clock, stage, {&observer}, {1'500'000});
+
+  REQUIRE(result.ok());
+  const auto rpm = observer.readings_of("vehicle.engine_rpm");
+  REQUIRE_FALSE(rpm.empty());
+  CHECK(rpm.front().reading.availability == Availability::FreshnessUnverified);
+  CHECK(rpm.back().reading.availability == Availability::Unavailable);
+  CHECK(rpm.back().reading.validation == ValidationStatus::Confirmed);
+  // Polled Mazda signals are freshness-unverified, so none ever reads Stale.
+  CHECK(std::none_of(rpm.begin(), rpm.end(), [](const ObservedReading &observed) {
+    return observed.reading.availability == Availability::Stale;
+  }));
+}
+
+TEST_CASE("a zero signal sample period is rejected even without observers") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
+  replay::ReplayScheduleOptions zero{500'000};
+  zero.signal_sample_period_us = 0;
+
+  CHECK(replay::run_replay({}, clock, stage, zero).status ==
+        replay::ReplayScheduleStatus::InvalidOptions);
+  CHECK(pixels.frames().empty());
+}
+
 TEST_CASE("a null observer fails controller configuration") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
@@ -569,6 +746,18 @@ TEST_CASE("signal records are byte-identical across replays") {
   CHECK(first.find("{\"type\":\"signal\",\"timestamp_us\":300000,\"signal\":\"vehicle.turn_state\","
                    "\"value\":\"left\",\"unit\":null,\"freshness\":\"fresh\","
                    "\"availability\":\"fresh\"") != std::string::npos);
+}
+
+TEST_CASE("a notified record precedes the same-timestamp signal sample records") {
+  const auto records = render_signal_records();
+
+  const auto turn =
+      line_index(records, "\"timestamp_us\":300000,\"signal\":\"vehicle.turn_state\"");
+  const auto rpm = line_index(records, "\"timestamp_us\":300000,\"signal\":\"vehicle.engine_rpm\"");
+  const auto speed =
+      line_index(records, "\"timestamp_us\":300000,\"signal\":\"vehicle.speed_kph\"");
+  CHECK(turn < rpm);
+  CHECK(rpm < speed);
 }
 
 TEST_CASE("signal records spell out value, unit, freshness and availability") {

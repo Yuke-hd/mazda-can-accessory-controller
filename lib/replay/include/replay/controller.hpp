@@ -38,8 +38,9 @@ struct ReplayStepResult final {
 // same host thread; every OutputStage call runs there.
 //
 // Optional SignalObservers see the decoded signals alongside the output
-// stage: start() hands them the catalog and subscribes to notified signals
-// before telemetry starts, so the initial readings arrive at start time;
+// stage: start() subscribes to notified signals before telemetry starts and,
+// only once the start succeeds, hands them the catalog followed by the initial
+// readings stamped at start time; a failed start delivers nothing.
 // sample_signals() delivers the polled signals. A null observer fails start()
 // with ConfigurationFailed. With no observers, the controller behaves exactly
 // as without the observer seam.

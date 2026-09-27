@@ -53,6 +53,7 @@ struct Cadences {
                                             const Cadences cadences) noexcept {
   if (clock.now() != 0 || options.availability_period_us == 0 ||
       cadences.output_tick_period_us == 0 || options.poll_period_us == 0 ||
+      options.signal_sample_period_us == vehicle_core::Microseconds{0} ||
       cadences.signal_sample_period_us == vehicle_core::Microseconds{0})
     return ReplayScheduleStatus::InvalidOptions;
   if (!frames.empty() && (frames.front().relative_time_us != 0 ||
