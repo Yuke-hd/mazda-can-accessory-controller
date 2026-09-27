@@ -16,12 +16,19 @@ are bounded by the scheduler and default to the production host model:
 --poll-us <number>          default 100000
 ```
 
-Each output line is one JSON object with a relative replay timestamp and
-exactly 100 RGB triplets:
+The stream is self-describing. The first line is a header record declaring the
+format version and the pixel count; every later line is one record with a
+`type` field. Pixel records carry a relative replay timestamp and exactly
+`pixel_count` RGB triplets:
 
 ```json
-{"timestamp_us":0,"pixels":[[0,0,0], ... ]}
+{"type":"header","version":1,"pixel_count":100}
+{"type":"pixels","timestamp_us":0,"pixels":[[0,0,0], ... ]}
 ```
+
+Consumers must ignore record types they do not recognize, so new record types
+(for example decoded signal records, #94) can be added without a version bump.
+The version changes only when an existing record's meaning or shape changes.
 
 The timestamp is supplied by the caller-owned replay clock after GVRET
 timestamps have been normalized to zero. The stream contains no CAN identifier,

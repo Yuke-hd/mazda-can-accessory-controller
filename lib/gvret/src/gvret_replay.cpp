@@ -160,6 +160,10 @@ int main(const int argc, char **argv) {
 
   gvret::ReplayClock clock;
   gvret::JsonlPixelFrameSink pixels{clock, std::cout};
+  if (!pixels.write_header()) {
+    std::cerr << "error: unable to write pixel output\n";
+    return 1;
+  }
   const auto schedule = gvret::run_replay(replay.frames, clock, pixels, arguments.schedule);
   if (!schedule.ok()) {
     std::cerr << "error: replay failed\n";

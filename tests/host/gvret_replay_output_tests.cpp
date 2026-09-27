@@ -240,6 +240,41 @@ TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
   CHECK(std::count(serialized.begin(), serialized.end(), '[') == 101);
 }
 
+TEST_CASE("JSONL stream starts with one header and types every record") {
+  gvret::ReplayClock clock;
+  std::ostringstream output;
+  gvret::JsonlPixelFrameSink pixels{clock, output};
+
+  REQUIRE(pixels.write_header());
+  REQUIRE(pixels.write_header());
+  REQUIRE(pixels.write(local_argb::kBlackFrame));
+  REQUIRE(pixels.write(local_argb::kBlackFrame));
+
+  std::istringstream lines{output.str()};
+  std::string line;
+  REQUIRE(std::getline(lines, line));
+  CHECK(line == "{\"type\":\"header\",\"version\":1,\"pixel_count\":100}");
+  std::size_t pixel_records = 0;
+  while (std::getline(lines, line)) {
+    CHECK(line.rfind("{\"type\":\"pixels\",\"timestamp_us\":0,\"pixels\":[", 0) == 0);
+    CHECK(std::count(line.begin(), line.end(), '[') == 101);
+    ++pixel_records;
+  }
+  CHECK(pixel_records == 2);
+}
+
+TEST_CASE("first pixel write emits the header implicitly") {
+  gvret::ReplayClock clock;
+  std::ostringstream output;
+  gvret::JsonlPixelFrameSink pixels{clock, output};
+
+  REQUIRE(pixels.write(local_argb::kBlackFrame));
+
+  const std::string serialized = output.str();
+  CHECK(serialized.rfind("{\"type\":\"header\",", 0) == 0);
+  CHECK(std::count(serialized.begin(), serialized.end(), '\n') == 2);
+}
+
 TEST_CASE("buffered output reports a synchronization failure when flushed") {
   gvret::ReplayClock clock;
   FailingSyncBuffer buffer;

@@ -39,10 +39,24 @@ bool TimestampedPixelFrameSink::write(const local_argb::PixelFrame &frame) noexc
   }
 }
 
+bool JsonlPixelFrameSink::write_header() noexcept {
+  if (wrote_header_)
+    return output_->good();
+  try {
+    wrote_header_ = true;
+    return write_literal(*output_, "{\"type\":\"header\",\"version\":") &&
+           write_decimal(*output_, kJsonlFormatVersion) &&
+           write_literal(*output_, ",\"pixel_count\":") &&
+           write_decimal(*output_, local_argb::kLedCount) && write_literal(*output_, "}\n");
+  } catch (...) {
+    return false;
+  }
+}
+
 bool JsonlPixelFrameSink::write(const local_argb::PixelFrame &frame) noexcept {
   try {
-    if (!write_literal(*output_, "{\"timestamp_us\":") || !write_decimal(*output_, clock_->now()) ||
-        !write_literal(*output_, ",\"pixels\":["))
+    if (!write_header() || !write_literal(*output_, "{\"type\":\"pixels\",\"timestamp_us\":") ||
+        !write_decimal(*output_, clock_->now()) || !write_literal(*output_, ",\"pixels\":["))
       return false;
     for (std::size_t index = 0; index < frame.size(); ++index) {
       if (index != 0)

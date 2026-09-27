@@ -32,13 +32,23 @@ private:
   std::vector<TimestampedPixelFrame> frames_{};
 };
 
-// Writes one compact JSON object per renderer write. The stream contains only
-// replay-relative time and the 100 RGB values; CAN identity and payload data
-// never cross this output boundary.
+// Version of the self-describing JSONL stream. Consumers ignore unknown record
+// types, so adding a record type does not require a version bump.
+inline constexpr unsigned kJsonlFormatVersion = 1;
+
+// Writes a self-describing JSON-lines stream. The first line is a header
+// record declaring the format version and pixel count; each renderer write
+// then becomes one "pixels" record. Every record carries a "type" field. The
+// stream contains only replay-relative time and RGB values; CAN identity and
+// payload data never cross this output boundary.
 class JsonlPixelFrameSink final : public local_argb::PixelFrameSink {
 public:
   JsonlPixelFrameSink(const ReplayClock &clock, std::ostream &output) noexcept
       : clock_(&clock), output_(&output) {}
+
+  // Writes the header record once. write() calls it implicitly; call it
+  // directly to make a stream with no pixel records self-describing.
+  bool write_header() noexcept;
 
   bool write(const local_argb::PixelFrame &frame) noexcept override;
 
@@ -47,6 +57,7 @@ public:
 private:
   const ReplayClock *clock_;
   std::ostream *output_;
+  bool wrote_header_{false};
 };
 
 } // namespace gvret

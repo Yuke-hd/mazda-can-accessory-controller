@@ -224,19 +224,24 @@ TEST_CASE("render command emits only relative timestamped 100-pixel JSONL") {
   CHECK(result.standard_output.find("00000091") == std::string::npos);
   CHECK(result.standard_output.find("C8") == std::string::npos);
 
-  std::size_t line_count = 0;
-  std::size_t line_begin = 0;
+  const auto header_end = result.standard_output.find('\n');
+  REQUIRE(header_end != std::string::npos);
+  CHECK(result.standard_output.substr(0, header_end) ==
+        "{\"type\":\"header\",\"version\":1,\"pixel_count\":100}");
+
+  std::size_t pixel_line_count = 0;
+  std::size_t line_begin = header_end + 1;
   while (line_begin < result.standard_output.size()) {
     const auto line_end = result.standard_output.find('\n', line_begin);
     REQUIRE(line_end != std::string::npos);
     const auto line = result.standard_output.substr(line_begin, line_end - line_begin);
-    CHECK(line.find("{\"timestamp_us\":") == 0);
+    CHECK(line.find("{\"type\":\"pixels\",\"timestamp_us\":") == 0);
     CHECK(line.find("\"pixels\":[") != std::string::npos);
     CHECK(std::count(line.begin(), line.end(), '[') == 101);
-    ++line_count;
+    ++pixel_line_count;
     line_begin = line_end + 1;
   }
-  CHECK(line_count >= 2);
+  CHECK(pixel_line_count >= 2);
 }
 
 TEST_CASE("render command requires an explicit bounded replay horizon") {
