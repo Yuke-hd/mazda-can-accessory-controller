@@ -14,6 +14,8 @@ namespace gvret {
 // Adapts a prepared replay sequence to the production acquisition boundary.
 // The caller owns clock advancement; receive() never skips scheduled work by
 // moving time itself. A future frame and end of stream both return Timeout.
+// The source is one-shot because its shared monotonic clock cannot rewind on
+// restart without changing frame timestamps.
 class ReplayAcquisitionSource final : public vehicle_telemetry::AcquisitionSource {
 public:
   ReplayAcquisitionSource(std::vector<TimedCanFrame> frames, ReplayClock &clock);
@@ -34,6 +36,7 @@ private:
   std::size_t next_frame_{0};
   vehicle_telemetry::AcquisitionStatistics statistics_{};
   bool running_{false};
+  bool started_once_{false};
 };
 
 } // namespace gvret

@@ -13,9 +13,11 @@ vehicle_telemetry::StatusResult ReplayAcquisitionSource::start() noexcept {
   if (running_) {
     return {vehicle_telemetry::ResultCode::AlreadyRunning};
   }
-  next_frame_ = 0;
-  statistics_ = {};
+  if (started_once_) {
+    return {vehicle_telemetry::ResultCode::InvalidState};
+  }
   running_ = true;
+  started_once_ = true;
   return {vehicle_telemetry::ResultCode::Ok};
 }
 

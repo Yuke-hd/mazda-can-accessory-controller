@@ -72,9 +72,9 @@ TEST_CASE("multiple timed frames wait for the clock and preserve equal time orde
   CHECK(source.statistics().frames_received == 4);
 }
 
-TEST_CASE("source start and stop enforce lifecycle and restart from the beginning") {
+TEST_CASE("source start and stop enforce one-shot lifecycle") {
   gvret::ReplayClock clock;
-  gvret::ReplayAcquisitionSource source{{timed_frame(0, 0x301)}, clock};
+  gvret::ReplayAcquisitionSource source{{timed_frame(0, 0x301), timed_frame(10, 0x302)}, clock};
   vehicle_core::RawCanFrame frame{};
 
   CHECK(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::NotStarted);
@@ -82,11 +82,11 @@ TEST_CASE("source start and stop enforce lifecycle and restart from the beginnin
   CHECK(source.start().status == vehicle_telemetry::ResultCode::AlreadyRunning);
   REQUIRE(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::Frame);
   CHECK(source.statistics().frames_received == 1);
+  REQUIRE(clock.advance_to(10));
   CHECK(source.stop().ok());
   CHECK(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::NotStarted);
   CHECK(source.stop().ok());
-  REQUIRE(source.start().ok());
-  CHECK(source.statistics().frames_received == 0);
-  REQUIRE(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::Frame);
-  CHECK(frame.identifier == 0x301);
+  CHECK(source.start().status == vehicle_telemetry::ResultCode::InvalidState);
+  CHECK(source.statistics().frames_received == 1);
+  CHECK_FALSE(source.end_of_stream());
 }
