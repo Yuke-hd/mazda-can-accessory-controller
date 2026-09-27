@@ -392,7 +392,8 @@ def main() -> int:
         ("telemetry.speed_kph()", "speed polling"),
         ("telemetry.engine_rpm()", "engine RPM polling"),
         ("telemetry.start()", "facade-owned startup"),
-        ("vTaskDelay(pdMS_TO_TICKS(100))", "application polling cadence"),
+        ("vTaskDelay(pdMS_TO_TICKS(controller_config::kPolledRuleSamplePeriodUs / 1'000))",
+         "application polling cadence"),
         ("local_argb::watch_progress(&notification_dispatch_progress, &telemetry)",
          "dispatcher progress watch"),
     ):

@@ -7,7 +7,9 @@
 #include <limits>
 #include <vector>
 
+#include "controller_config/timing.hpp"
 #include "gvret/replay_scheduler.hpp"
+#include "mazda/facade_contracts.hpp"
 
 namespace {
 
@@ -227,7 +229,8 @@ TEST_CASE("empty replay reports EOF and runs inclusive tail cadence") {
 TEST_CASE("default cadences follow the firmware poll and local ARGB output stage") {
   const gvret::ReplayScheduleOptions options{};
 
-  CHECK(options.poll_period_us == 100'000);
+  CHECK(options.availability_period_us == mazda::kDefaultAvailabilityServiceTargetUs);
+  CHECK(options.poll_period_us == controller_config::kPolledRuleSamplePeriodUs);
   CHECK(options.output_tick_period_us == local_argb::kSupervisorPollUs);
   CHECK(options.output_tick_period_us == 10'000);
 }

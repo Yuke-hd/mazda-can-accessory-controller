@@ -19,6 +19,15 @@ extended counts, and CAN ID bounds. It does not print payload rows or absolute
 capture timestamps. A private GVRET file can be supplied at runtime without
 being copied into the repository or build output.
 
+The host replay scheduler advances a caller-owned monotonic clock directly;
+it does not pace events against wall time. This makes event ordering and
+rendered timestamps repeatable for the same normalized input and schedule.
+The scheduler still drives the production `ReplayController`, whose
+cross-thread publication barrier has a bounded 500 ms wall-clock
+synchronization timeout. A loaded host can therefore return
+`SynchronizationTimeout` even when replay time and input are unchanged; that
+result is host scheduling failure, not a different vehicle observation.
+
 The parser accepts synthetic CSV in host tests only. Private vehicle captures
 may be supplied at runtime but must not be committed, attached to Issues or
 PRs, or echoed into logs. Deterministic decoder and freshness tests continue
