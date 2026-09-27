@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -46,20 +47,20 @@ int connect_loopback(const replay::WebEmulatorServer &server) {
 
 std::string read_until_close(const int socket,
                              const std::chrono::milliseconds timeout = std::chrono::seconds(2)) {
+  constexpr std::size_t kMaximumResponseBytes = 4 * 1024 * 1024;
   std::string output;
   char buffer[4096];
   const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (true) {
+  while (std::chrono::steady_clock::now() < deadline && output.size() < kMaximumResponseBytes) {
     const ssize_t count = ::recv(socket, buffer, sizeof(buffer), MSG_DONTWAIT);
     if (count > 0) {
-      output.append(buffer, static_cast<std::size_t>(count));
+      const std::size_t remaining = kMaximumResponseBytes - output.size();
+      output.append(buffer, std::min(remaining, static_cast<std::size_t>(count)));
       continue;
     }
     if (count == 0)
       break;
     if (errno != EAGAIN && errno != EWOULDBLOCK)
-      break;
-    if (std::chrono::steady_clock::now() >= deadline)
       break;
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
@@ -141,6 +142,33 @@ void stop_server(replay::WebEmulatorServer &server, std::atomic_bool &stop_reque
 }
 
 } // namespace
+
+TEST_CASE("web emulator response reader keeps an absolute deadline while data streams") {
+  int sockets[2]{};
+  REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+  std::atomic_bool writer_stop{false};
+  std::thread writer([&] {
+    const char byte = 'x';
+    while (!writer_stop.load()) {
+      if (::send(sockets[1], &byte, sizeof(byte), MSG_DONTWAIT) < 0 && errno != EAGAIN &&
+          errno != EWOULDBLOCK)
+        break;
+    }
+  });
+
+  const auto started = std::chrono::steady_clock::now();
+  const std::string response = read_until_close(sockets[0], std::chrono::milliseconds(50));
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  CHECK_FALSE(response.empty());
+  CHECK(elapsed < std::chrono::seconds(1));
+
+  writer_stop.store(true);
+  ::shutdown(sockets[0], SHUT_RDWR);
+  ::shutdown(sockets[1], SHUT_RDWR);
+  writer.join();
+  ::close(sockets[0]);
+  ::close(sockets[1]);
+}
 
 TEST_CASE("web emulator defaults to an IPv4 loopback URL") {
   replay::WebEmulatorServer server({frame_at(0)}, {});

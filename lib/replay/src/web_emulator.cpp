@@ -96,23 +96,35 @@ bool retryable_socket_error() noexcept {
 #endif
 }
 
-void set_socket_timeout(const SocketHandle socket, const int option,
+bool set_socket_timeout(const SocketHandle socket, const int option,
                         const std::chrono::milliseconds duration) noexcept {
+#if defined(_WIN32)
+  const auto milliseconds = duration.count();
+  if (milliseconds <= 0 ||
+      static_cast<std::uint64_t>(milliseconds) > std::numeric_limits<DWORD>::max())
+    return false;
+  const DWORD timeout = static_cast<DWORD>(milliseconds);
+  return ::setsockopt(socket, SOL_SOCKET, option, reinterpret_cast<const char *>(&timeout),
+                      sizeof(timeout)) == 0;
+#else
+  if (duration.count() <= 0)
+    return false;
   timeval timeout{};
   timeout.tv_sec = static_cast<decltype(timeval::tv_sec)>(duration.count() / 1000);
   timeout.tv_usec = static_cast<decltype(timeval::tv_usec)>((duration.count() % 1000) * 1000);
-  ::setsockopt(socket, SOL_SOCKET, option, reinterpret_cast<const char *>(&timeout),
-               sizeof(timeout));
+  return ::setsockopt(socket, SOL_SOCKET, option, reinterpret_cast<const char *>(&timeout),
+                      sizeof(timeout)) == 0;
+#endif
 }
 
-void set_receive_timeout(const SocketHandle socket,
+bool set_receive_timeout(const SocketHandle socket,
                          const std::chrono::milliseconds duration = kSocketIoTimeout) noexcept {
-  set_socket_timeout(socket, SO_RCVTIMEO, duration);
+  return set_socket_timeout(socket, SO_RCVTIMEO, duration);
 }
 
-void set_send_timeout(const SocketHandle socket,
+bool set_send_timeout(const SocketHandle socket,
                       const std::chrono::milliseconds duration = kSocketIoTimeout) noexcept {
-  set_socket_timeout(socket, SO_SNDTIMEO, duration);
+  return set_socket_timeout(socket, SO_SNDTIMEO, duration);
 }
 
 bool set_nonblocking(const SocketHandle socket) noexcept {
@@ -280,7 +292,6 @@ bool parse_http_request(const std::string &raw, HttpRequest &request) {
 
 bool read_http_request(const SocketHandle socket, const std::atomic_bool &stop_requested,
                        const std::atomic_bool &server_shutdown, std::string &request) {
-  set_receive_timeout(socket);
   const auto deadline = std::chrono::steady_clock::now() + kHttpHeaderDeadline;
   std::array<char, 2048> buffer{};
   while (request.size() < kMaximumHttpRequestBytes && !stop_requested.load() &&
@@ -782,8 +793,13 @@ bool WebEmulatorServer::serve(const std::atomic_bool &stop_requested) noexcept {
       close_socket(client);
       continue;
     }
-    set_receive_timeout(client);
-    set_send_timeout(client);
+    if (!set_receive_timeout(client) || !set_send_timeout(client)) {
+      error_ = "unable to configure loopback client timeouts";
+      shutdown_socket(client);
+      close_socket(client);
+      success = false;
+      break;
+    }
     active_client_.store(socket_to_storage(client));
     try {
       const std::string expected_host = options_.ipv6 ? "[::1]:" + std::to_string(bound_port_)
