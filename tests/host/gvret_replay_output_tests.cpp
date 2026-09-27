@@ -13,6 +13,8 @@
 
 #include "gvret/pixel_frame_output.hpp"
 #include "gvret/replay_scheduler.hpp"
+#include "local_argb/local_argb.h"
+#include "mazda/freshness.hpp"
 
 namespace {
 
@@ -27,11 +29,6 @@ class GroupedPunct final : public std::numpunct<char> {
 protected:
   char do_thousands_sep() const override { return ','; }
   std::string do_grouping() const override { return "\3"; }
-};
-
-class FailingSyncBuffer final : public std::stringbuf {
-public:
-  int sync() override { return -1; }
 };
 
 gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp timestamp_us,
@@ -81,6 +78,7 @@ bool is_black(const local_argb::PixelFrame &frame) {
 } // namespace
 
 TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
+  static_assert(local_argb::kLedCount == 100);
   gvret::ReplayClock clock;
   gvret::TimestampedPixelFrameSink pixels{clock};
 
@@ -101,6 +99,7 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
   gvret::TimestampedPixelFrameSink pixels{clock};
   const std::vector<gvret::TimedCanFrame> input{
       rpm(0, 6'500),        // 1,625 RPM: 24 full cyan + two half-bright pixels.
+      rpm(50'000, 10'000),  // 2,500 RPM: intermediate ramp point.
       rpm(100'000, 13'000), // 3,250 RPM: half fill.
       rpm(200'000, 30'000), // 7,500 RPM: clamped full fill and red zone.
       turn(300'000, 0x20),  // Vehicle left maps to strip right.
@@ -109,8 +108,13 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
       turn(600'000, 0x00),  // Turn off, returning to the RPM baseline.
   };
 
-  const auto result = gvret::run_replay(input, clock, pixels, {610'000});
+  gvret::ReplayScheduleOptions options{};
+  options.end_time_us = 610'000;
+  options.poll_period_us = 50'000;
+  const auto result = gvret::run_replay(input, clock, pixels, options);
   REQUIRE(result.ok());
+  REQUIRE_FALSE(pixels.frames().empty());
+  CHECK(is_black(pixels.frames().front().pixels));
 
   const auto &low = frame_at(pixels.frames(), 0).pixels;
   CHECK(count_color(low, kCyan) == 24);
@@ -132,6 +136,10 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
                     [](const auto pixel) { return pixel == local_argb::kBlack; }));
   CHECK(std::all_of(half.begin() + 75, half.end(),
                     [](const auto pixel) { return pixel == local_argb::kBlack; }));
+
+  const auto &ramp = frame_at(pixels.frames(), 50'000).pixels;
+  CHECK(count_color(ramp, kCyan) > count_color(low, kCyan));
+  CHECK(count_color(ramp, kCyan) < count_color(half, kCyan));
 
   const auto &full = frame_at(pixels.frames(), 200'000).pixels;
   CHECK(std::all_of(full.begin(), full.begin() + 35,
@@ -173,10 +181,11 @@ TEST_CASE("turn-only stale replay fails off after the inclusive freshness bounda
   gvret::ReplayClock clock;
   gvret::TimestampedPixelFrameSink pixels{clock};
 
-  const auto result = gvret::run_replay({turn(0, 0x20)}, clock, pixels, {260'000});
+  constexpr auto kStaleCheckTimeUs = mazda::kTurnFreshnessTimeoutUs + local_argb::kSupervisorPollUs;
+  const auto result = gvret::run_replay({turn(0, 0x20)}, clock, pixels, {kStaleCheckTimeUs});
 
   REQUIRE(result.ok());
-  CHECK(is_black(frame_at(pixels.frames(), 260'000).pixels));
+  CHECK(is_black(frame_at(pixels.frames(), kStaleCheckTimeUs).pixels));
 }
 
 TEST_CASE("transport silence leaves unavailable RPM output black") {
@@ -275,14 +284,13 @@ TEST_CASE("first pixel write emits the header implicitly") {
   CHECK(std::count(serialized.begin(), serialized.end(), '\n') == 2);
 }
 
-TEST_CASE("buffered output reports a synchronization failure when flushed") {
+TEST_CASE("JSONL stream ends with a completion marker") {
   gvret::ReplayClock clock;
-  FailingSyncBuffer buffer;
-  std::ostream output{&buffer};
+  std::ostringstream output;
   gvret::JsonlPixelFrameSink pixels{clock, output};
 
   REQUIRE(pixels.write(local_argb::kBlackFrame));
-  CHECK(output.good());
-  output.flush();
-  CHECK(output.fail());
+  REQUIRE(pixels.write_end());
+  CHECK(output.str().find("{\"type\":\"end\"}\n") != std::string::npos);
+  CHECK(pixels.write_end());
 }

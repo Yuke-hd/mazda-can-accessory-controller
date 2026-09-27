@@ -86,7 +86,7 @@ doctest_discover_tests(gvret_replay_controller_tests)
 
 add_executable(gvret_replay_scheduler_tests gvret_replay_scheduler_tests.cpp)
 target_link_libraries(gvret_replay_scheduler_tests PRIVATE gvret_replay_scheduler
-                                                            doctest::doctest)
+                                                           doctest::doctest)
 target_compile_features(gvret_replay_scheduler_tests PRIVATE cxx_std_17)
 if(MSVC)
   target_compile_options(gvret_replay_scheduler_tests PRIVATE /W4 /permissive-)
@@ -97,7 +97,8 @@ doctest_discover_tests(gvret_replay_scheduler_tests)
 
 add_executable(gvret_replay_output_tests gvret_replay_output_tests.cpp)
 target_link_libraries(gvret_replay_output_tests PRIVATE gvret_replay_output
-                                                         gvret_replay_scheduler doctest::doctest)
+                                                         gvret_replay_scheduler mazda
+                                                         doctest::doctest)
 target_compile_features(gvret_replay_output_tests PRIVATE cxx_std_17)
 if(MSVC)
   target_compile_options(gvret_replay_output_tests PRIVATE /W4 /permissive-)

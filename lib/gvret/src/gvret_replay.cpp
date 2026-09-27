@@ -22,6 +22,48 @@ struct Arguments {
   bool saw_end_time{false};
 };
 
+const char *controller_status_name(const gvret::ReplayControllerStatus status) {
+  switch (status) {
+  case gvret::ReplayControllerStatus::Ok:
+    return "ok";
+  case gvret::ReplayControllerStatus::InvalidState:
+    return "invalid state";
+  case gvret::ReplayControllerStatus::ConfigurationFailed:
+    return "configuration failed";
+  case gvret::ReplayControllerStatus::SynchronizationTimeout:
+    return "synchronization timeout";
+  case gvret::ReplayControllerStatus::TelemetryFault:
+    return "telemetry fault";
+  case gvret::ReplayControllerStatus::RendererFault:
+    return "renderer fault";
+  }
+  return "unknown controller failure";
+}
+
+void print_schedule_error(const gvret::ReplayScheduleResult &schedule) {
+  switch (schedule.status) {
+  case gvret::ReplayScheduleStatus::InvalidInput:
+    std::cerr << "error: invalid replay input\n";
+    break;
+  case gvret::ReplayScheduleStatus::InvalidOptions:
+    std::cerr << "error: invalid replay options: --end-us must cover the capture duration, "
+                 "and cadence periods must be non-zero\n";
+    break;
+  case gvret::ReplayScheduleStatus::ClockFailure:
+    std::cerr << "error: replay clock failure\n";
+    break;
+  case gvret::ReplayScheduleStatus::ControllerFailure:
+    std::cerr << "error: replay controller failure: "
+              << controller_status_name(schedule.controller_status);
+    if (schedule.stop_status != gvret::ReplayControllerStatus::Ok)
+      std::cerr << "; stop: " << controller_status_name(schedule.stop_status);
+    std::cerr << '\n';
+    break;
+  case gvret::ReplayScheduleStatus::Ok:
+    break;
+  }
+}
+
 void print_usage(std::ostream &stream) {
   stream << "Usage: gvret-replay inspect <capture.csv> [--bus <number>]\n"
          << "       gvret-replay render <capture.csv> --end-us <number> [options]\n"
@@ -58,7 +100,7 @@ bool parse_timestamp(const std::string_view text, vehicle_core::MonotonicTimesta
 }
 
 bool parse_period(const std::string_view text, vehicle_core::Microseconds &period_us) {
-  return parse_timestamp(text, period_us);
+  return parse_timestamp(text, period_us) && period_us != 0;
 }
 
 bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
@@ -76,18 +118,23 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
   }
 
   bool saw_path = false;
+  bool saw_bus = false;
+  bool saw_availability = false;
+  bool saw_output_tick = false;
+  bool saw_poll = false;
   for (int index = 2; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--bus") {
-      if (index + 1 >= argc || !parse_bus(argv[++index], arguments.bus)) {
+      if (saw_bus || index + 1 >= argc || !parse_bus(argv[++index], arguments.bus)) {
         return false;
       }
+      saw_bus = true;
       continue;
     }
 
     if (argument == "--end-us") {
-      if (arguments.command != Arguments::Command::Render || index + 1 >= argc ||
-          !parse_timestamp(argv[++index], arguments.schedule.end_time_us)) {
+      if (arguments.saw_end_time || arguments.command != Arguments::Command::Render ||
+          index + 1 >= argc || !parse_timestamp(argv[++index], arguments.schedule.end_time_us)) {
         return false;
       }
       arguments.saw_end_time = true;
@@ -99,12 +146,18 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
       if (arguments.command != Arguments::Command::Render || index + 1 >= argc) {
         return false;
       }
+      bool &saw_period = argument == "--availability-us"  ? saw_availability
+                         : argument == "--output-tick-us" ? saw_output_tick
+                                                          : saw_poll;
+      if (saw_period)
+        return false;
       auto &period = argument == "--availability-us"  ? arguments.schedule.availability_period_us
                      : argument == "--output-tick-us" ? arguments.schedule.output_tick_period_us
                                                       : arguments.schedule.poll_period_us;
       if (!parse_period(argv[++index], period)) {
         return false;
       }
+      saw_period = true;
       continue;
     }
 
@@ -160,13 +213,13 @@ int main(const int argc, char **argv) {
 
   gvret::ReplayClock clock;
   gvret::JsonlPixelFrameSink pixels{clock, std::cout};
-  if (!pixels.write_header()) {
-    std::cerr << "error: unable to write pixel output\n";
-    return 1;
-  }
   const auto schedule = gvret::run_replay(replay.frames, clock, pixels, arguments.schedule);
   if (!schedule.ok()) {
-    std::cerr << "error: replay failed\n";
+    print_schedule_error(schedule);
+    return 1;
+  }
+  if (!pixels.write_end()) {
+    std::cerr << "error: unable to write pixel output\n";
     return 1;
   }
   std::cout.flush();

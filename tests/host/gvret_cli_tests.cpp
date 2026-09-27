@@ -119,18 +119,26 @@ CommandResult run_inspect(const std::filesystem::path &input_path, const std::st
   return result;
 }
 
-CommandResult run_render(const std::filesystem::path &input_path, const std::string_view bus,
-                         const std::string_view end_us, TemporaryPath &standard_output,
-                         TemporaryPath &standard_error) {
-  const std::string command =
-      shell_quote(g_replay_executable) + " render " + shell_quote(input_path) + " --bus " +
-      std::string(bus) + " --end-us " + std::string(end_us) + " > " +
-      shell_quote(standard_output.path()) + " 2> " + shell_quote(standard_error.path());
+CommandResult run_render_options(const std::filesystem::path &input_path,
+                                 const std::string_view options, TemporaryPath &standard_output,
+                                 TemporaryPath &standard_error) {
+  const std::string command = shell_quote(g_replay_executable) + " render " +
+                              shell_quote(input_path) + " " + std::string(options) + " > " +
+                              shell_quote(standard_output.path()) + " 2> " +
+                              shell_quote(standard_error.path());
   CommandResult result;
   result.exit_code = std::system(command.c_str());
   result.standard_output = read_file(standard_output.path());
   result.standard_error = read_file(standard_error.path());
   return result;
+}
+
+CommandResult run_render(const std::filesystem::path &input_path, const std::string_view bus,
+                         const std::string_view end_us, TemporaryPath &standard_output,
+                         TemporaryPath &standard_error) {
+  return run_render_options(input_path,
+                            "--bus " + std::string(bus) + " --end-us " + std::string(end_us),
+                            standard_output, standard_error);
 }
 
 std::filesystem::path replay_executable_for(const char *test_executable) {
@@ -235,13 +243,19 @@ TEST_CASE("render command emits only relative timestamped 100-pixel JSONL") {
     const auto line_end = result.standard_output.find('\n', line_begin);
     REQUIRE(line_end != std::string::npos);
     const auto line = result.standard_output.substr(line_begin, line_end - line_begin);
-    CHECK(line.find("{\"type\":\"pixels\",\"timestamp_us\":") == 0);
-    CHECK(line.find("\"pixels\":[") != std::string::npos);
-    CHECK(std::count(line.begin(), line.end(), '[') == 101);
-    ++pixel_line_count;
+    if (line == "{\"type\":\"end\"}") {
+      CHECK(line_begin + line.size() == result.standard_output.size() - 1);
+    } else {
+      CHECK(line.find("{\"type\":\"pixels\",\"timestamp_us\":") == 0);
+      CHECK(line.find("\"pixels\":[") != std::string::npos);
+      CHECK(std::count(line.begin(), line.end(), '[') == 101);
+      ++pixel_line_count;
+    }
     line_begin = line_end + 1;
   }
   CHECK(pixel_line_count >= 2);
+  CHECK(result.standard_output.rfind("{\"type\":\"end\"}\n") ==
+        result.standard_output.size() - std::string{"{\"type\":\"end\"}\n"}.size());
 }
 
 TEST_CASE("render command requires an explicit bounded replay horizon") {
@@ -256,6 +270,65 @@ TEST_CASE("render command requires an explicit bounded replay horizon") {
   const int exit_code = std::system(command.c_str());
   CHECK(exit_code != 0);
   CHECK(read_file(standard_output.path()).empty());
+}
+
+TEST_CASE("render command reports invalid horizon and emits no stream") {
+  const TemporaryFile input("gvret-render-short-horizon",
+                            std::string(kHeader) +
+                                "\n100000,00000202,false,0,0\n101000,00000202,false,0,0\n");
+  TemporaryPath standard_output("gvret-render-short-horizon-stdout");
+  TemporaryPath standard_error("gvret-render-short-horizon-stderr");
+
+  const CommandResult result =
+      run_render(input.path(), "0", "500", standard_output, standard_error);
+
+  CHECK(result.exit_code != 0);
+  CHECK(result.standard_output.empty());
+  CHECK(result.standard_error.find("invalid replay options") != std::string::npos);
+  CHECK(result.standard_error.find("--end-us") != std::string::npos);
+}
+
+TEST_CASE("render command rejects zero cadence and repeated flags during parsing") {
+  const TemporaryFile input("gvret-render-invalid-options",
+                            std::string(kHeader) + "\n100000,00000202,false,0,0\n");
+  TemporaryPath standard_output("gvret-render-invalid-options-stdout");
+  TemporaryPath standard_error("gvret-render-invalid-options-stderr");
+
+  const CommandResult zero_period = run_render_options(
+      input.path(), "--bus 0 --end-us 100000 --poll-us 0", standard_output, standard_error);
+  CHECK(zero_period.exit_code != 0);
+  CHECK(zero_period.standard_output.empty());
+  CHECK(zero_period.standard_error.find("Usage:") != std::string::npos);
+
+  const CommandResult repeated_flag = run_render_options(
+      input.path(), "--bus 0 --end-us 100000 --end-us 100000", standard_output, standard_error);
+  CHECK(repeated_flag.exit_code != 0);
+  CHECK(repeated_flag.standard_output.empty());
+  CHECK(repeated_flag.standard_error.find("Usage:") != std::string::npos);
+}
+
+TEST_CASE("inspect command rejects render-only and unknown options") {
+  const TemporaryFile input("gvret-inspect-invalid-options",
+                            std::string(kHeader) + "\n100000,00000202,false,0,0\n");
+  TemporaryPath standard_output("gvret-inspect-invalid-options-stdout");
+  TemporaryPath standard_error("gvret-inspect-invalid-options-stderr");
+
+  const std::string inspect_end_command = shell_quote(g_replay_executable) + " inspect " +
+                                          shell_quote(input.path()) + " --end-us 100000 > " +
+                                          shell_quote(standard_output.path()) + " 2> " +
+                                          shell_quote(standard_error.path());
+  const int inspect_end_exit = std::system(inspect_end_command.c_str());
+  CHECK(inspect_end_exit != 0);
+  CHECK(read_file(standard_output.path()).empty());
+  CHECK(read_file(standard_error.path()).find("Usage:") != std::string::npos);
+
+  const std::string unknown_option_command =
+      shell_quote(g_replay_executable) + " inspect " + shell_quote(input.path()) + " --mystery > " +
+      shell_quote(standard_output.path()) + " 2> " + shell_quote(standard_error.path());
+  const int unknown_option_exit = std::system(unknown_option_command.c_str());
+  CHECK(unknown_option_exit != 0);
+  CHECK(read_file(standard_output.path()).empty());
+  CHECK(read_file(standard_error.path()).find("Usage:") != std::string::npos);
 }
 
 int main(int argc, char **argv) {

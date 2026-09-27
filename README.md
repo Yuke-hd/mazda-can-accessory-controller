@@ -151,9 +151,12 @@ reconstructable trip data.
 
 Host replay output is available through
 [`gvret-replay render`](docs/development/mcan-67-pixel-frame-output.md). It
-emits a versioned header followed by typed JSONL records carrying only
-relative timestamps and 100 RGB pixel values; supply an explicit replay
-horizon with `--end-us`.
+emits a versioned header followed by typed JSONL records carrying relative
+timestamps and 100 RGB pixel values; supply an explicit replay horizon with
+`--end-us`. The rendered RGB is derived vehicle telemetry: output from a real
+capture can reconstruct RPM bands and turn or hazard timing, so it follows the
+same privacy and publication restrictions as the capture. Publish only output
+generated from synthetic fixtures.
 
 ## Architecture and Data Flow
 

@@ -38,7 +38,8 @@ inline constexpr unsigned kJsonlFormatVersion = 1;
 
 // Writes a self-describing JSON-lines stream. The first line is a header
 // record declaring the format version and pixel count; each renderer write
-// then becomes one "pixels" record. Every record carries a "type" field. The
+// then becomes one "pixels" record. A successful stream ends with an "end"
+// record; consumers can reject streams without that marker as truncated. The
 // stream contains only replay-relative time and RGB values; CAN identity and
 // payload data never cross this output boundary.
 class JsonlPixelFrameSink final : public local_argb::PixelFrameSink {
@@ -50,6 +51,10 @@ public:
   // directly to make a stream with no pixel records self-describing.
   bool write_header() noexcept;
 
+  // Writes the terminal marker after a successful replay. A stream without
+  // this marker is incomplete, for example when replay or output fails.
+  bool write_end() noexcept;
+
   bool write(const local_argb::PixelFrame &frame) noexcept override;
 
   [[nodiscard]] bool good() const noexcept { return output_->good(); }
@@ -58,6 +63,7 @@ private:
   const ReplayClock *clock_;
   std::ostream *output_;
   bool wrote_header_{false};
+  bool wrote_end_{false};
 };
 
 } // namespace gvret
