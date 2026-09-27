@@ -8,26 +8,30 @@
 namespace gvret {
 namespace {
 
-// Bounds accidental multi-year schedules with a tiny cadence before any
-// controller or pixel output is touched.
+// Bounds generated cadence work with a tiny period before any controller or
+// pixel output is touched. Input frames are already materialized by the
+// caller, so they do not consume this schedule-event budget.
 constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
 
-[[nodiscard]] bool fits_event_budget(const std::size_t frame_count,
-                                     const ReplayScheduleOptions options) noexcept {
-  if (frame_count >= kMaximumScheduledEvents)
-    return false;
-  std::uint64_t remaining = kMaximumScheduledEvents - frame_count - 1; // EOF
+[[nodiscard]] bool fits_event_budget(const ReplayScheduleOptions options) noexcept {
+  std::uint64_t remaining = kMaximumScheduledEvents - 1; // EOF
   const auto fits = [&remaining](const std::uint64_t count) {
     if (count > remaining)
       return false;
     remaining -= count;
     return true;
   };
+  const auto fits_inclusive_cadence = [&remaining](const std::uint64_t elapsed_ticks) {
+    if (elapsed_ticks >= remaining)
+      return false;
+    remaining -= elapsed_ticks + 1;
+    return true;
+  };
   const auto availability = options.end_time_us / options.availability_period_us;
   const auto output_ticks = options.end_time_us / options.output_tick_period_us;
   const auto polls = options.end_time_us / options.poll_period_us;
-  return fits(availability) && output_ticks < remaining && fits(output_ticks + 1) &&
-         polls < remaining && fits(polls + 1);
+  return fits(availability) && fits_inclusive_cadence(output_ticks) &&
+         fits_inclusive_cadence(polls);
 }
 
 [[nodiscard]] ReplayScheduleStatus validate(const std::vector<TimedCanFrame> &frames,
@@ -46,8 +50,8 @@ constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
       return ReplayScheduleStatus::InvalidInput;
     previous = timed.relative_time_us;
   }
-  return fits_event_budget(frames.size(), options) ? ReplayScheduleStatus::Ok
-                                                   : ReplayScheduleStatus::InvalidOptions;
+  return fits_event_budget(options) ? ReplayScheduleStatus::Ok
+                                    : ReplayScheduleStatus::InvalidOptions;
 }
 
 [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp>

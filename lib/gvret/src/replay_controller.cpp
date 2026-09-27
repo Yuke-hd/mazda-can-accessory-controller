@@ -4,7 +4,9 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
+#include <type_traits>
 #include <utility>
 
 #include "action_engine/engine.hpp"
@@ -101,15 +103,6 @@ public:
     return true;
   }
 
-  void cancel_waits() noexcept {
-    {
-      std::lock_guard<std::mutex> lock{mutex_};
-      cancelled_ = true;
-      grant_pending_ = false;
-    }
-    ready_.notify_all();
-  }
-
   [[nodiscard]] vehicle_telemetry::ReceiveStatus last_receive() const noexcept {
     std::lock_guard<std::mutex> lock{mutex_};
     return last_receive_;
@@ -154,8 +147,15 @@ public:
                               const vehicle_core::Microseconds timeout_us) noexcept {
     std::unique_lock<std::mutex> lock{mutex_};
     const auto timeout = std::chrono::microseconds{timeout_us};
-    return changed_.wait_for(lock, timeout,
-                             [this, epoch] { return cancelled_ || completed_ >= epoch; }) &&
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = std::chrono::steady_clock::time_point::max() - now;
+    const auto remaining_us = std::chrono::duration_cast<std::chrono::microseconds>(remaining);
+    const auto deadline =
+        timeout <= remaining_us
+            ? now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(timeout)
+            : std::chrono::steady_clock::time_point::max();
+    return changed_.wait_until(lock, deadline,
+                               [this, epoch] { return cancelled_ || completed_ >= epoch; }) &&
            !cancelled_ && completed_ >= epoch;
   }
 
@@ -191,7 +191,7 @@ private:
   local_argb::internal::Mailbox *mailbox_;
 };
 
-[[nodiscard]] ReplayControllerStatus map_start_status(const mazda::ResultCode status) noexcept {
+[[nodiscard]] ReplayControllerStatus map_telemetry_status(const mazda::ResultCode status) noexcept {
   switch (status) {
   case mazda::ResultCode::Ok:
     return ReplayControllerStatus::Ok;
@@ -209,6 +209,17 @@ private:
     return ReplayControllerStatus::TelemetryFault;
   }
   return ReplayControllerStatus::TelemetryFault;
+}
+
+[[nodiscard]] bool
+valid_synchronization_timeout(const vehicle_core::Microseconds timeout_us) noexcept {
+  if (timeout_us == 0)
+    return false;
+
+  using TimeoutRep = std::chrono::microseconds::rep;
+  using ComparisonType = std::common_type_t<vehicle_core::Microseconds, TimeoutRep>;
+  return static_cast<ComparisonType>(timeout_us) <=
+         static_cast<ComparisonType>(std::numeric_limits<TimeoutRep>::max());
 }
 
 } // namespace
@@ -243,6 +254,8 @@ public:
   [[nodiscard]] ReplayControllerStatus start() noexcept {
     if (state_ != State::Ready)
       return ReplayControllerStatus::InvalidState;
+    if (!valid_synchronization_timeout(synchronization_timeout_us_))
+      return ReplayControllerStatus::ConfigurationFailed;
     state_ = State::Starting;
     if (!renderer_.start()) {
       state_ = State::Stopped;
@@ -266,7 +279,7 @@ public:
     const auto telemetry_status = telemetry_.start();
     if (!telemetry_status.ok()) {
       cleanup_failed_start();
-      return map_start_status(telemetry_status.status);
+      return map_telemetry_status(telemetry_status.status);
     }
 
     const auto drain =
@@ -284,6 +297,11 @@ public:
   }
 
   [[nodiscard]] ReplayStepResult process_next_frame() noexcept {
+    if (state_ != State::Running)
+      return {};
+    const auto next_time = source_.next_frame_time();
+    if (next_time.has_value() && *next_time > clock_->now())
+      return {ReplayControllerStatus::InvalidState, ReplayInputResult::Timeout};
     return process_input(GatedReplaySource::Grant::Receive);
   }
 
@@ -318,7 +336,6 @@ public:
       return ReplayControllerStatus::InvalidState;
 
     publication_barrier_.cancel();
-    gated_source_.cancel_waits();
     const auto telemetry_status = telemetry_.stop();
     const bool telemetry_quiescent =
         telemetry_.diagnostics().lifecycle == mazda::LifecycleState::Stopped;
@@ -337,7 +354,7 @@ public:
     if (telemetry_status.status == mazda::ResultCode::Faulted)
       return ReplayControllerStatus::TelemetryFault;
     if (!telemetry_status.ok())
-      return map_start_status(telemetry_status.status);
+      return map_telemetry_status(telemetry_status.status);
     return renderer_status;
   }
 
@@ -350,6 +367,9 @@ public:
 private:
   enum class State : std::uint8_t { Ready, Starting, Running, Failed, Stopped };
 
+  // Pinned to vehicle-can-core 0.1.0: each acquisition grant reaches exactly
+  // one on_diagnostics callback, which completes one publication epoch. The
+  // barrier below relies on that one-grant/one-on_diagnostics relationship.
   [[nodiscard]] ReplayStepResult process_input(const GatedReplaySource::Grant grant) noexcept {
     if (state_ != State::Running)
       return {};
@@ -404,7 +424,6 @@ private:
 
   void cleanup_failed_start() noexcept {
     publication_barrier_.cancel();
-    gated_source_.cancel_waits();
     if (telemetry_.diagnostics().lifecycle != mazda::LifecycleState::Stopped)
       (void)telemetry_.stop();
     const bool telemetry_quiescent =

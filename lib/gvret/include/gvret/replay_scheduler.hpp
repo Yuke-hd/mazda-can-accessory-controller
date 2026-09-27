@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <vector>
 
+#include "controller_config/timing.hpp"
 #include "gvret/replay_controller.hpp"
+#include "mazda/facade_contracts.hpp"
 
 namespace gvret {
 
@@ -32,11 +34,11 @@ struct ReplayScheduleOptions {
   // Inclusive replay horizon. Supply a tail beyond the last input timestamp
   // when freshness, polled rules, or animation must continue after EOF.
   vehicle_core::MonotonicTimestamp end_time_us{0};
-  vehicle_core::Microseconds availability_period_us{10'000};
+  vehicle_core::Microseconds availability_period_us{mazda::kDefaultAvailabilityServiceTargetUs};
   // Output-stage cadence. It belongs to the local ARGB stage (its worker
   // pass), not to replay; the stage is currently RendererController (#92).
   vehicle_core::Microseconds output_tick_period_us{local_argb::kSupervisorPollUs};
-  vehicle_core::Microseconds poll_period_us{100'000};
+  vehicle_core::Microseconds poll_period_us{controller_config::kPolledRuleSamplePeriodUs};
 };
 
 struct ReplayScheduleResult {
@@ -53,7 +55,12 @@ struct ReplayScheduleResult {
 };
 
 // Drive the host controller in replay time, with no wall-clock pacing. The
-// input must be the normalized, ordered sequence from prepare_replay(). At a
+// scheduler's event clock is deterministic, but each controller step still
+// waits up to ReplayController's 500 ms wall-clock synchronization timeout for
+// its worker-thread publication. A loaded host can therefore return
+// SynchronizationTimeout for an otherwise identical input; callers should
+// treat that status as host scheduling failure, not replay-time divergence.
+// The input must be the normalized, ordered sequence from prepare_replay(). At a
 // shared timestamp, all frames are delivered in source order, followed by
 // EOF (once), a due availability timeout, a polled-rule sample, and an
 // output-stage tick. Poll and output ticks run at time zero; availability
