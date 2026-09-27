@@ -56,8 +56,19 @@ Server to browser, in addition to the D1 `header`, `pixels`, and `end`:
 After `end` the connection now stays open so the page can restart. The
 server closes it when the page closes it (close 1000), when the process
 stops, or when the page sends something the emulator does not accept:
-unmasked or fragmented frames (1002), binary frames (1003), or text longer
-than 256 bytes (1009). Pings are answered with pongs.
+unmasked or fragmented frames, a 64-bit length with its most significant bit
+set, or a close frame with a one-byte payload or an invalid or reserved status
+code (1002); binary frames (1003); text or a close reason that is not valid
+UTF-8 (1007); or text longer than 256 bytes (1009). Pings are answered with
+pongs.
+
+The server handles one connection at a time. Because the session now stays
+open after `end`, a second tab, or any other request, waits in the listen
+queue until the first page closes its WebSocket; nothing tells the second tab
+why it is waiting. Close the first tab, or stop and restart the emulator.
+Answering extra connections with 503 is deferred: it needs the accept loop to
+run alongside the replay, and a reload fetches the new page before the old
+tab's WebSocket has closed, so a naive 503 would break reloads.
 
 ## Page controls
 
@@ -65,7 +76,10 @@ The page adds Play/Pause, Restart, and a rate selector. They are enabled only
 while a replay is streaming (Restart and rate also after `end`). The
 Play/Pause label and the selected rate follow the acknowledged `playback`
 record, and a `rejected` reason is appended to the status line until the
-next acknowledgement. A `restart` record clears the strip and returns the
+next acknowledgement. The rate selector shows only acknowledged state: it
+returns to the last acknowledged rate when the server rejects a choice, when
+the socket is not open so the choice cannot be sent, and when the controls
+become unavailable. A `restart` record clears the strip and returns the
 view to waiting for a header; a second header without it is still an invalid
 stream.
 
@@ -78,12 +92,16 @@ stream.
   replay time, restart, close, and control-message parsing.
 - `web_emulator_tests` plays the synthetic RPM, red-zone, turn, and hazard
   scenario through a loopback WebSocket client: every rate yields the
-  production D1 sequence and takes at least its scaled duration; nothing
-  arrives while paused; restart after `end` and restart while paused replay
+  production D1 sequence and, measured from the rate acknowledgement, takes
+  at least half the scaled duration of the replay time left after it (only a
+  lower bound is asserted); nothing arrives once a pause issued right after
+  the header is acknowledged; restart after `end` and restart while paused replay
   the same sequence from t=0; invalid controls are rejected; protocol errors
-  close with the right code. `ClientFrameDecoder` has its own unit tests.
+  close with the right code. `ClientFrameDecoder` has its own unit tests,
+  including UTF-8 validity and close status and reason checks.
 - `web_emulator_renderer_js_tests` covers the page's playback state, control
-  messages, control availability, and restart handling.
+  messages, control availability, restart handling, and the rate selector
+  returning to the acknowledged rate.
 
 ## Out of scope
 

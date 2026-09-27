@@ -360,6 +360,59 @@ test('the view reflects control availability and the acknowledged rate', () => {
   assert.equal(elements.rate.disabled, true);
 });
 
+test('a rejected rate choice reverts to the acknowledged rate', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 1));
+  Renderer.LedStripView.render(elements, playing, playing);
+
+  elements.rate.value = '5';
+  const refused = Renderer.reduce(playing, message(rejected('unsupported_rate')));
+  Renderer.LedStripView.render(elements, refused, playing);
+  assert.equal(elements.rate.value, '1');
+
+  // The same reason again is still a new rejection.
+  elements.rate.value = '2';
+  const refusedAgain = Renderer.reduce(refused, message(rejected('unsupported_rate')));
+  Renderer.LedStripView.render(elements, refusedAgain, refused);
+  assert.equal(elements.rate.value, '1');
+
+  // Later frames while the notice is shown leave a new choice alone.
+  elements.rate.value = '2';
+  const later = Renderer.reduce(refusedAgain, message(pixels(1, [[1, 1, 1]])));
+  Renderer.LedStripView.render(elements, later, refusedAgain);
+  assert.equal(elements.rate.value, '2');
+});
+
+test('a control request is sent only on an open socket, otherwise the rate reverts', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 0.5));
+  const sent = [];
+  const socket = { OPEN: 1, readyState: 1, send: (text) => sent.push(text) };
+
+  elements.rate.value = '2';
+  Renderer.LedStripView.requestControl(elements, playing, socket, '2');
+  assert.deepEqual(sent.map((text) => JSON.parse(text)), [
+    { type: 'control', command: 'rate', rate: 2 },
+  ]);
+  assert.equal(elements.rate.value, '2');
+
+  socket.readyState = 2;
+  elements.rate.value = '5';
+  Renderer.LedStripView.requestControl(elements, playing, socket, '5');
+  assert.equal(sent.length, 1);
+  assert.equal(elements.rate.value, '0.5');
+});
+
+test('an unavailable rate control shows the acknowledged rate', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 2));
+  Renderer.LedStripView.render(elements, playing, playing);
+  elements.rate.value = '5';
+  const disconnected = Renderer.reduce(playing, close);
+  Renderer.LedStripView.render(elements, disconnected, playing);
+  assert.equal(elements.rate.value, '2');
+});
+
 test('the status text is rewritten only when it changes', () => {
   const elements = fakeElements(1);
   const first = streaming(1, pixels(0, [[1, 1, 1]]));

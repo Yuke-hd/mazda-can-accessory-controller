@@ -684,6 +684,7 @@ private:
       return std::nullopt;
     case ClientFrameKind::Close:
     case ClientFrameKind::ProtocolError:
+    case ClientFrameKind::InvalidText:
     case ClientFrameKind::Unsupported:
     case ClientFrameKind::TooLarge:
       break;

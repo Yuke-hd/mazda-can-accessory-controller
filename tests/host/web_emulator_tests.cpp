@@ -19,6 +19,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <optional>
@@ -491,9 +492,17 @@ private:
   std::thread serving_;
 };
 
+// Replay time of a pixel record, or nullopt for any other record.
+static std::optional<std::uint64_t> pixel_timestamp_us(const std::string &record) {
+  constexpr std::string_view key = "{\"type\":\"pixels\",\"timestamp_us\":";
+  if (record.rfind(key, 0) != 0)
+    return std::nullopt;
+  return std::strtoull(record.c_str() + key.size(), nullptr, 10);
+}
+
 TEST_CASE("web emulator rate changes delivery timing but never the D1 frame sequence") {
   const auto expected = ProductionReplay::expected();
-  const auto scenario_duration = std::chrono::milliseconds(600);
+  constexpr std::uint64_t scenario_end_us = 600'000;
   for (const auto &rate_and_scale : std::vector<std::pair<std::string, double>>{
            {"0.25", 0.25}, {"0.5", 0.5}, {"1", 1.0}, {"2", 2.0}, {"5", 5.0}}) {
     const std::string &rate = rate_and_scale.first;
@@ -502,17 +511,29 @@ TEST_CASE("web emulator rate changes delivery timing but never the D1 frame sequ
     ProductionReplay replay;
     BrowserClient browser(replay.server());
     auto records = browser.read_through(kHeaderRecord);
-    const auto started = std::chrono::steady_clock::now();
     browser.send_rate(rate);
+    const auto until_acknowledged = browser.read_through(playback_state(false, rate));
+    const auto acknowledged = std::chrono::steady_clock::now();
     const auto rest = browser.read_through(kEndRecord, std::chrono::seconds(10));
-    const auto elapsed = std::chrono::steady_clock::now() - started;
+    const auto elapsed = std::chrono::steady_clock::now() - acknowledged;
+    records.insert(records.end(), until_acknowledged.begin(), until_acknowledged.end());
     records.insert(records.end(), rest.begin(), rest.end());
-
-    CHECK(std::find(records.begin(), records.end(), playback_state(false, rate)) != records.end());
     CHECK(d1_records(records) == expected);
-    // Replay time before the acknowledgement plays at 1x; allow for it.
-    const auto minimum =
-        std::chrono::duration_cast<std::chrono::milliseconds>(scenario_duration * 0.8 / scale);
+
+    // Only replay time after the acknowledgement is paced at the new rate.
+    // Measure from the first pixel frame after it, which bounds that span from
+    // below whatever the scheduler or the test thread's wake-up latency.
+    std::optional<std::uint64_t> paced_from_us;
+    for (const auto &record : rest) {
+      paced_from_us = pixel_timestamp_us(record);
+      if (paced_from_us)
+        break;
+    }
+    REQUIRE(paced_from_us.has_value());
+    REQUIRE(*paced_from_us <= scenario_end_us);
+    // Generous margin: only a lower bound is asserted, never an upper one.
+    const auto minimum = std::chrono::microseconds(static_cast<std::int64_t>(
+        static_cast<double>(scenario_end_us - *paced_from_us) * 0.5 / scale));
     CHECK(elapsed >= minimum);
   }
 }
@@ -521,13 +542,15 @@ TEST_CASE("web emulator pause stops replay time and resume continues from the sa
   ProductionReplay replay;
   BrowserClient browser(replay.server());
   auto records = browser.read_through(kHeaderRecord);
-  const auto first_pixels = browser.read_for(std::chrono::milliseconds(150));
-  records.insert(records.end(), first_pixels.begin(), first_pixels.end());
+  // Pause at once so the 600 ms scenario cannot reach its end first, and
+  // measure only after the pause is acknowledged.
   browser.send_control("pause");
   const auto until_paused = browser.read_through(playback_state(true, "1"));
+  REQUIRE(std::find(until_paused.begin(), until_paused.end(), kEndRecord) == until_paused.end());
   records.insert(records.end(), until_paused.begin(), until_paused.end());
 
-  // Nothing advances while paused: no pixel frames, no polls, no end.
+  // Nothing advances while paused: no pixel frames, no polls, no end. A slow
+  // host only makes this window quieter.
   CHECK(browser.read_for(std::chrono::milliseconds(300)).empty());
 
   browser.send_control("play");
@@ -611,6 +634,9 @@ TEST_CASE("web emulator answers pings and closes on client close or protocol err
           {"client close", 0x88, std::string("\x03\xe8", 2), true, 1000},
           {"unmasked frame", 0x81, "{\"type\":\"control\",\"command\":\"pause\"}", false, 1002},
           {"binary frame", 0x82, "x", true, 1003},
+          {"one-byte close", 0x88, std::string("\x03", 1), true, 1002},
+          {"reserved close code", 0x88, std::string("\x03\xed", 2), true, 1002},
+          {"invalid UTF-8 text", 0x81, "\xc3\x28", true, 1007},
           {"oversized text", 0x81, std::string(257, ' '), true, 1009},
       };
   for (const auto &closing_case : closing) {
@@ -673,6 +699,67 @@ TEST_CASE("client frame decoder unmasks text and answers control frames") {
       CHECK(fresh.next()->kind == replay::ClientFrameKind::ProtocolError);
     }
   }
+  SUBCASE("a 64-bit length with its most significant bit set") {
+    replay::ClientFrameDecoder fresh{16};
+    fresh.append(std::string{static_cast<char>(0x81), static_cast<char>(0xFF),
+                             static_cast<char>(0x80), 0, 0, 0, 0, 0, 0, 1});
+    CHECK(fresh.next()->kind == replay::ClientFrameKind::ProtocolError);
+  }
+  SUBCASE("text must be valid UTF-8") {
+    const std::vector<std::pair<std::string, bool>> texts{
+        {"caf\xc3\xa9", true},       // U+00E9
+        {"\xe2\x82\xac", true},      // U+20AC
+        {"\xf0\x9f\x98\x80", true},  // U+1F600
+        {"\xc3\x28", false},         // Bad continuation.
+        {"\xc0\xaf", false},         // Overlong '/'.
+        {"\xe0\x80\xaf", false},     // Overlong '/'.
+        {"\xed\xa0\x80", false},     // Surrogate U+D800.
+        {"\xf4\x90\x80\x80", false}, // Above U+10FFFF.
+        {"\xe2\x82", false},         // Truncated.
+        {"\xff", false},
+    };
+    for (const auto &text_case : texts) {
+      const std::string &text = text_case.first;
+      const bool valid = text_case.second;
+      CAPTURE(text);
+      replay::ClientFrameDecoder fresh{16};
+      fresh.append(masked(0x81, text));
+      const auto frame = fresh.next();
+      REQUIRE(frame.has_value());
+      CHECK(frame->kind ==
+            (valid ? replay::ClientFrameKind::Text : replay::ClientFrameKind::InvalidText));
+    }
+  }
+  SUBCASE("close frames carry nothing or a valid status and UTF-8 reason") {
+    const auto status = [](const std::uint16_t code, const std::string &reason = {}) {
+      return std::string{static_cast<char>(code >> 8U), static_cast<char>(code & 0xffU)} + reason;
+    };
+    const std::vector<std::pair<std::string, replay::ClientFrameKind>> closes{
+        {"", replay::ClientFrameKind::Close},
+        {status(1000, "bye"), replay::ClientFrameKind::Close},
+        {status(1001), replay::ClientFrameKind::Close},
+        {status(1014), replay::ClientFrameKind::Close},
+        {status(3000), replay::ClientFrameKind::Close},
+        {status(4999), replay::ClientFrameKind::Close},
+        {std::string("\x03", 1), replay::ClientFrameKind::ProtocolError},
+        {status(999), replay::ClientFrameKind::ProtocolError},
+        {status(1004), replay::ClientFrameKind::ProtocolError},
+        {status(1005), replay::ClientFrameKind::ProtocolError},
+        {status(1006), replay::ClientFrameKind::ProtocolError},
+        {status(1015), replay::ClientFrameKind::ProtocolError},
+        {status(2999), replay::ClientFrameKind::ProtocolError},
+        {status(5000), replay::ClientFrameKind::ProtocolError},
+        {status(1000, "\xc3\x28"), replay::ClientFrameKind::InvalidText},
+    };
+    for (const auto &close_case : closes) {
+      const std::string &payload = close_case.first;
+      CAPTURE(payload.size());
+      replay::ClientFrameDecoder fresh{16};
+      fresh.append(masked(0x88, payload) + masked(0x81, "late"));
+      CHECK(fresh.next()->kind == close_case.second);
+      CHECK_FALSE(fresh.next().has_value());
+    }
+  }
   SUBCASE("close ends the stream") {
     decoder.append(masked(0x88, std::string("\x03\xe8", 2)) + masked(0x81, "late"));
     CHECK(decoder.next()->kind == replay::ClientFrameKind::Close);
@@ -680,6 +767,7 @@ TEST_CASE("client frame decoder unmasks text and answers control frames") {
   }
   CHECK(replay::close_code_for(replay::ClientFrameKind::Text) == 0);
   CHECK(replay::close_code_for(replay::ClientFrameKind::TooLarge) == 1009);
+  CHECK(replay::close_code_for(replay::ClientFrameKind::InvalidText) == 1007);
 }
 
 TEST_CASE("web emulator rejects capture uploads") {

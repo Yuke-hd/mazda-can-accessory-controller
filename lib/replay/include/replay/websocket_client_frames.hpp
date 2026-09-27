@@ -11,11 +11,13 @@ namespace replay {
 // What a browser sent on the emulator WebSocket. Anything the emulator does
 // not accept ends the connection with the matching close code.
 enum class ClientFrameKind : std::uint8_t {
-  Text,          // A complete, unmasked text payload.
+  Text,          // A complete, unmasked, valid UTF-8 text payload.
   Ping,          // Must be answered with a pong carrying the same payload.
   Pong,          // Ignored.
   Close,         // The browser is closing; answer with close 1000.
-  ProtocolError, // Unmasked, fragmented, reserved bits, or bad control frame: close 1002.
+  ProtocolError, // Unmasked, fragmented, reserved bits, bad length, bad control frame,
+                 // or a close frame with an invalid status: close 1002.
+  InvalidText,   // A text payload or close reason that is not valid UTF-8: close 1007.
   Unsupported,   // Binary data: close 1003.
   TooLarge,      // A text message longer than the control limit: close 1009.
 };
