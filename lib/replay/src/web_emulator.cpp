@@ -2,6 +2,7 @@
 
 #include "replay/local_argb_stage.hpp"
 #include "replay/pixel_frame_output.hpp"
+#include "replay/web_emulator_assets.hpp"
 
 #include <algorithm>
 #include <array>
@@ -569,30 +570,6 @@ private:
   JsonlPixelFrameSink encoder_;
 };
 
-constexpr std::string_view kIndexHtml = R"HTML(<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>GVRET LED Emulator</title><link rel="stylesheet" href="/style.css"></head>
-<body><main><h1>GVRET LED Emulator</h1><p id="status">Connecting to local replay…</p>
-<pre id="protocol" aria-live="polite"></pre></main><script src="/app.js"></script></body>
-</html>
-)HTML";
-
-constexpr std::string_view kStyleCss =
-    R"CSS(:root{font-family:system-ui,sans-serif;color:#e8edf2;background:#101418}
-body{margin:0;min-height:100vh;display:grid;place-items:center}main{max-width:42rem;padding:2rem}
-h1{font-size:1.6rem}#status{color:#9ac7ff}pre{white-space:pre-wrap;color:#b7c4cc}
-)CSS";
-
-constexpr std::string_view kAppJs = R"JS((()=>{
-const status=document.querySelector('#status');const protocol=document.querySelector('#protocol');
-const scheme=location.protocol==='https:'?'wss':'ws';const socket=new WebSocket(`${scheme}://${location.host}/ws`);
-socket.onopen=()=>{status.textContent='Connected to local replay';};
-socket.onmessage=event=>{try{const message=JSON.parse(event.data);if(message.type==='header')status.textContent=`Replay connected (${message.pixel_count} pixels)`;if(message.type==='pixels')protocol.textContent=`Latest frame at ${message.timestamp_us} µs`;if(message.type==='end')status.textContent='Replay complete';}catch(_){status.textContent='Invalid replay message';}};
-socket.onerror=()=>{status.textContent='Local replay connection failed';};socket.onclose=()=>{if(status.textContent==='Connected to local replay')status.textContent='Replay disconnected';};
-})();
-)JS";
-
 bool serve_websocket(const SocketHandle socket, const std::vector<gvret::TimedCanFrame> &frames,
                      const WebEmulatorOptions &options, const std::atomic_bool &stop_requested,
                      const std::atomic_bool &server_shutdown) {
@@ -642,15 +619,9 @@ bool serve_http_client(const SocketHandle socket, const std::vector<gvret::Timed
     return serve_websocket(socket, frames, options, stop_requested, server_shutdown);
   }
 
-  if (request.target == "/" || request.target == "/index.html")
-    return send_http_response(socket, 200, "OK", "text/html; charset=utf-8", kIndexHtml,
-                              stop_requested, server_shutdown);
-  if (request.target == "/style.css")
-    return send_http_response(socket, 200, "OK", "text/css; charset=utf-8", kStyleCss,
-                              stop_requested, server_shutdown);
-  if (request.target == "/app.js")
-    return send_http_response(socket, 200, "OK", "text/javascript; charset=utf-8", kAppJs,
-                              stop_requested, server_shutdown);
+  if (const WebEmulatorAsset *asset = find_web_emulator_asset(request.target))
+    return send_http_response(socket, 200, "OK", asset->content_type, asset->body, stop_requested,
+                              server_shutdown);
   return send_http_response(socket, 404, "Not Found", "text/plain; charset=utf-8", "not found\n",
                             stop_requested, server_shutdown);
 }
