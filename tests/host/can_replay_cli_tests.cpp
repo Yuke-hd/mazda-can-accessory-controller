@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -305,6 +306,114 @@ TEST_CASE("render command rejects zero cadence and repeated flags during parsing
   CHECK(repeated_flag.exit_code != 0);
   CHECK(repeated_flag.standard_output.empty());
   CHECK(repeated_flag.standard_error.find("Usage:") != std::string::npos);
+}
+
+namespace {
+
+std::vector<std::string> lines_of_type(const std::string &stream, const std::string_view type) {
+  const std::string prefix = "{\"type\":\"" + std::string(type) + "\"";
+  std::vector<std::string> lines;
+  std::size_t line_begin = 0;
+  while (line_begin < stream.size()) {
+    const auto line_end = stream.find('\n', line_begin);
+    if (line_end == std::string::npos)
+      break;
+    auto line = stream.substr(line_begin, line_end - line_begin);
+    if (line.rfind(prefix, 0) == 0)
+      lines.push_back(std::move(line));
+    line_begin = line_end + 1;
+  }
+  return lines;
+}
+
+const std::string kTurnCapture = std::string(kHeader) +
+                                 "\n123456789,00000202,false,0,8,32,C8,00,00,00,00,00,00\n" +
+                                 "123556789,00000091,false,0,8,00,20,00,00,00,00,00,00\n";
+
+} // namespace
+
+TEST_CASE("render command emits signal records after the header only with --signals") {
+  const TemporaryFile input("gvret-render-signals", kTurnCapture);
+  TemporaryPath standard_output("gvret-render-signals-stdout");
+  TemporaryPath standard_error("gvret-render-signals-stderr");
+
+  const CommandResult result = run_render_options(input.path(), "--bus 0 --end-us 110000 --signals",
+                                                  standard_output, standard_error);
+
+  REQUIRE(result.exit_code == 0);
+  CHECK(result.standard_error.empty());
+  CHECK(result.standard_output.rfind("{\"type\":\"header\",\"version\":1,\"pixel_count\":100}\n",
+                                     0) == 0);
+  const auto signals = lines_of_type(result.standard_output, "signal");
+  REQUIRE_FALSE(signals.empty());
+  const std::string turn_left =
+      "{\"type\":\"signal\",\"timestamp_us\":100000,\"signal\":\"vehicle.turn_state\","
+      "\"value\":\"left\",\"unit\":null,\"freshness\":\"fresh\",\"availability\":\"fresh\",";
+  CHECK(std::any_of(signals.begin(), signals.end(), [&turn_left](const std::string &line) {
+    return line.rfind(turn_left, 0) == 0;
+  }));
+  CHECK(result.standard_output.find("123556789") == std::string::npos);
+  CHECK(result.standard_output.find("00000091") == std::string::npos);
+  CHECK_FALSE(lines_of_type(result.standard_output, "pixels").empty());
+  CHECK(result.standard_output.rfind("{\"type\":\"end\"}\n") ==
+        result.standard_output.size() - std::string{"{\"type\":\"end\"}\n"}.size());
+}
+
+TEST_CASE("render command output without --signals is unchanged by signal support") {
+  const TemporaryFile input("gvret-render-no-signals", kTurnCapture);
+  TemporaryPath standard_output("gvret-render-no-signals-stdout");
+  TemporaryPath standard_error("gvret-render-no-signals-stderr");
+  TemporaryPath signal_output("gvret-render-with-signals-stdout");
+
+  const CommandResult plain =
+      run_render(input.path(), "0", "110000", standard_output, standard_error);
+  const CommandResult with_signals = run_render_options(
+      input.path(), "--bus 0 --end-us 110000 --signals", signal_output, standard_error);
+
+  REQUIRE(plain.exit_code == 0);
+  REQUIRE(with_signals.exit_code == 0);
+  CHECK(lines_of_type(plain.standard_output, "signal").empty());
+  CHECK(lines_of_type(plain.standard_output, "pixels") ==
+        lines_of_type(with_signals.standard_output, "pixels"));
+}
+
+TEST_CASE("render command applies --signal-sample-us only together with --signals") {
+  const TemporaryFile input("gvret-render-signal-cadence", kTurnCapture);
+  TemporaryPath standard_output("gvret-render-signal-cadence-stdout");
+  TemporaryPath standard_error("gvret-render-signal-cadence-stderr");
+
+  const CommandResult sampled =
+      run_render_options(input.path(), "--bus 0 --end-us 110000 --signals --signal-sample-us 50000",
+                         standard_output, standard_error);
+  REQUIRE(sampled.exit_code == 0);
+  std::size_t rpm_records = 0;
+  for (const auto &line : lines_of_type(sampled.standard_output, "signal"))
+    if (line.find("\"signal\":\"vehicle.engine_rpm\"") != std::string::npos)
+      ++rpm_records;
+  CHECK(rpm_records == 3);
+
+  const CommandResult without_signals =
+      run_render_options(input.path(), "--bus 0 --end-us 110000 --signal-sample-us 50000",
+                         standard_output, standard_error);
+  CHECK(without_signals.exit_code != 0);
+  CHECK(without_signals.standard_output.empty());
+  CHECK(without_signals.standard_error.find("Usage:") != std::string::npos);
+
+  const CommandResult zero_cadence =
+      run_render_options(input.path(), "--bus 0 --end-us 110000 --signals --signal-sample-us 0",
+                         standard_output, standard_error);
+  CHECK(zero_cadence.exit_code != 0);
+  CHECK(zero_cadence.standard_output.empty());
+
+  const CommandResult short_horizon = run_render_options(
+      input.path(), "--bus 0 --end-us 50000 --signals", standard_output, standard_error);
+  CHECK(short_horizon.exit_code != 0);
+  CHECK(short_horizon.standard_output.empty());
+
+  const CommandResult repeated = run_render_options(
+      input.path(), "--bus 0 --end-us 110000 --signals --signals", standard_output, standard_error);
+  CHECK(repeated.exit_code != 0);
+  CHECK(repeated.standard_output.empty());
 }
 
 TEST_CASE("inspect command rejects render-only and unknown options") {

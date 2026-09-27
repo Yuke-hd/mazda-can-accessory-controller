@@ -27,7 +27,13 @@ target_include_directories(replay_output_stage INTERFACE ${CMAKE_CURRENT_SOURCE_
 target_link_libraries(replay_output_stage INTERFACE action_engine vehicle_core)
 target_compile_features(replay_output_stage INTERFACE cxx_std_17)
 
-add_library(replay_controller STATIC src/controller.cpp)
+# The signal-observer interface. It names only portable vehicle_signals types.
+add_library(replay_signal_observer INTERFACE)
+target_include_directories(replay_signal_observer INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(replay_signal_observer INTERFACE vehicle_signals vehicle_core)
+target_compile_features(replay_signal_observer INTERFACE cxx_std_17)
+
+add_library(replay_controller STATIC src/controller.cpp src/signal_observer_fan_out.cpp)
 target_include_directories(
   replay_controller
   PRIVATE
@@ -36,7 +42,7 @@ target_include_directories(
 )
 target_link_libraries(
   replay_controller
-  PUBLIC replay_source replay_output_stage
+  PUBLIC replay_source replay_output_stage replay_signal_observer
   PRIVATE action_engine mazda_telemetry
 )
 replay_warnings(replay_controller)
@@ -65,10 +71,20 @@ add_library(replay_pixel_output STATIC src/pixel_frame_output.cpp)
 target_link_libraries(replay_pixel_output PUBLIC replay_clock local_argb_pixel_frame)
 replay_warnings(replay_pixel_output)
 
+# JSONL "signal" records for SignalObservers.
+add_library(replay_signal_output STATIC src/signal_record_output.cpp)
+target_link_libraries(replay_signal_output PUBLIC replay_signal_observer)
+replay_warnings(replay_signal_output)
+
 add_executable(can-replay src/can_replay_cli.cpp)
 target_link_libraries(
   can-replay
-  PRIVATE gvret_parser replay_local_argb_stage replay_pixel_output replay_scheduler
+  PRIVATE
+    gvret_parser
+    replay_local_argb_stage
+    replay_pixel_output
+    replay_scheduler
+    replay_signal_output
 )
 target_compile_features(can-replay PRIVATE cxx_std_17)
 replay_warnings(can-replay)

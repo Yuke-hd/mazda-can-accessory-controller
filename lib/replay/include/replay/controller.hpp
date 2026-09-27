@@ -8,6 +8,7 @@
 #include "gvret/replay_stream.hpp"
 #include "replay/clock.hpp"
 #include "replay/output_stage.hpp"
+#include "replay/signal_observer.hpp"
 
 namespace replay {
 
@@ -35,10 +36,20 @@ struct ReplayStepResult final {
 // methods are the scheduling boundary used by replay tooling; none advances
 // the caller-owned clock. Call every lifecycle and operation method from the
 // same host thread; every OutputStage call runs there.
+//
+// Optional SignalObservers see the decoded signals alongside the output
+// stage: start() hands them the catalog and subscribes to notified signals
+// before telemetry starts, so the initial readings arrive at start time;
+// sample_signals() delivers the polled signals. A null observer fails start()
+// with ConfigurationFailed. With no observers, the controller behaves exactly
+// as without the observer seam.
 class ReplayController final {
 public:
   ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
                    OutputStage &output,
+                   vehicle_core::Microseconds synchronization_timeout_us = 500'000);
+  ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
+                   OutputStage &output, SignalObservers observers,
                    vehicle_core::Microseconds synchronization_timeout_us = 500'000);
   ~ReplayController() noexcept;
 
@@ -54,6 +65,9 @@ public:
   // Runtime diagnostic is published before the worker exits.
   [[nodiscard]] ReplayStepResult process_source_fault() noexcept;
   [[nodiscard]] ReplayControllerStatus sample_polled_rules() noexcept;
+  // Delivers each polled signal's current reading to the observers at the
+  // current replay time. A no-op without observers.
+  [[nodiscard]] ReplayControllerStatus sample_signals() noexcept;
   // One output-stage tick at the current replay time.
   [[nodiscard]] ReplayControllerStatus tick_output() noexcept;
   [[nodiscard]] ReplayControllerStatus stop() noexcept;

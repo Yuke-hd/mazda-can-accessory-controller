@@ -2,6 +2,7 @@
 #include "replay/local_argb_stage.hpp"
 #include "replay/pixel_frame_output.hpp"
 #include "replay/scheduler.hpp"
+#include "replay/signal_record_output.hpp"
 
 #include <charconv>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -21,6 +23,7 @@ struct Arguments {
   std::uint32_t bus{0};
   replay::ReplayScheduleOptions schedule{};
   bool saw_end_time{false};
+  bool emit_signals{false};
 };
 
 const char *controller_status_name(const replay::ReplayControllerStatus status) {
@@ -65,11 +68,40 @@ void print_schedule_error(const replay::ReplayScheduleResult &schedule) {
   }
 }
 
+// Signal records may precede the first pixel frame. The catalog arrives only
+// after the replay options were accepted, so the stream header is written
+// there and a rejected replay still emits nothing.
+class HeaderedSignalRecords final : public replay::SignalObserver {
+public:
+  HeaderedSignalRecords(replay::JsonlPixelFrameSink &pixels, std::ostream &output) noexcept
+      : pixels_(&pixels), records_(output) {}
+
+  void on_catalog(const vehicle_signals::SignalCatalogView catalog) noexcept override {
+    header_written_ = pixels_->write_header();
+    records_.on_catalog(catalog);
+  }
+
+  void on_reading(const vehicle_core::MonotonicTimestamp time_us,
+                  const vehicle_signals::SignalMetadata &signal,
+                  const vehicle_signals::SignalReading &reading) noexcept override {
+    if (header_written_)
+      records_.on_reading(time_us, signal, reading);
+  }
+
+  [[nodiscard]] bool good() const noexcept { return header_written_ && records_.good(); }
+
+private:
+  replay::JsonlPixelFrameSink *pixels_;
+  replay::JsonlSignalRecordWriter records_;
+  bool header_written_{false};
+};
+
 void print_usage(std::ostream &stream) {
   stream << "Usage: can-replay inspect <gvret-capture.csv> [--bus <number>]\n"
          << "       can-replay render <gvret-capture.csv> --end-us <number> [options]\n"
          << "Options: --bus <number> --availability-us <number> --output-tick-us <number> "
-            "--poll-us <number>\n";
+            "--poll-us <number>\n"
+         << "         --signals [--signal-sample-us <number>]\n";
 }
 
 bool parse_bus(const std::string_view text, std::uint32_t &bus) {
@@ -123,6 +155,7 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
   bool saw_availability = false;
   bool saw_output_tick = false;
   bool saw_poll = false;
+  bool saw_signal_sample = false;
   for (int index = 2; index < argc; ++index) {
     const std::string_view argument = argv[index];
     if (argument == "--bus") {
@@ -166,12 +199,32 @@ bool parse_arguments(const int argc, char **argv, Arguments &arguments) {
       continue;
     }
 
+    if (argument == "--signals") {
+      if (arguments.emit_signals || arguments.command != Arguments::Command::Render)
+        return false;
+      arguments.emit_signals = true;
+      continue;
+    }
+
+    if (argument == "--signal-sample-us") {
+      vehicle_core::Microseconds period = 0;
+      if (saw_signal_sample || arguments.command != Arguments::Command::Render ||
+          index + 1 >= argc || !parse_period(argv[++index], period)) {
+        return false;
+      }
+      arguments.schedule.signal_sample_period_us = period;
+      saw_signal_sample = true;
+      continue;
+    }
+
     if (argument.rfind("--", 0) == 0 || saw_path) {
       return false;
     }
     arguments.input_path = argument;
     saw_path = true;
   }
+  if (saw_signal_sample && !arguments.emit_signals)
+    return false;
   return saw_path && (arguments.command == Arguments::Command::Inspect || arguments.saw_end_time);
 }
 
@@ -219,9 +272,18 @@ int main(const int argc, char **argv) {
   replay::ReplayClock clock;
   replay::JsonlPixelFrameSink pixels{clock, std::cout};
   replay::LocalArgbOutputStage output{pixels};
-  const auto schedule = replay::run_replay(replay.frames, clock, output, arguments.schedule);
+  HeaderedSignalRecords signal_records{pixels, std::cout};
+  replay::SignalObservers observers{};
+  if (arguments.emit_signals)
+    observers.push_back(&signal_records);
+  const auto schedule =
+      replay::run_replay(replay.frames, clock, output, std::move(observers), arguments.schedule);
   if (!schedule.ok()) {
     print_schedule_error(schedule);
+    return 1;
+  }
+  if (arguments.emit_signals && !signal_records.good()) {
+    std::cerr << "error: unable to write signal output\n";
     return 1;
   }
   if (!pixels.write_end()) {

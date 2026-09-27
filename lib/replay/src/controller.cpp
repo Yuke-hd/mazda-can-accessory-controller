@@ -15,6 +15,7 @@
 #include "mazda/vehicle_telemetry_internal.hpp"
 #include "mazda/vehicle_telemetry_service.hpp"
 #include "replay/acquisition_source.hpp"
+#include "signal_observer_fan_out.hpp"
 #include "vehicle_telemetry/receive.hpp"
 
 namespace replay {
@@ -207,9 +208,11 @@ valid_synchronization_timeout(const vehicle_core::Microseconds timeout_us) noexc
 class ReplayController::Implementation final {
 public:
   Implementation(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock, OutputStage &output,
+                 SignalObservers observers,
                  const vehicle_core::Microseconds synchronization_timeout_us)
       : clock_(&clock), source_(std::move(frames), clock), gated_source_(source_),
-        signal_provider_(telemetry_), engine_(signal_provider_), output_(&output),
+        signal_provider_(telemetry_), engine_(signal_provider_),
+        observers_(signal_provider_, clock, std::move(observers)), output_(&output),
         synchronization_timeout_us_(synchronization_timeout_us) {
     mazda::internal::VehicleTelemetryAccess::emplace_host_service(
         telemetry_, clock, gated_source_, telemetry_lighting_, {}, {&publication_barrier_, true});
@@ -239,7 +242,7 @@ public:
       state_ = State::Stopped;
       return ReplayControllerStatus::OutputFault;
     }
-    if (!configured_) {
+    if (!configured_ || !observers_.configured()) {
       (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::ConfigurationFailed;
@@ -251,6 +254,10 @@ public:
         (void)engine_.detach();
       (void)release_output();
       state_ = State::Stopped;
+      return ReplayControllerStatus::TelemetryFault;
+    }
+    if (!observers_.attach()) {
+      cleanup_failed_start();
       return ReplayControllerStatus::TelemetryFault;
     }
 
@@ -299,6 +306,14 @@ public:
     return fail(ReplayControllerStatus::TelemetryFault);
   }
 
+  [[nodiscard]] ReplayControllerStatus sample_signals() noexcept {
+    if (state_ != State::Running)
+      return ReplayControllerStatus::InvalidState;
+    if (observers_.sample())
+      return ReplayControllerStatus::Ok;
+    return fail(ReplayControllerStatus::TelemetryFault);
+  }
+
   [[nodiscard]] ReplayControllerStatus tick_output() noexcept {
     if (state_ != State::Running)
       return ReplayControllerStatus::InvalidState;
@@ -316,8 +331,8 @@ public:
     const auto telemetry_status = telemetry_.stop();
     const bool telemetry_quiescent =
         telemetry_.diagnostics().lifecycle == mazda::LifecycleState::Stopped;
-    if (telemetry_quiescent && engine_.attached())
-      (void)engine_.detach();
+    if (telemetry_quiescent)
+      detach_signal_consumers();
 
     // Every stop fails the output off before releasing the stage, so a
     // completed replay cannot leave its last output active.
@@ -406,6 +421,14 @@ private:
                                         : ReplayControllerStatus::OutputFault;
   }
 
+  // Subscriptions may only change while telemetry is stopped.
+  void detach_signal_consumers() noexcept {
+    if (engine_.attached())
+      (void)engine_.detach();
+    if (observers_.attached())
+      (void)observers_.detach();
+  }
+
   // A controller left Failed releases the stage through a later stop() or
   // its destructor; one left Stopped releases it here.
   void cleanup_failed_start() noexcept {
@@ -414,9 +437,10 @@ private:
       (void)telemetry_.stop();
     const bool telemetry_quiescent =
         telemetry_.diagnostics().lifecycle == mazda::LifecycleState::Stopped;
-    if (telemetry_quiescent && engine_.attached())
-      (void)engine_.detach();
-    state_ = telemetry_quiescent && !engine_.attached() ? State::Stopped : State::Failed;
+    if (telemetry_quiescent)
+      detach_signal_consumers();
+    state_ = telemetry_quiescent && !engine_.attached() && !observers_.attached() ? State::Stopped
+                                                                                  : State::Failed;
     if (state_ == State::Stopped)
       (void)release_output();
     else
@@ -431,6 +455,7 @@ private:
   mazda::VehicleTelemetry telemetry_{};
   mazda::MazdaSignalProvider signal_provider_;
   action_engine::ActionEngine engine_;
+  SignalObserverFanOut observers_;
   OutputStage *output_;
   vehicle_core::Microseconds synchronization_timeout_us_;
   State state_{State::Ready};
@@ -440,8 +465,13 @@ private:
 ReplayController::ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
                                    OutputStage &output,
                                    const vehicle_core::Microseconds synchronization_timeout_us)
-    : implementation_(std::make_unique<Implementation>(std::move(frames), clock, output,
-                                                       synchronization_timeout_us)) {}
+    : ReplayController(std::move(frames), clock, output, {}, synchronization_timeout_us) {}
+
+ReplayController::ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
+                                   OutputStage &output, SignalObservers observers,
+                                   const vehicle_core::Microseconds synchronization_timeout_us)
+    : implementation_(std::make_unique<Implementation>(
+          std::move(frames), clock, output, std::move(observers), synchronization_timeout_us)) {}
 
 ReplayController::~ReplayController() noexcept = default;
 
@@ -461,6 +491,10 @@ ReplayStepResult ReplayController::process_source_fault() noexcept {
 
 ReplayControllerStatus ReplayController::sample_polled_rules() noexcept {
   return implementation_->sample_polled_rules();
+}
+
+ReplayControllerStatus ReplayController::sample_signals() noexcept {
+  return implementation_->sample_signals();
 }
 
 ReplayControllerStatus ReplayController::tick_output() noexcept {
