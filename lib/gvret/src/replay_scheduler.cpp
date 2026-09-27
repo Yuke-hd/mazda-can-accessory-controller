@@ -24,17 +24,17 @@ constexpr std::uint64_t kMaximumScheduledEvents = 2'000'000;
     return true;
   };
   const auto availability = options.end_time_us / options.availability_period_us;
-  const auto renders = options.end_time_us / options.render_period_us;
+  const auto output_ticks = options.end_time_us / options.output_tick_period_us;
   const auto polls = options.end_time_us / options.poll_period_us;
-  return fits(availability) && renders < remaining && fits(renders + 1) && polls < remaining &&
-         fits(polls + 1);
+  return fits(availability) && output_ticks < remaining && fits(output_ticks + 1) &&
+         polls < remaining && fits(polls + 1);
 }
 
 [[nodiscard]] ReplayScheduleStatus validate(const std::vector<TimedCanFrame> &frames,
                                             const ReplayClock &clock,
                                             const ReplayScheduleOptions options) noexcept {
-  if (clock.now() != 0 || options.availability_period_us == 0 || options.render_period_us == 0 ||
-      options.poll_period_us == 0)
+  if (clock.now() != 0 || options.availability_period_us == 0 ||
+      options.output_tick_period_us == 0 || options.poll_period_us == 0)
     return ReplayScheduleStatus::InvalidOptions;
   if (!frames.empty() && (frames.front().relative_time_us != 0 ||
                           frames.back().relative_time_us > options.end_time_us))
@@ -94,13 +94,13 @@ ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &
           ? std::optional<vehicle_core::MonotonicTimestamp>{options.availability_period_us}
           : std::nullopt;
   std::optional<vehicle_core::MonotonicTimestamp> poll{0};
-  std::optional<vehicle_core::MonotonicTimestamp> render{0};
+  std::optional<vehicle_core::MonotonicTimestamp> output_tick{0};
 
   while (result.ok()) {
     auto due = controller.next_frame_time();
     include_earlier(due, availability);
     include_earlier(due, poll);
-    include_earlier(due, render);
+    include_earlier(due, output_tick);
     if (!due)
       break;
     if (!clock.advance_to(*due)) {
@@ -160,15 +160,15 @@ ReplayScheduleResult run_replay(std::vector<TimedCanFrame> frames, ReplayClock &
       record(events, *due, ReplayEventKind::Poll);
       poll = next_deadline(*due, options.poll_period_us, options.end_time_us);
     }
-    if (render == due) {
+    if (output_tick == due) {
       result.controller_status = controller.render();
       if (result.controller_status != ReplayControllerStatus::Ok) {
         result.status = ReplayScheduleStatus::ControllerFailure;
         break;
       }
-      ++result.renderer_ticks;
-      record(events, *due, ReplayEventKind::Render);
-      render = next_deadline(*due, options.render_period_us, options.end_time_us);
+      ++result.output_ticks;
+      record(events, *due, ReplayEventKind::OutputTick);
+      output_tick = next_deadline(*due, options.output_tick_period_us, options.end_time_us);
     }
   }
 

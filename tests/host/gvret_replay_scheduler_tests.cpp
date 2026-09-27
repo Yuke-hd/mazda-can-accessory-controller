@@ -84,7 +84,7 @@ std::size_t colored_pixels(const local_argb::PixelFrame &frame) {
 
 } // namespace
 
-TEST_CASE("held turn animates at render ticks without new CAN frames") {
+TEST_CASE("held turn animates at output-stage ticks without new CAN frames") {
   gvret::ReplayClock clock;
   RecordingPixels pixels{clock};
   const auto result = gvret::run_replay({left_turn(0)}, clock, pixels, {40'000});
@@ -122,7 +122,7 @@ TEST_CASE("RPM frame takes effect at the next 100 ms sample") {
   CHECK(colored_pixels(first_color->pixels) == 50);
 }
 
-TEST_CASE("equal-time rows precede timeout, poll, and render in source order") {
+TEST_CASE("equal-time rows precede timeout, poll, and output tick in source order") {
   gvret::ReplayClock clock;
   RecordingPixels pixels{clock};
   RecordingEvents events;
@@ -135,15 +135,15 @@ TEST_CASE("equal-time rows precede timeout, poll, and render in source order") {
   CHECK(events.events()[1].kind == gvret::ReplayEventKind::Frame);
   CHECK(events.events()[2].kind == gvret::ReplayEventKind::EndOfStream);
   CHECK(events.events()[3].kind == gvret::ReplayEventKind::Poll);
-  CHECK(events.events()[4].kind == gvret::ReplayEventKind::Render);
+  CHECK(events.events()[4].kind == gvret::ReplayEventKind::OutputTick);
   CHECK(events.events()[5].kind == gvret::ReplayEventKind::Timeout);
-  CHECK(events.events()[6].kind == gvret::ReplayEventKind::Render);
+  CHECK(events.events()[6].kind == gvret::ReplayEventKind::OutputTick);
   CHECK(events.events()[0].time_us == 0);
   CHECK(events.events()[5].time_us == 10'000);
   CHECK(result.frames_delivered == 2);
 }
 
-TEST_CASE("frame, EOF, timeout, poll, and render ties follow the documented order") {
+TEST_CASE("frame, EOF, timeout, poll, and output tick ties follow the documented order") {
   gvret::ReplayClock clock;
   RecordingPixels pixels{clock};
   RecordingEvents events;
@@ -161,7 +161,7 @@ TEST_CASE("frame, EOF, timeout, poll, and render ties follow the documented orde
   CHECK(events.events()[5].kind == gvret::ReplayEventKind::EndOfStream);
   CHECK(events.events()[6].kind == gvret::ReplayEventKind::Timeout);
   CHECK(events.events()[7].kind == gvret::ReplayEventKind::Poll);
-  CHECK(events.events()[8].kind == gvret::ReplayEventKind::Render);
+  CHECK(events.events()[8].kind == gvret::ReplayEventKind::OutputTick);
 }
 
 TEST_CASE("repeated replay produces identical event and pixel traces") {
@@ -218,10 +218,18 @@ TEST_CASE("empty replay reports EOF and runs inclusive tail cadence") {
   CHECK(result.frames_delivered == 0);
   CHECK(result.timeout_publications == 2);
   CHECK(result.polled_samples == 1);
-  CHECK(result.renderer_ticks == 3);
+  CHECK(result.output_ticks == 3);
   CHECK(clock.now() == 20'000);
   CHECK(events.events().front().kind == gvret::ReplayEventKind::EndOfStream);
   CHECK(is_black(pixels.frames().back().pixels));
+}
+
+TEST_CASE("default cadences follow the firmware poll and local ARGB output stage") {
+  const gvret::ReplayScheduleOptions options{};
+
+  CHECK(options.poll_period_us == 100'000);
+  CHECK(options.output_tick_period_us == local_argb::kSupervisorPollUs);
+  CHECK(options.output_tick_period_us == 10'000);
 }
 
 TEST_CASE("an end between cadence ticks still ends at the exact replay horizon") {
@@ -232,7 +240,7 @@ TEST_CASE("an end between cadence ticks still ends at the exact replay horizon")
 
   CHECK(result.ok());
   CHECK(result.timeout_publications == 1);
-  CHECK(result.renderer_ticks == 2);
+  CHECK(result.output_ticks == 2);
   CHECK(clock.now() == 10'001);
 }
 
@@ -296,5 +304,5 @@ TEST_CASE("maximum timestamp with sparse cadence completes without deadline wrap
   CHECK(clock.now() == largest);
   CHECK(result.timeout_publications == 1);
   CHECK(result.polled_samples == 2);
-  CHECK(result.renderer_ticks == 2);
+  CHECK(result.output_ticks == 2);
 }
