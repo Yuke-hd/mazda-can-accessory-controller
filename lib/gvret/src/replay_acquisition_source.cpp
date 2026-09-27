@@ -53,4 +53,13 @@ bool ReplayAcquisitionSource::end_of_stream() const noexcept {
   return next_frame_ == frames_.size();
 }
 
+std::optional<vehicle_core::MonotonicTimestamp>
+ReplayAcquisitionSource::next_frame_time() const noexcept {
+  std::lock_guard<std::mutex> lock{mutex_};
+  if (next_frame_ == frames_.size()) {
+    return std::nullopt;
+  }
+  return frames_[next_frame_].relative_time_us;
+}
+
 } // namespace gvret

@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include <optional>
 #include <vector>
 
 #include "gvret/replay_acquisition_source.hpp"
@@ -70,6 +71,25 @@ TEST_CASE("multiple timed frames wait for the clock and preserve equal time orde
   CHECK(frame.identifier == 0x204);
   CHECK(source.end_of_stream());
   CHECK(source.statistics().frames_received == 4);
+}
+
+TEST_CASE("next scheduled time can be inspected without consuming input") {
+  gvret::ReplayClock clock;
+  gvret::ReplayAcquisitionSource source{{timed_frame(25, 0x251), timed_frame(75, 0x252)}, clock};
+  vehicle_core::RawCanFrame frame{};
+
+  REQUIRE(source.start().ok());
+  CHECK(source.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{25});
+  CHECK(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::Timeout);
+  CHECK(source.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{25});
+
+  REQUIRE(clock.advance_to(25));
+  REQUIRE(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::Frame);
+  CHECK(source.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{75});
+
+  REQUIRE(clock.advance_to(75));
+  REQUIRE(source.receive(frame, 0) == vehicle_telemetry::ReceiveStatus::Frame);
+  CHECK_FALSE(source.next_frame_time().has_value());
 }
 
 TEST_CASE("source start and stop enforce one-shot lifecycle") {

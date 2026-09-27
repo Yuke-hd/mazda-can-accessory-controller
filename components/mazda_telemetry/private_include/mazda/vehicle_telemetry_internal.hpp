@@ -16,13 +16,18 @@ public:
   [[nodiscard]] static const VehicleTelemetryService &
   service(const VehicleTelemetry &facade) noexcept;
 #if !defined(ESP_PLATFORM)
-  // Host-only test seam: replace a stopped facade's private service with one
-  // bound to an injected clock, acquisition source and lighting sink, so host
-  // tests exercise the production runtime, decoder and publication path.
+  // Host composition seam: replace a stopped facade's private service with
+  // one bound to an injected clock and acquisition source. Deterministic
+  // replay may additionally select manual notification dispatch and a
+  // post-publication worker control without exposing either through the
+  // value-only public facade.
   static void emplace_host_service(VehicleTelemetry &facade, vehicle_core::MonotonicClock &clock,
                                    vehicle_telemetry::AcquisitionSource &source,
                                    LightingSink &lighting_sink,
-                                   const TelemetryConfig &config = {}) noexcept;
+                                   const TelemetryConfig &config = {},
+                                   HostServiceOptions host_options = {}) noexcept;
+  [[nodiscard]] static Result<std::size_t>
+  drain_host_notifications(VehicleTelemetry &facade) noexcept;
 #endif
 };
 
