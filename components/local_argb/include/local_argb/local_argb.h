@@ -1,37 +1,23 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 
+#include "local_argb/pixel_frame.hpp"
 #include "vehicle_core/time.hpp"
 
 namespace local_argb {
 
 // Generic renderer values. No vehicle, transport, board, or RTOS
-// type crosses the ordinary local_argb include boundary.
-struct Rgb {
-  std::uint8_t red{0};
-  std::uint8_t green{0};
-  std::uint8_t blue{0};
-};
-
-constexpr bool operator==(const Rgb &left, const Rgb &right) noexcept {
-  return left.red == right.red && left.green == right.green && left.blue == right.blue;
-}
-constexpr bool operator!=(const Rgb &left, const Rgb &right) noexcept { return !(left == right); }
-
+// type crosses the ordinary local_argb include boundary. Rgb, kBlack,
+// kLedCount, PixelFrame, kBlackFrame, and PixelFrameSink come from the renderer-
+// independent frame contract in local_argb/pixel_frame.hpp.
 inline constexpr std::uint8_t kBrightnessCeiling = 16;
-inline constexpr Rgb kBlack{};
-inline constexpr std::size_t kLedCount = 100;
 inline constexpr std::size_t kTurnLedCount = 35;
 inline constexpr std::size_t kBrakeLedStart = kTurnLedCount;
 inline constexpr std::size_t kBrakeLedCount = 30;
 inline constexpr std::size_t kRightTurnLedStart = kBrakeLedStart + kBrakeLedCount;
 static_assert(kRightTurnLedStart + kTurnLedCount == kLedCount);
-
-using PixelFrame = std::array<Rgb, kLedCount>;
-inline constexpr PixelFrame kBlackFrame{};
 
 // These timing values describe renderer supervision, not vehicle freshness.
 // Freshness deadlines are carried by the private LightingCommand handoff.
@@ -51,18 +37,12 @@ inline constexpr vehicle_core::Microseconds kProgressStallFailOffUs = 2'000'000;
 inline constexpr vehicle_core::Microseconds kProgressFailOffBoundUs =
     kProgressStallFailOffUs + 2 * kSupervisorPollUs;
 
+// Compatibility seam for the older single-colour host model; the renderer
+// writes whole frames to PixelFrameSink.
 class PixelSink {
 public:
   virtual ~PixelSink() = default;
   virtual bool write(Rgb color) noexcept = 0;
-};
-
-// Strip-facing sink used by the renderer. PixelSink above remains as a
-// compatibility seam for the older single-colour host model.
-class PixelFrameSink {
-public:
-  virtual ~PixelFrameSink() = default;
-  virtual bool write(const PixelFrame &frame) noexcept = 0;
 };
 
 // Reads a wrapping count that a monitored loop advances on every pass.

@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "gvret/replay_clock.hpp"
-#include "local_argb/local_argb.h"
+#include "local_argb/pixel_frame.hpp"
 
 namespace gvret {
 
