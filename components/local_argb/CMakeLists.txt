@@ -1,7 +1,8 @@
 if(COMMAND idf_component_register)
   idf_component_register(
     SRCS "src/local_argb.cpp" "src/led_zone.cpp" "src/local_argb_idf.cpp"
-    INCLUDE_DIRS "include"
+    # Re-exports only the frame contract root, not the sink contract root.
+    INCLUDE_DIRS "include" "../local_argb_sink_contract/frame_include"
     PRIV_INCLUDE_DIRS "private_include"
     REQUIRES board vehicle_core esp_timer led_strip esp_driver_spi
     PRIV_REQUIRES freertos local_argb_sink_contract
@@ -16,7 +17,7 @@ target_include_directories(
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/private_include
 )
-target_link_libraries(local_argb PUBLIC vehicle_core)
+target_link_libraries(local_argb PUBLIC vehicle_core local_argb_pixel_frame)
 target_link_libraries(local_argb PRIVATE local_argb_sink_contract)
 target_compile_features(local_argb PUBLIC cxx_std_17)
 

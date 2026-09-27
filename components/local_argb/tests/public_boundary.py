@@ -25,6 +25,7 @@ def main() -> int:
     compatibility_root = root / "components/local_argb_compat/include/local_argb"
     sink_component_root = root / "components/local_argb_sink_contract"
     sink_root = sink_component_root / "include/local_argb"
+    frame_root = sink_component_root / "frame_include/local_argb"
     cmake = root / "components/local_argb/CMakeLists.txt"
     sink_cmake = sink_component_root / "CMakeLists.txt"
     failures: list[str] = []
@@ -59,6 +60,8 @@ def main() -> int:
         failures.append("firmware compatibility source is missing from its dedicated source root")
     if not (sink_root / "lighting_sink.hpp").is_file():
         failures.append("lighting sink contract is missing from its dedicated internal include root")
+    if not (frame_root / "pixel_frame.hpp").is_file():
+        failures.append("pixel frame contract is missing from its dedicated frame include root")
     if "add_library(local_argb_sink_contract INTERFACE)" not in sink_cmake.read_text(encoding="utf-8"):
         failures.append("authorized local_argb sink contract target is missing")
 
@@ -82,6 +85,8 @@ def main() -> int:
                 "-I",
                 str(root / "components/local_argb/include"),
                 "-I",
+                str(frame_root.parent),
+                "-I",
                 str(core_root / "components/vehicle_core/include"),
                 "-c",
                 str(probe),
@@ -93,6 +98,39 @@ def main() -> int:
         )
         if result.returncode != 0:
             failures.append(f"generic local_argb header failed without Mazda: {result.stderr.strip()}")
+
+        # A frame consumer implements PixelFrameSink from the frame root alone,
+        # without the renderer, vehicle_core, ESP-IDF, or Mazda include roots.
+        frame_probe = directory_path / "frame_probe.cpp"
+        frame_probe.write_text(
+            '#include "local_argb/pixel_frame.hpp"\n'
+            "struct Probe final : local_argb::PixelFrameSink {\n"
+            "  bool write(const local_argb::PixelFrame &frame) noexcept override {\n"
+            "    return frame == local_argb::kBlackFrame;\n"
+            "  }\n"
+            "};\n"
+            "int main() { Probe probe; return probe.write(local_argb::kBlackFrame) ? 0 : 1; }\n",
+            encoding="utf-8",
+        )
+        frame_result = subprocess.run(
+            [
+                compiler,
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-I",
+                str(frame_root.parent),
+                "-c",
+                str(frame_probe),
+                "-o",
+                str(directory_path / "frame_probe.o"),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if frame_result.returncode != 0:
+            failures.append(f"standalone pixel frame consumer failed: {frame_result.stderr.strip()}")
 
         # The ordinary consumer must not be able to acquire the temporary
         # Mazda/decoder adapter by including a header outside its declared
@@ -112,6 +150,8 @@ def main() -> int:
                 "-Werror",
                 "-I",
                 str(root / "components/local_argb/include"),
+                "-I",
+                str(frame_root.parent),
                 "-I",
                 str(core_root / "components/vehicle_core/include"),
                 "-c",
@@ -165,6 +205,8 @@ def main() -> int:
                 "-Werror",
                 "-I",
                 str(root / "components/local_argb/include"),
+                "-I",
+                str(frame_root.parent),
                 "-I",
                 str(core_root / "components/vehicle_core/include"),
                 "-c",

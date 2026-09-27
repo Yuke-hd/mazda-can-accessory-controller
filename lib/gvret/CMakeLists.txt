@@ -64,7 +64,7 @@ endif()
 
 add_library(gvret_replay_output STATIC src/pixel_frame_output.cpp)
 target_include_directories(gvret_replay_output PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(gvret_replay_output PUBLIC gvret_parser local_argb)
+target_link_libraries(gvret_replay_output PUBLIC gvret_parser local_argb_sink_contract)
 target_compile_features(gvret_replay_output PUBLIC cxx_std_17)
 
 if(MSVC)
