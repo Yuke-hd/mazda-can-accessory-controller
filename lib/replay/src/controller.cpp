@@ -233,13 +233,14 @@ public:
       return ReplayControllerStatus::ConfigurationFailed;
     state_ = State::Starting;
     if (!output_->start(clock_->now())) {
-      // A stage may have changed output before its start failed.
-      (void)fail_off_output();
+      // A stage may have changed output or acquired resources before its
+      // start failed.
+      (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::OutputFault;
     }
     if (!configured_) {
-      (void)fail_off_output();
+      (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::ConfigurationFailed;
     }
@@ -248,7 +249,7 @@ public:
     if (attach_status != vehicle_signals::SignalStatus::Ok) {
       if (engine_.attached())
         (void)engine_.detach();
-      (void)fail_off_output();
+      (void)release_output();
       state_ = State::Stopped;
       return ReplayControllerStatus::TelemetryFault;
     }
@@ -320,10 +321,7 @@ public:
 
     // Every stop fails the output off before releasing the stage, so a
     // completed replay cannot leave its last output active.
-    const bool output_off = fail_off_output() == ReplayControllerStatus::Ok;
-    const bool output_stopped = output_->stop(clock_->now());
-    const auto output_status = output_off && output_stopped ? ReplayControllerStatus::Ok
-                                                            : ReplayControllerStatus::OutputFault;
+    const auto output_status = release_output();
     if (!telemetry_quiescent) {
       state_ = State::Failed;
       return telemetry_status.status == mazda::ResultCode::Timeout
@@ -400,6 +398,16 @@ private:
                                             : ReplayControllerStatus::OutputFault;
   }
 
+  // Fails the output off, then releases the stage.
+  [[nodiscard]] ReplayControllerStatus release_output() noexcept {
+    const bool output_off = fail_off_output() == ReplayControllerStatus::Ok;
+    const bool output_stopped = output_->stop(clock_->now());
+    return output_off && output_stopped ? ReplayControllerStatus::Ok
+                                        : ReplayControllerStatus::OutputFault;
+  }
+
+  // A controller left Failed releases the stage through a later stop() or
+  // its destructor; one left Stopped releases it here.
   void cleanup_failed_start() noexcept {
     publication_barrier_.cancel();
     if (telemetry_.diagnostics().lifecycle != mazda::LifecycleState::Stopped)
@@ -408,8 +416,11 @@ private:
         telemetry_.diagnostics().lifecycle == mazda::LifecycleState::Stopped;
     if (telemetry_quiescent && engine_.attached())
       (void)engine_.detach();
-    (void)fail_off_output();
     state_ = telemetry_quiescent && !engine_.attached() ? State::Stopped : State::Failed;
+    if (state_ == State::Stopped)
+      (void)release_output();
+    else
+      (void)fail_off_output();
   }
 
   ReplayClock *clock_;

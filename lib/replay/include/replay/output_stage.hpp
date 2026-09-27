@@ -18,9 +18,10 @@ namespace replay {
 //                      failed start()), a tick fails, and immediately before
 //                      every stop(); it must leave the output inactive and
 //                      may repeat;
-//   stop(now)          on every controller stop attempt, after fail_off(),
-//                      and may repeat. It releases the stage; the blackout
-//                      guarantee belongs to fail_off().
+//   stop(now)          after fail_off() on every controller stop attempt and
+//                      every abandoned start (including a failed start()),
+//                      and may repeat. It releases any resource the stage
+//                      acquired; the blackout guarantee belongs to fail_off().
 // configure() registers the stage's action_engine::ActionSink(s) and the
 // rules that route to them. The engine delivers actions through those sinks
 // while the controller processes input or samples polled rules; a stage makes

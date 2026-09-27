@@ -61,8 +61,9 @@ drive an injected `replay::OutputStage` (`replay/output_stage.hpp`) through a
 fixed lifecycle: `configure` registers the stage's `ActionSink`s and rules on
 the controller's `ActionEngine`, then `start`, zero or more `tick(now)` calls,
 `fail_off(now)` on a failed start, a failed tick, or a replay fault, and a
-final `fail_off(now)` then `stop(now)`. `fail_off` owns the blackout guarantee,
-so every stop leaves the output inactive. Actions reach the
+final `fail_off(now)` then `stop(now)`, including when startup is abandoned.
+`fail_off` owns the blackout guarantee, so every stop leaves the output
+inactive; `stop` releases any resource the stage acquired. Actions reach the
 stage only through `action_engine::ActionSink`. When `--output-tick-us` is
 omitted, the scheduler uses the stage's `tick_period_us()`.
 

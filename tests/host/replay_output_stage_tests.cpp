@@ -127,7 +127,7 @@ TEST_CASE("controller drives an injected stage through start, action, tick and s
   CHECK(records[7].time_us == 10'000);
 }
 
-TEST_CASE("a stage whose start fails is failed off and never ticked") {
+TEST_CASE("a stage whose start fails is failed off, released and never ticked") {
   replay::ReplayClock clock;
   FakeOutputStage stage{clock};
   stage.fail_start();
@@ -136,7 +136,22 @@ TEST_CASE("a stage whose start fails is failed off and never ticked") {
     CHECK(controller.start() == replay::ReplayControllerStatus::OutputFault);
     CHECK_FALSE(controller.running());
   }
-  CHECK(stage.calls() == std::vector<Call>{Call::Configure, Call::Start, Call::FailOff});
+  CHECK(stage.calls() ==
+        std::vector<Call>{Call::Configure, Call::Start, Call::FailOff, Call::Stop});
+}
+
+TEST_CASE("a failed first tick abandons startup and releases the stage") {
+  replay::ReplayClock clock;
+  FakeOutputStage stage{clock};
+  stage.fail_ticks();
+  {
+    replay::ReplayController controller{{left_turn(0)}, clock, stage};
+    CHECK(controller.start() == replay::ReplayControllerStatus::OutputFault);
+    CHECK_FALSE(controller.running());
+    CHECK(controller.stop() == replay::ReplayControllerStatus::InvalidState);
+  }
+  CHECK(stage.calls() == std::vector<Call>{Call::Configure, Call::Start, Call::Action, Call::Tick,
+                                           Call::FailOff, Call::Stop});
 }
 
 TEST_CASE("a failed tick fails the stage off immediately") {
@@ -174,14 +189,15 @@ TEST_CASE("a replay failure fails the stage off before stopping it") {
   CHECK(calls.back() == Call::Stop);
 }
 
-TEST_CASE("a stage that rejects configuration is failed off and never attached") {
+TEST_CASE("a stage that rejects configuration is failed off, released and never attached") {
   replay::ReplayClock clock;
   FakeOutputStage stage{clock};
   stage.reject_configuration();
   replay::ReplayController controller{{left_turn(0)}, clock, stage};
 
   CHECK(controller.start() == replay::ReplayControllerStatus::ConfigurationFailed);
-  CHECK(stage.calls() == std::vector<Call>{Call::Configure, Call::Start, Call::FailOff});
+  CHECK(stage.calls() ==
+        std::vector<Call>{Call::Configure, Call::Start, Call::FailOff, Call::Stop});
 }
 
 TEST_CASE("the stage's tick period is the scheduler's default output cadence") {
