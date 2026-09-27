@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <ostream>
@@ -44,6 +45,9 @@ constexpr SocketHandle kInvalidSocket = -1;
 
 constexpr std::string_view kWebSocketMagic{"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"};
 constexpr std::size_t kMaximumHttpRequestBytes = 16 * 1024;
+constexpr auto kHttpHeaderDeadline = std::chrono::milliseconds(500);
+constexpr auto kSocketIoTimeout = std::chrono::milliseconds(50);
+constexpr auto kWriteDeadline = std::chrono::milliseconds(500);
 
 SocketHandle socket_from_storage(const std::intptr_t value) noexcept {
 #if defined(_WIN32)
@@ -92,12 +96,23 @@ bool retryable_socket_error() noexcept {
 #endif
 }
 
-void set_receive_timeout(const SocketHandle socket) noexcept {
+void set_socket_timeout(const SocketHandle socket, const int option,
+                        const std::chrono::milliseconds duration) noexcept {
   timeval timeout{};
-  timeout.tv_sec = 0;
-  timeout.tv_usec = 250'000;
-  ::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&timeout),
+  timeout.tv_sec = static_cast<decltype(timeval::tv_sec)>(duration.count() / 1000);
+  timeout.tv_usec = static_cast<decltype(timeval::tv_usec)>((duration.count() % 1000) * 1000);
+  ::setsockopt(socket, SOL_SOCKET, option, reinterpret_cast<const char *>(&timeout),
                sizeof(timeout));
+}
+
+void set_receive_timeout(const SocketHandle socket,
+                         const std::chrono::milliseconds duration = kSocketIoTimeout) noexcept {
+  set_socket_timeout(socket, SO_RCVTIMEO, duration);
+}
+
+void set_send_timeout(const SocketHandle socket,
+                      const std::chrono::milliseconds duration = kSocketIoTimeout) noexcept {
+  set_socket_timeout(socket, SO_SNDTIMEO, duration);
 }
 
 bool set_nonblocking(const SocketHandle socket) noexcept {
@@ -120,25 +135,38 @@ bool set_blocking(const SocketHandle socket) noexcept {
 #endif
 }
 
-bool send_all(const SocketHandle socket, const std::uint8_t *data,
-              const std::size_t size) noexcept {
+bool send_all(const SocketHandle socket, const std::uint8_t *data, const std::size_t size,
+              const std::atomic_bool &stop_requested,
+              const std::atomic_bool &server_shutdown) noexcept {
   std::size_t sent = 0;
+  const auto deadline = std::chrono::steady_clock::now() + kWriteDeadline;
   while (sent < size) {
+    if (stop_requested.load() || server_shutdown.load() ||
+        std::chrono::steady_clock::now() >= deadline)
+      return false;
 #if defined(_WIN32)
     const int count = ::send(socket, reinterpret_cast<const char *>(data + sent),
                              static_cast<int>(size - sent), 0);
 #else
     const ssize_t count = ::send(socket, data + sent, size - sent, MSG_NOSIGNAL);
 #endif
+    if (count > 0) {
+      sent += static_cast<std::size_t>(count);
+      continue;
+    }
+    if (count < 0 && retryable_socket_error() && std::chrono::steady_clock::now() < deadline)
+      continue;
     if (count <= 0)
       return false;
-    sent += static_cast<std::size_t>(count);
   }
   return true;
 }
 
-bool send_all(const SocketHandle socket, const std::string_view text) noexcept {
-  return send_all(socket, reinterpret_cast<const std::uint8_t *>(text.data()), text.size());
+bool send_all(const SocketHandle socket, const std::string_view text,
+              const std::atomic_bool &stop_requested,
+              const std::atomic_bool &server_shutdown) noexcept {
+  return send_all(socket, reinterpret_cast<const std::uint8_t *>(text.data()), text.size(),
+                  stop_requested, server_shutdown);
 }
 
 std::string lower_ascii(std::string value) {
@@ -159,6 +187,64 @@ std::string trim_ascii(std::string value) {
   if (first >= last)
     return {};
   return {first, last};
+}
+
+bool comma_separated_token(const std::string_view value, const std::string_view wanted) {
+  std::size_t begin = 0;
+  while (begin <= value.size()) {
+    const std::size_t end = value.find(',', begin);
+    const std::size_t length = end == std::string_view::npos ? value.size() - begin : end - begin;
+    std::string token(value.substr(begin, length));
+    if (lower_ascii(trim_ascii(std::move(token))) == wanted)
+      return true;
+    if (end == std::string_view::npos)
+      break;
+    begin = end + 1;
+  }
+  return false;
+}
+
+int base64_value(const char character) noexcept {
+  if (character >= 'A' && character <= 'Z')
+    return character - 'A';
+  if (character >= 'a' && character <= 'z')
+    return character - 'a' + 26;
+  if (character >= '0' && character <= '9')
+    return character - '0' + 52;
+  if (character == '+')
+    return 62;
+  if (character == '/')
+    return 63;
+  return -1;
+}
+
+bool decodes_to_sixteen_bytes(const std::string_view value) {
+  if (value.size() != 24)
+    return false;
+  std::size_t decoded_size = 0;
+  for (std::size_t index = 0; index < value.size(); index += 4) {
+    const int first = base64_value(value[index]);
+    const int second = base64_value(value[index + 1]);
+    const char third = value[index + 2];
+    const char fourth = value[index + 3];
+    if (first < 0 || second < 0)
+      return false;
+    const int third_value = third == '=' ? 0 : base64_value(third);
+    const int fourth_value = fourth == '=' ? 0 : base64_value(fourth);
+    if (third_value < 0 || fourth_value < 0)
+      return false;
+    const bool final_group = index + 4 == value.size();
+    if (third == '=' && fourth != '=')
+      return false;
+    if ((third == '=' || fourth == '=') && !final_group)
+      return false;
+    if (third == '=' && (second & 0x0f) != 0)
+      return false;
+    if (fourth == '=' && third != '=' && (third_value & 0x03) != 0)
+      return false;
+    decoded_size += third == '=' ? 1 : (fourth == '=' ? 2 : 3);
+  }
+  return decoded_size == 16;
 }
 
 struct HttpRequest final {
@@ -195,9 +281,12 @@ bool parse_http_request(const std::string &raw, HttpRequest &request) {
 bool read_http_request(const SocketHandle socket, const std::atomic_bool &stop_requested,
                        const std::atomic_bool &server_shutdown, std::string &request) {
   set_receive_timeout(socket);
+  const auto deadline = std::chrono::steady_clock::now() + kHttpHeaderDeadline;
   std::array<char, 2048> buffer{};
   while (request.size() < kMaximumHttpRequestBytes && !stop_requested.load() &&
          !server_shutdown.load()) {
+    if (std::chrono::steady_clock::now() >= deadline)
+      return false;
 #if defined(_WIN32)
     const int count = ::recv(socket, buffer.data(), static_cast<int>(buffer.size()), 0);
 #else
@@ -329,12 +418,14 @@ bool websocket_upgrade_request(const HttpRequest &request) {
       key == request.headers.end() || version == request.headers.end())
     return false;
   return lower_ascii(upgrade->second) == "websocket" &&
-         lower_ascii(connection->second).find("upgrade") != std::string::npos &&
-         version->second == "13" && !key->second.empty();
+         comma_separated_token(connection->second, "upgrade") && version->second == "13" &&
+         decodes_to_sixteen_bytes(key->second);
 }
 
 bool send_http_response(const SocketHandle socket, const int status, const std::string_view reason,
-                        const std::string_view content_type, const std::string_view body) {
+                        const std::string_view content_type, const std::string_view body,
+                        const std::atomic_bool &stop_requested,
+                        const std::atomic_bool &server_shutdown) {
   std::string response;
   response.reserve(128 + body.size());
   response.append("HTTP/1.1 ");
@@ -347,20 +438,23 @@ bool send_http_response(const SocketHandle socket, const int status, const std::
   response.append(std::to_string(body.size()));
   response.append("\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
   response.append(body);
-  return send_all(socket, response);
+  return send_all(socket, response, stop_requested, server_shutdown);
 }
 
-bool send_websocket_handshake(const SocketHandle socket, const std::string_view key) {
+bool send_websocket_handshake(const SocketHandle socket, const std::string_view key,
+                              const std::atomic_bool &stop_requested,
+                              const std::atomic_bool &server_shutdown) {
   const std::string accept = websocket_accept(key);
   std::string response{"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                        "Connection: Upgrade\r\nSec-WebSocket-Accept: "};
   response.append(accept);
   response.append("\r\n\r\n");
-  return send_all(socket, response);
+  return send_all(socket, response, stop_requested, server_shutdown);
 }
 
 bool send_websocket_frame(const SocketHandle socket, const std::uint8_t opcode,
-                          const std::string_view payload) noexcept {
+                          const std::string_view payload, const std::atomic_bool &stop_requested,
+                          const std::atomic_bool &server_shutdown) noexcept {
   std::array<std::uint8_t, 10> header{};
   std::size_t header_size = 2;
   header[0] = static_cast<std::uint8_t>(0x80U | (opcode & 0x0fU));
@@ -379,12 +473,16 @@ bool send_websocket_frame(const SocketHandle socket, const std::uint8_t opcode,
       header[2 + index] = static_cast<std::uint8_t>(size >> (56U - index * 8U));
     }
   }
-  return send_all(socket, header.data(), header_size) && send_all(socket, payload);
+  return send_all(socket, header.data(), header_size, stop_requested, server_shutdown) &&
+         send_all(socket, payload, stop_requested, server_shutdown);
 }
 
-bool send_websocket_close(const SocketHandle socket, const std::uint16_t code) noexcept {
+bool send_websocket_close(const SocketHandle socket, const std::uint16_t code,
+                          const std::atomic_bool &stop_requested,
+                          const std::atomic_bool &server_shutdown) noexcept {
   const std::array<char, 2> payload{static_cast<char>(code >> 8U), static_cast<char>(code)};
-  return send_websocket_frame(socket, 0x8, std::string_view(payload.data(), payload.size()));
+  return send_websocket_frame(socket, 0x8, std::string_view(payload.data(), payload.size()),
+                              stop_requested, server_shutdown);
 }
 
 class WebSocketLineBuffer final : public std::streambuf {
@@ -424,7 +522,7 @@ private:
     if (character != '\n')
       return true;
     pending_.pop_back();
-    good_ = send_websocket_frame(socket_, 0x1, pending_);
+    good_ = send_websocket_frame(socket_, 0x1, pending_, *stop_requested_, *server_shutdown_);
     pending_.clear();
     return good_;
   }
@@ -498,40 +596,52 @@ bool serve_websocket(const SocketHandle socket, const std::vector<gvret::TimedCa
   const ReplayScheduleResult replay = run_replay(frames, clock, output, schedule);
   if (!replay.ok() || stop_requested.load() || server_shutdown.load())
     return false;
-  return pixels.write_end() && send_websocket_close(socket, 1000);
+  return pixels.write_end() && send_websocket_close(socket, 1000, stop_requested, server_shutdown);
 }
 
 bool serve_http_client(const SocketHandle socket, const std::vector<gvret::TimedCanFrame> &frames,
                        const WebEmulatorOptions &options, const std::atomic_bool &stop_requested,
-                       const std::atomic_bool &server_shutdown) {
+                       const std::atomic_bool &server_shutdown,
+                       const std::string_view expected_host,
+                       const std::string_view expected_origin) {
   std::string raw_request;
   if (!read_http_request(socket, stop_requested, server_shutdown, raw_request))
     return false;
   HttpRequest request;
   if (!parse_http_request(raw_request, request))
     return send_http_response(socket, 400, "Bad Request", "text/plain; charset=utf-8",
-                              "bad request\n");
+                              "bad request\n", stop_requested, server_shutdown);
   if (request.method != "GET")
     return send_http_response(socket, 405, "Method Not Allowed", "text/plain; charset=utf-8",
-                              "method not allowed\n");
+                              "method not allowed\n", stop_requested, server_shutdown);
 
   if (request.target == "/ws") {
     const auto key = request.headers.find("sec-websocket-key");
     if (!websocket_upgrade_request(request) || key == request.headers.end())
       return send_http_response(socket, 400, "Bad Request", "text/plain; charset=utf-8",
-                                "websocket upgrade required\n");
-    if (!send_websocket_handshake(socket, key->second))
+                                "websocket upgrade required\n", stop_requested, server_shutdown);
+    const auto host = request.headers.find("host");
+    const auto origin = request.headers.find("origin");
+    if (host == request.headers.end() || origin == request.headers.end() ||
+        host->second != expected_host || origin->second != expected_origin)
+      return send_http_response(socket, 403, "Forbidden", "text/plain; charset=utf-8",
+                                "local origin required\n", stop_requested, server_shutdown);
+    if (!send_websocket_handshake(socket, key->second, stop_requested, server_shutdown))
       return false;
     return serve_websocket(socket, frames, options, stop_requested, server_shutdown);
   }
 
   if (request.target == "/" || request.target == "/index.html")
-    return send_http_response(socket, 200, "OK", "text/html; charset=utf-8", kIndexHtml);
+    return send_http_response(socket, 200, "OK", "text/html; charset=utf-8", kIndexHtml,
+                              stop_requested, server_shutdown);
   if (request.target == "/style.css")
-    return send_http_response(socket, 200, "OK", "text/css; charset=utf-8", kStyleCss);
+    return send_http_response(socket, 200, "OK", "text/css; charset=utf-8", kStyleCss,
+                              stop_requested, server_shutdown);
   if (request.target == "/app.js")
-    return send_http_response(socket, 200, "OK", "text/javascript; charset=utf-8", kAppJs);
-  return send_http_response(socket, 404, "Not Found", "text/plain; charset=utf-8", "not found\n");
+    return send_http_response(socket, 200, "OK", "text/javascript; charset=utf-8", kAppJs,
+                              stop_requested, server_shutdown);
+  return send_http_response(socket, 404, "Not Found", "text/plain; charset=utf-8", "not found\n",
+                            stop_requested, server_shutdown);
 }
 
 bool loopback_address(const WebEmulatorOptions &options) noexcept {
@@ -672,9 +782,15 @@ bool WebEmulatorServer::serve(const std::atomic_bool &stop_requested) noexcept {
       close_socket(client);
       continue;
     }
+    set_receive_timeout(client);
+    set_send_timeout(client);
     active_client_.store(socket_to_storage(client));
     try {
-      (void)serve_http_client(client, frames_, options_, stop_requested, shutdown_requested_);
+      const std::string expected_host = options_.ipv6 ? "[::1]:" + std::to_string(bound_port_)
+                                                      : "127.0.0.1:" + std::to_string(bound_port_);
+      const std::string expected_origin = "http://" + expected_host;
+      (void)serve_http_client(client, frames_, options_, stop_requested, shutdown_requested_,
+                              expected_host, expected_origin);
     } catch (...) {
       success = false;
       error_ = "loopback client handling failed";
