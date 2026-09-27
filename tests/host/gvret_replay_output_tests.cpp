@@ -29,6 +29,11 @@ protected:
   std::string do_grouping() const override { return "\3"; }
 };
 
+class FailingSyncBuffer final : public std::stringbuf {
+public:
+  int sync() override { return -1; }
+};
+
 gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp timestamp_us,
                                  const std::uint32_t identifier,
                                  const std::initializer_list<std::uint8_t> bytes) {
@@ -97,7 +102,7 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
   const std::vector<gvret::TimedCanFrame> input{
       rpm(0, 6'500),        // 1,625 RPM: 24 full cyan + two half-bright pixels.
       rpm(100'000, 13'000), // 3,250 RPM: half fill.
-      rpm(200'000, 26'000), // 6,500 RPM: full fill and red zone.
+      rpm(200'000, 30'000), // 7,500 RPM: clamped full fill and red zone.
       turn(300'000, 0x20),  // Vehicle left maps to strip right.
       turn(400'000, 0x10),  // Vehicle right maps to strip left.
       turn(500'000, 0x04),  // Hazard owns both turn regions.
@@ -110,9 +115,23 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
   const auto &low = frame_at(pixels.frames(), 0).pixels;
   CHECK(count_color(low, kCyan) == 24);
   CHECK(count_color(low, kHalfCyan) == 2);
+  CHECK(std::all_of(low.begin() + 38, low.begin() + 62,
+                    [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(low[37] == kHalfCyan);
+  CHECK(low[62] == kHalfCyan);
+  CHECK(std::all_of(low.begin(), low.begin() + 37,
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
+  CHECK(std::all_of(low.begin() + 63, low.end(),
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
 
   const auto &half = frame_at(pixels.frames(), 100'000).pixels;
   CHECK(count_color(half, kCyan) == 50);
+  CHECK(std::all_of(half.begin() + 25, half.begin() + 75,
+                    [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(std::all_of(half.begin(), half.begin() + 25,
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
+  CHECK(std::all_of(half.begin() + 75, half.end(),
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
 
   const auto &full = frame_at(pixels.frames(), 200'000).pixels;
   CHECK(std::all_of(full.begin(), full.begin() + 35,
@@ -219,4 +238,16 @@ TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
   CHECK(serialized.find("0x") == std::string::npos);
   CHECK(serialized.find("x0") == std::string::npos);
   CHECK(std::count(serialized.begin(), serialized.end(), '[') == 101);
+}
+
+TEST_CASE("buffered output reports a synchronization failure when flushed") {
+  gvret::ReplayClock clock;
+  FailingSyncBuffer buffer;
+  std::ostream output{&buffer};
+  gvret::JsonlPixelFrameSink pixels{clock, output};
+
+  REQUIRE(pixels.write(local_argb::kBlackFrame));
+  CHECK(output.good());
+  output.flush();
+  CHECK(output.fail());
 }

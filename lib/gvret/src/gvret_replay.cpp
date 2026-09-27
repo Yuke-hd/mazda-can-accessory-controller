@@ -164,6 +164,7 @@ int main(const int argc, char **argv) {
     std::cerr << "error: replay failed\n";
     return 1;
   }
+  std::cout.flush();
   if (!pixels.good()) {
     std::cerr << "error: unable to write pixel output\n";
     return 1;
