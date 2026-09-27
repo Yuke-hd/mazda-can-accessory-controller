@@ -240,6 +240,21 @@ private:
 // Compatibility name retained only for the existing host fixture vocabulary;
 // it is a concrete injected test source, not a Mazda-owned receive runtime.
 using HostAcquisitionSource = HostRuntimeSource;
+
+// Optional host composition hook invoked after Runtime diagnostics and Mazda
+// publication are coherent. The callback may park the Runtime worker while a
+// deterministic scheduler drains notifications and performs downstream work.
+// It runs without the service lifecycle mutex or publication/channel locks.
+class HostPublicationControl {
+public:
+  virtual ~HostPublicationControl() = default;
+  virtual void publication_completed() noexcept = 0;
+};
+
+struct HostServiceOptions final {
+  HostPublicationControl *publication_control{nullptr};
+  bool manual_notification_dispatch{false};
+};
 #endif
 
 class VehicleTelemetryService final : public vehicle_telemetry::FrameProcessor,
@@ -249,6 +264,11 @@ public:
   VehicleTelemetryService(vehicle_core::MonotonicClock &clock,
                           vehicle_telemetry::AcquisitionSource &source, LightingSink &lighting_sink,
                           TelemetryConfig config = {}) noexcept;
+#if !defined(ESP_PLATFORM)
+  VehicleTelemetryService(vehicle_core::MonotonicClock &clock,
+                          vehicle_telemetry::AcquisitionSource &source, LightingSink &lighting_sink,
+                          TelemetryConfig config, HostServiceOptions host_options) noexcept;
+#endif
   ~VehicleTelemetryService() noexcept;
 
   VehicleTelemetryService(const VehicleTelemetryService &) = delete;
@@ -259,6 +279,13 @@ public:
   [[nodiscard]] StatusResult start() noexcept;
   [[nodiscard]] StatusResult stop() noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
+#if !defined(ESP_PLATFORM)
+  // Deterministic host composition drains every channel in descriptor order,
+  // repeating complete sweeps until no callback remains pending. Only the
+  // lifecycle owner may call this, and only when the background dispatcher
+  // was disabled through HostServiceOptions.
+  [[nodiscard]] Result<std::size_t> drain_notifications() noexcept;
+#endif
   // Wrapping count of completed dispatcher loop passes, idle or not.
   [[nodiscard]] std::uint32_t dispatch_progress() const noexcept {
     return dispatch_progress_.load(std::memory_order_relaxed);
@@ -474,6 +501,7 @@ private:
   void *dispatcher_task_{nullptr};
 #else
   std::thread dispatcher_thread_{};
+  HostServiceOptions host_options_{};
 #endif
 
   bool lighting_sent_{false};

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "gvret/replay_clock.hpp"
@@ -28,6 +29,8 @@ public:
 
   // Distinguishes EOF from a future scheduled frame after receive() times out.
   [[nodiscard]] bool end_of_stream() const noexcept;
+  // Allows a scheduler to run earlier work before advancing replay time.
+  [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp> next_frame_time() const noexcept;
 
 private:
   const std::vector<TimedCanFrame> frames_;

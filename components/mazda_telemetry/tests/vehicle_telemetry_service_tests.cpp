@@ -576,6 +576,37 @@ void test_callback_mutations_are_rejected_before_side_effects() {
   EXPECT(service.unsubscribe(recorder.subscription).ok());
 }
 
+void test_manual_dispatch_preserves_callback_mutation_guard() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{
+      clock, source, lighting, config, mazda::internal::HostServiceOptions{nullptr, true}};
+  LifecycleMutationRecorder recorder{&service};
+  recorder.subscription = service.subscribe_turn(&reject_lifecycle_mutations, &recorder);
+  EXPECT(recorder.subscription.ok());
+  EXPECT(service.start().ok());
+  EXPECT(!recorder.callback_done.load(std::memory_order_acquire));
+
+  const auto drain = service.drain_notifications();
+  EXPECT(drain.ok());
+  EXPECT(drain.value.has_value() && *drain.value >= 1);
+  EXPECT(recorder.callback_done.load(std::memory_order_acquire));
+  EXPECT(recorder.configure_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+  EXPECT(recorder.start_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(recorder.stop_result.load(std::memory_order_acquire) == mazda::ResultCode::InvalidState);
+  EXPECT(recorder.subscribe_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+  EXPECT(recorder.unsubscribe_result.load(std::memory_order_acquire) ==
+         mazda::ResultCode::InvalidState);
+
+  EXPECT(service.stop().ok());
+  EXPECT(service.unsubscribe(recorder.subscription).ok());
+}
+
 void test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect() {
   FakeClock clock;
   mazda::internal::HostAcquisitionSource source;
@@ -1476,6 +1507,7 @@ int main() {
   test_lifecycle_and_subscription_state();
   test_lifecycle_state_precedes_configuration_validation();
   test_callback_mutations_are_rejected_before_side_effects();
+  test_manual_dispatch_preserves_callback_mutation_guard();
   test_non_owner_lifecycle_mutation_is_rejected_without_source_side_effect();
   test_sequential_host_threads_cannot_inherit_lifecycle_ownership();
   test_added_poll_and_notify_signals_use_service_workers();

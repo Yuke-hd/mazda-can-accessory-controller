@@ -413,8 +413,23 @@ VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &c
                                                  vehicle_telemetry::AcquisitionSource &source,
                                                  LightingSink &lighting_sink,
                                                  const TelemetryConfig config) noexcept
+#if !defined(ESP_PLATFORM)
+    : VehicleTelemetryService(clock, source, lighting_sink, config, HostServiceOptions{}) {
+}
+
+VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &clock,
+                                                 vehicle_telemetry::AcquisitionSource &source,
+                                                 LightingSink &lighting_sink,
+                                                 const TelemetryConfig config,
+                                                 const HostServiceOptions host_options) noexcept
+#endif
     : clock_(&clock), lighting_sink_(&lighting_sink), runtime_(source, *this, *this, clock),
-      publication_(clock, config), config_(config) {
+      publication_(clock, config), config_(config)
+#if !defined(ESP_PLATFORM)
+      ,
+      host_options_(host_options)
+#endif
+{
   initialize_registration_slots();
   processing_state_.apply_freshness_policy(config_.freshness);
   configure_runtime(runtime_, config_);
@@ -636,6 +651,34 @@ std::size_t VehicleTelemetryService::dispatch_channels_once() noexcept {
   return delivered;
 }
 
+#if !defined(ESP_PLATFORM)
+Result<std::size_t> VehicleTelemetryService::drain_notifications() noexcept {
+  if (callback_mutation_rejected())
+    return {ResultCode::InvalidState, std::nullopt};
+  {
+    std::lock_guard<std::mutex> lock{lifecycle_mutex_};
+    if (!host_options_.manual_notification_dispatch || !claim_or_validate_lifecycle_owner())
+      return {ResultCode::InvalidState, std::nullopt};
+    const auto lifecycle = lifecycle_state_.load(std::memory_order_acquire);
+    if (lifecycle != LifecycleState::Running && lifecycle != LifecycleState::Faulted)
+      return {ResultCode::InvalidState, std::nullopt};
+  }
+
+  callback_context_identity_.store(current_execution_identity(), std::memory_order_release);
+  std::size_t delivered = 0;
+  std::size_t sweep_delivered = 0;
+  do {
+    sweep_delivered = 0;
+    for (std::size_t index = 0; index < kNotificationChannelCount; ++index)
+      sweep_delivered += dispatch_channels_once();
+    delivered += sweep_delivered;
+    dispatch_progress_.fetch_add(1, std::memory_order_relaxed);
+  } while (sweep_delivered != 0);
+  callback_context_identity_.store(kNoExecutionIdentity, std::memory_order_release);
+  return {ResultCode::Ok, delivered};
+}
+#endif
+
 StatusResult VehicleTelemetryService::start() noexcept {
   if (callback_mutation_rejected())
     return {ResultCode::InvalidState};
@@ -693,8 +736,14 @@ StatusResult VehicleTelemetryService::start() noexcept {
   }
 
   run_requested_.store(true, std::memory_order_release);
-  dispatcher_done_.store(false, std::memory_order_release);
   dispatch_cursor_.store(0, std::memory_order_relaxed);
+#if !defined(ESP_PLATFORM)
+  if (host_options_.manual_notification_dispatch) {
+    dispatcher_done_.store(true, std::memory_order_release);
+    return {ResultCode::Ok};
+  }
+#endif
+  dispatcher_done_.store(false, std::memory_order_release);
 #if defined(ESP_PLATFORM)
   if (xTaskCreate(&VehicleTelemetryService::dispatcher_task_entry, "mazda_notify", 4096, this,
                   configMAX_PRIORITIES - 4,
@@ -837,6 +886,10 @@ void VehicleTelemetryService::on_diagnostics(
   if (diagnostics.has_last_frame)
     last_transport_receive_us_ = diagnostics.last_frame_us;
   publish_current(diagnostics.has_last_frame);
+#if !defined(ESP_PLATFORM)
+  if (host_options_.publication_control != nullptr)
+    host_options_.publication_control->publication_completed();
+#endif
 }
 
 void VehicleTelemetryService::dispatcher_loop() noexcept {
@@ -1152,11 +1205,17 @@ internal::VehicleTelemetryAccess::service(const VehicleTelemetry &facade) noexce
 void internal::VehicleTelemetryAccess::emplace_host_service(
     VehicleTelemetry &facade, vehicle_core::MonotonicClock &clock,
     vehicle_telemetry::AcquisitionSource &source, internal::LightingSink &lighting_sink,
-    const TelemetryConfig &config) noexcept {
+    const TelemetryConfig &config, const internal::HostServiceOptions host_options) noexcept {
   reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_)
       ->~VehicleTelemetryService();
   ::new (static_cast<void *>(facade.implementation_storage_))
-      internal::VehicleTelemetryService{clock, source, lighting_sink, config};
+      internal::VehicleTelemetryService{clock, source, lighting_sink, config, host_options};
+}
+
+Result<std::size_t>
+internal::VehicleTelemetryAccess::drain_host_notifications(VehicleTelemetry &facade) noexcept {
+  return reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_)
+      ->drain_notifications();
 }
 #endif
 

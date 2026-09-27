@@ -24,6 +24,33 @@ else()
   target_compile_options(gvret_replay_source PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+add_library(gvret_replay_controller STATIC src/replay_controller.cpp)
+target_include_directories(
+  gvret_replay_controller
+  PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/components/local_argb/private_include
+    ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+    ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(
+  gvret_replay_controller
+  PUBLIC gvret_replay_source local_argb
+  PRIVATE
+    action_engine
+    controller_config
+    local_argb_actions
+    local_argb_sink_contract
+    mazda_telemetry
+)
+target_compile_features(gvret_replay_controller PUBLIC cxx_std_17)
+
+if(MSVC)
+  target_compile_options(gvret_replay_controller PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(gvret_replay_controller PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 add_executable(gvret-replay src/gvret_replay.cpp)
 target_link_libraries(gvret-replay PRIVATE gvret_parser)
 target_compile_features(gvret-replay PRIVATE cxx_std_17)
