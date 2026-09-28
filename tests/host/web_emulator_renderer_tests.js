@@ -153,6 +153,22 @@ test('socket error before end clears the display', () => {
   assert.equal(state.pixels, null);
 });
 
+test('a server that stops mid-replay never leaves the page looking live', () => {
+  // The transcript a browser receives when the server fails or shuts down
+  // mid-replay: records while playing, then the connection closes without end.
+  const live = streaming(100, playback(false, 1), pixels(0, solid(100, [0, 0, 0])),
+    pixels(100000, solid(100, [0, 16, 16])));
+  assert.equal(live.phase, 'streaming');
+  for (const failure of [close, error]) {
+    const state = Renderer.reduce(live, failure);
+    assert.equal(state.phase, 'disconnected');
+    assert.equal(state.pixels, null);
+    const available = Renderer.controlAvailability(state);
+    assert.deepEqual([available.toggle, available.restart, available.rate], [false, false, false]);
+    assert.match(Renderer.statusText(state), /^Disconnected before the replay completed/);
+  }
+});
+
 const invalidCases = [
   ['malformed JSON', [open, message('{not json')]],
   ['non-object message', [open, message('[1,2,3]')]],

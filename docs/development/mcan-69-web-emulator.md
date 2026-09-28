@@ -25,4 +25,6 @@ closes the active connection, and releases the loopback listener.
 
 The command consumes capture data locally. Do not publish raw captures,
 vehicle identifiers, absolute timestamps, or replay output derived from a real
-vehicle. Host tests use synthetic frames only.
+vehicle. Host tests use synthetic frames only; the GVRET-to-WebSocket
+end-to-end and failure-state tests are described in
+[GH-72](web-emulator-e2e.md).

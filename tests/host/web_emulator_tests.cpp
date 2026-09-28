@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include "gvret/file_loader.hpp"
 #include "replay/local_argb_stage.hpp"
 #include "replay/pixel_frame_output.hpp"
 #include "replay/scheduler.hpp"
@@ -19,9 +20,13 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -220,6 +225,9 @@ public:
   }
 
   [[nodiscard]] const std::string &handshake() const noexcept { return handshake_; }
+
+  // True once the server has closed the TCP connection.
+  [[nodiscard]] bool closed() const noexcept { return closed_; }
 
 private:
   std::optional<ServerFrame> take_frame() {
@@ -886,6 +894,438 @@ TEST_CASE("web emulator observes stop while a WebSocket peer is not reading") {
   ::shutdown(client, SHUT_RDWR);
   ::close(client);
   serving.join();
+}
+
+// GVRET-to-WebSocket end-to-end coverage: a synthetic GVRET CSV file goes
+// through the host loader, the replay scheduler, the production Mazda, action,
+// and LED path, and the WebSocket server to a browser client.
+namespace {
+
+constexpr vehicle_core::Microseconds kStepUs = 100'000;
+constexpr std::size_t kSteps = 16;
+constexpr vehicle_core::Microseconds kGvretEndUs = (kSteps - 1) * kStepUs;
+
+// One GVRET row with an absolute capture timestamp far from zero, so any leak
+// of source time into the stream is visible.
+std::string gvret_row(const std::size_t step, const std::uint32_t identifier,
+                      const std::array<std::uint8_t, 8> &bytes, const unsigned bus = 0) {
+  char row[96];
+  std::snprintf(row, sizeof(row), "%llu,%08X,FALSE,%u,8",
+                static_cast<unsigned long long>(1'000'000'000ULL + step * kStepUs), identifier,
+                bus);
+  std::string line = row;
+  for (const std::uint8_t byte : bytes) {
+    std::snprintf(row, sizeof(row), ",%02X", byte);
+    line += row;
+  }
+  return line + "\n";
+}
+
+// Every 100 ms: RPM ramp from idle through the red zone and back, a left turn,
+// a right turn, hazard, and turn off. One bus-1 row must be filtered out.
+std::string synthetic_gvret_csv() {
+  // RPM x4, per step.
+  constexpr std::array<std::uint16_t, kSteps> rpm{
+      0,      4'000,  10'000, 13'000, 20'000, 30'000, 30'000, 30'000,
+      30'000, 30'000, 30'000, 30'000, 30'000, 30'000, 8'000,  8'000,
+  };
+  // 0x091 byte 1: 0x20 vehicle-left, 0x10 vehicle-right, 0x04 hazard.
+  constexpr std::array<std::uint8_t, kSteps> turn{
+      0, 0, 0, 0, 0, 0, 0x20, 0x20, 0x10, 0x10, 0x04, 0x04, 0, 0, 0, 0,
+  };
+  std::string csv = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n";
+  for (std::size_t step = 0; step < kSteps; ++step) {
+    csv += gvret_row(step, 0x202,
+                     {static_cast<std::uint8_t>(rpm[step] >> 8),
+                      static_cast<std::uint8_t>(rpm[step] & 0xff), 0, 0, 0, 0, 0, 0});
+    csv += gvret_row(step, 0x091, {0, turn[step], 0, 0, 0, 0, 0, 0});
+    if (step == 2)
+      csv += gvret_row(step, 0x202, {0x75, 0x30, 0, 0, 0, 0, 0, 0}, 1);
+  }
+  return csv;
+}
+
+// A uniquely named file in the system temp directory, removed on scope exit.
+class TempGvretFile final {
+public:
+  explicit TempGvretFile(const std::string &contents) {
+    std::string pattern = (std::filesystem::temp_directory_path() / "gvret-e2e-XXXXXX").string();
+    const int descriptor = ::mkstemp(pattern.data());
+    REQUIRE(descriptor >= 0);
+    ::close(descriptor);
+    path_ = pattern;
+    std::ofstream output(path_, std::ios::binary | std::ios::trunc);
+    output << contents;
+    REQUIRE(output.good());
+  }
+  TempGvretFile(const TempGvretFile &) = delete;
+  TempGvretFile &operator=(const TempGvretFile &) = delete;
+  ~TempGvretFile() {
+    std::error_code ignored;
+    std::filesystem::remove(path_, ignored);
+  }
+
+  [[nodiscard]] const std::filesystem::path &path() const noexcept { return path_; }
+
+private:
+  std::filesystem::path path_;
+};
+
+std::vector<gvret::TimedCanFrame> load_synthetic_gvret() {
+  const TempGvretFile file(synthetic_gvret_csv());
+  gvret::FileReplayResult loaded = gvret::load_file(file.path());
+  INFO((loaded.error ? loaded.error->message() : std::string{}));
+  REQUIRE(loaded.ok());
+  return std::move(loaded.frames);
+}
+
+// The C5 PixelFrames the production pipeline writes with no transport.
+std::vector<replay::TimestampedPixelFrame>
+production_pixel_frames(const std::vector<gvret::TimedCanFrame> &frames,
+                        replay::ReplayScheduleOptions schedule) {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink pixels{clock};
+  replay::LocalArgbOutputStage stage{pixels};
+  schedule.end_time_us = frames.back().relative_time_us;
+  REQUIRE(replay::run_replay(frames, clock, stage, schedule).ok());
+  return pixels.frames();
+}
+
+// Strictly decodes one WebSocket pixel record back into a PixelFrame; fails on
+// any field or pixel count beyond the D1 schema.
+std::optional<replay::TimestampedPixelFrame> decode_pixel_record(const std::string &record) {
+  constexpr std::string_view prefix = "{\"type\":\"pixels\",\"timestamp_us\":";
+  if (record.rfind(prefix, 0) != 0)
+    return std::nullopt;
+  const char *cursor = record.c_str() + prefix.size();
+  char *next = nullptr;
+  replay::TimestampedPixelFrame frame;
+  frame.timestamp_us = std::strtoull(cursor, &next, 10);
+  if (next == cursor)
+    return std::nullopt;
+  cursor = next;
+  const auto expect = [&cursor](const std::string_view text) {
+    if (std::strncmp(cursor, text.data(), text.size()) != 0)
+      return false;
+    cursor += text.size();
+    return true;
+  };
+  if (!expect(",\"pixels\":["))
+    return std::nullopt;
+  for (std::size_t index = 0; index < frame.pixels.size(); ++index) {
+    if ((index != 0 && !expect(",")) || !expect("["))
+      return std::nullopt;
+    std::array<unsigned long, 3> channels{};
+    for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+      if (channel != 0 && !expect(","))
+        return std::nullopt;
+      channels[channel] = std::strtoul(cursor, &next, 10);
+      if (next == cursor || channels[channel] > 255)
+        return std::nullopt;
+      cursor = next;
+    }
+    if (!expect("]"))
+      return std::nullopt;
+    frame.pixels[index] = {static_cast<std::uint8_t>(channels[0]),
+                           static_cast<std::uint8_t>(channels[1]),
+                           static_cast<std::uint8_t>(channels[2])};
+  }
+  if (!expect("]}") || *cursor != '\0')
+    return std::nullopt;
+  return frame;
+}
+
+bool same_frame(const replay::TimestampedPixelFrame &left,
+                const replay::TimestampedPixelFrame &right) {
+  return left.timestamp_us == right.timestamp_us && left.pixels == right.pixels;
+}
+
+// The strip as shown at time: the last frame written at or before it.
+const local_argb::PixelFrame &strip_at(const std::vector<replay::TimestampedPixelFrame> &frames,
+                                       const vehicle_core::MonotonicTimestamp time_us) {
+  const auto after =
+      std::upper_bound(frames.begin(), frames.end(), time_us,
+                       [](const auto time, const replay::TimestampedPixelFrame &frame) {
+                         return time < frame.timestamp_us;
+                       });
+  REQUIRE(after != frames.begin());
+  return std::prev(after)->pixels;
+}
+
+constexpr local_argb::Rgb kBlackPixel{0, 0, 0};
+constexpr local_argb::Rgb kRedPixel{16, 0, 0};
+constexpr local_argb::Rgb kAmberPixel{128, 16, 0};
+
+bool all_pixels(const local_argb::PixelFrame &strip, const std::size_t first,
+                const std::size_t last, const local_argb::Rgb colour) {
+  return std::all_of(strip.begin() + static_cast<std::ptrdiff_t>(first),
+                     strip.begin() + static_cast<std::ptrdiff_t>(last) + 1,
+                     [colour](const local_argb::Rgb &pixel) { return pixel == colour; });
+}
+
+std::size_t lit_pixels(const local_argb::PixelFrame &strip) {
+  return static_cast<std::size_t>(
+      std::count_if(strip.begin(), strip.end(),
+                    [](const local_argb::Rgb &pixel) { return !(pixel == kBlackPixel); }));
+}
+
+bool any_pixel(const local_argb::PixelFrame &strip, const local_argb::Rgb colour) {
+  return std::find(strip.begin(), strip.end(), colour) != strip.end();
+}
+
+bool is_known_d1_record(const std::string &record) {
+  return record == kHeaderRecord || record == kEndRecord || is_playback_record(record) ||
+         decode_pixel_record(record).has_value();
+}
+
+replay::WebEmulatorOptions gvret_options() {
+  replay::WebEmulatorOptions options;
+  options.schedule.poll_period_us = 50'000;
+  return options;
+}
+
+} // namespace
+
+TEST_CASE("GVRET file replays over WebSocket as the exact production PixelFrames") {
+  const std::vector<gvret::TimedCanFrame> frames = load_synthetic_gvret();
+  // Replay time starts at zero, and the bus-1 row never reaches replay.
+  REQUIRE(frames.size() == 2 * kSteps);
+  CHECK(frames.front().relative_time_us == 0);
+  CHECK(frames.back().relative_time_us == kGvretEndUs);
+
+  const replay::WebEmulatorOptions options = gvret_options();
+  const auto expected_records = production_d1_records(frames, options.schedule);
+  const auto expected_frames = production_pixel_frames(frames, options.schedule);
+
+  replay::WebEmulatorServer server(frames, options);
+  REQUIRE(server.start());
+  std::atomic_bool stop_requested{false};
+  std::thread serving([&] { (void)server.serve(stop_requested); });
+  std::vector<std::string> records;
+  bool closed_after_end = true;
+  {
+    BrowserClient browser(server);
+    records = browser.read_through(kHeaderRecord);
+    browser.send_rate("5");
+    const auto rest = browser.read_through(kEndRecord);
+    records.insert(records.end(), rest.begin(), rest.end());
+    // Completion leaves the connection open for a restart.
+    CHECK(browser.read_for(std::chrono::milliseconds(200)).empty());
+    closed_after_end = browser.closed();
+  }
+  stop_server(server, stop_requested, serving);
+  CHECK_FALSE(closed_after_end);
+
+  // Only D1 schema records reach the browser: no CAN identifier, payload, or
+  // capture timestamp field exists to carry source data.
+  CHECK(std::all_of(records.begin(), records.end(), is_known_d1_record));
+  const std::vector<std::string> d1 = d1_records(records);
+  CHECK(d1 == expected_records);
+  REQUIRE(d1.size() >= 3);
+  CHECK(d1.front() == kHeaderRecord);
+  CHECK(d1.back() == kEndRecord);
+
+  // The streamed frames decode to exactly the C5 PixelFrames, in order, with
+  // their replay-relative timestamps.
+  std::vector<replay::TimestampedPixelFrame> streamed;
+  for (const auto &record : d1) {
+    if (auto frame = decode_pixel_record(record))
+      streamed.push_back(*frame);
+  }
+  REQUIRE(streamed.size() == expected_frames.size());
+  CHECK(std::equal(streamed.begin(), streamed.end(), expected_frames.begin(), same_frame));
+  CHECK(std::is_sorted(streamed.begin(), streamed.end(), [](const auto &left, const auto &right) {
+    return left.timestamp_us < right.timestamp_us;
+  }));
+  CHECK(streamed.back().timestamp_us <= kGvretEndUs);
+
+  // Startup: black at t=0.
+  REQUIRE_FALSE(streamed.empty());
+  CHECK(streamed.front().timestamp_us == 0);
+  CHECK(lit_pixels(streamed.front().pixels) == 0);
+
+  // RPM ramp: the fill only grows while RPM rises, and is not yet red.
+  std::size_t previous_lit = 0;
+  for (std::size_t step = 1; step <= 4; ++step) {
+    const auto &strip = strip_at(streamed, step * kStepUs + kStepUs - 1);
+    CAPTURE(step);
+    CHECK(lit_pixels(strip) >= previous_lit);
+    CHECK_FALSE(any_pixel(strip, kRedPixel));
+    previous_lit = lit_pixels(strip);
+  }
+  CHECK(previous_lit > 0);
+
+  // RPM red zone.
+  const auto &red_zone = strip_at(streamed, 6 * kStepUs - 1);
+  CHECK(all_pixels(red_zone, 35, 64, kRedPixel));
+  CHECK_FALSE(any_pixel(red_zone, kAmberPixel));
+
+  // Vehicle-left turn over the red zone: amber at 65, the outside dark, and
+  // the red zone kept.
+  const auto &left_turn = strip_at(streamed, 6 * kStepUs);
+  CHECK(left_turn[65] == kAmberPixel);
+  CHECK(all_pixels(left_turn, 66, 99, kBlackPixel));
+  CHECK(all_pixels(left_turn, 35, 64, kRedPixel));
+
+  // Vehicle-right turn: amber at 34 and the outside dark.
+  const auto &right_turn = strip_at(streamed, 8 * kStepUs);
+  CHECK(right_turn[34] == kAmberPixel);
+  CHECK(all_pixels(right_turn, 0, 33, kBlackPixel));
+  CHECK_FALSE(right_turn[65] == kAmberPixel);
+
+  // Hazard overlaps the red zone: both markers amber, red kept between them.
+  const auto &hazard = strip_at(streamed, 10 * kStepUs);
+  CHECK(hazard[34] == kAmberPixel);
+  CHECK(hazard[65] == kAmberPixel);
+  CHECK(all_pixels(hazard, 35, 64, kRedPixel));
+
+  // Back to the RPM baseline: no turn amber and no red zone.
+  const auto &baseline = strip_at(streamed, kGvretEndUs - 1);
+  CHECK_FALSE(any_pixel(baseline, kAmberPixel));
+  CHECK_FALSE(any_pixel(baseline, kRedPixel));
+  CHECK(lit_pixels(baseline) > 0);
+
+  // Completion: the stage fails off at the end, so the last frame the
+  // browser keeps is black at the end time.
+  CHECK(streamed.back().timestamp_us == kGvretEndUs);
+  CHECK(lit_pixels(streamed.back().pixels) == 0);
+}
+
+TEST_CASE("malformed GVRET input is refused before any replay can be served") {
+  const std::string header = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n";
+  const std::string valid = "1000000,00000202,FALSE,0,8,00,00,00,00,00,00,00,00\n";
+  const std::vector<std::tuple<std::string, std::string, gvret::FileErrorCode>> cases{
+      {"unexpected header", "Time,ID\n" + valid, gvret::FileErrorCode::ParseFailed},
+      {"bad identifier hex",
+       header + valid + "1100000,0000020G,FALSE,0,8,00,00,00,00,00,00,00,00\n",
+       gvret::FileErrorCode::ParseFailed},
+      {"bad data hex", header + valid + "1100000,00000202,FALSE,0,8,ZZ,00,00,00,00,00,00,00\n",
+       gvret::FileErrorCode::ParseFailed},
+      {"length beyond eight",
+       header + valid + "1100000,00000202,FALSE,0,9,00,00,00,00,00,00,00,00\n",
+       gvret::FileErrorCode::ParseFailed},
+      {"timestamp regression",
+       header + valid + "900000,00000202,FALSE,0,8,00,00,00,00,00,00,00,00\n",
+       gvret::FileErrorCode::ReplayFailed},
+  };
+  for (const auto &[name, contents, code] : cases) {
+    const std::string &case_name = name;
+    CAPTURE(case_name);
+    const TempGvretFile file(contents);
+    const gvret::FileReplayResult loaded = gvret::load_file(file.path());
+    REQUIRE_FALSE(loaded.ok());
+    CHECK(loaded.error->code == code);
+    CHECK(loaded.frames.empty());
+    if (code == gvret::FileErrorCode::ParseFailed) {
+      REQUIRE(loaded.error->parse_error.has_value());
+      CHECK(loaded.error->parse_error->line_number >= 1);
+    } else {
+      CHECK(loaded.error->replay_error.has_value());
+    }
+  }
+}
+
+TEST_CASE("a browser disconnect mid-replay frees the server for a full replay to the next") {
+  const std::vector<gvret::TimedCanFrame> frames = load_synthetic_gvret();
+  const replay::WebEmulatorOptions options = gvret_options();
+  const auto expected = production_d1_records(frames, options.schedule);
+
+  replay::WebEmulatorServer server(frames, options);
+  REQUIRE(server.start());
+  std::atomic_bool stop_requested{false};
+  std::thread serving([&] { (void)server.serve(stop_requested); });
+  {
+    BrowserClient leaving(server);
+    const auto first = leaving.read_through(kHeaderRecord);
+    CHECK(first.size() == 1);
+    // Leave once the replay is under way but far from its 1.5 s end.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (auto frame = leaving.next_frame(deadline)) {
+      if (frame->opcode == 0x1 && is_pixel_record(frame->payload))
+        break;
+    }
+  }
+  std::vector<std::string> records;
+  {
+    BrowserClient next(server);
+    records = next.read_through(kHeaderRecord, std::chrono::seconds(10));
+    next.send_rate("5");
+    const auto rest = next.read_through(kEndRecord);
+    records.insert(records.end(), rest.begin(), rest.end());
+  }
+  stop_server(server, stop_requested, serving);
+
+  // The next browser starts from t=0 with the same D1 stream, not a resumption.
+  CHECK(d1_records(records) == expected);
+}
+
+TEST_CASE("a server-side replay error closes the stream without an end record") {
+  std::vector<gvret::TimedCanFrame> frames = load_synthetic_gvret();
+  // A capture timestamp that disagrees with replay time fails replay
+  // validation inside the server.
+  frames[3].frame.timestamp_us += 1;
+  {
+    replay::ReplayClock clock;
+    replay::TimestampedPixelFrameSink pixels{clock};
+    replay::LocalArgbOutputStage stage{pixels};
+    replay::ReplayScheduleOptions schedule = gvret_options().schedule;
+    schedule.end_time_us = kGvretEndUs;
+    REQUIRE(replay::run_replay(frames, clock, stage, schedule).status ==
+            replay::ReplayScheduleStatus::InvalidInput);
+  }
+
+  replay::WebEmulatorServer server(frames, gvret_options());
+  REQUIRE(server.start());
+  std::atomic_bool stop_requested{false};
+  std::thread serving([&] { (void)server.serve(stop_requested); });
+  std::vector<std::string> records;
+  bool closed = false;
+  {
+    BrowserClient browser(server);
+    records = browser.read_for(std::chrono::seconds(3));
+    closed = browser.closed();
+  }
+  stop_server(server, stop_requested, serving);
+
+  // The browser sees the stream end without an end record, which its renderer
+  // reports as a disconnect and clears, never as a normal completion.
+  CHECK(closed);
+  REQUIRE_FALSE(records.empty());
+  CHECK(records.front() == kHeaderRecord);
+  CHECK(std::find(records.begin(), records.end(), kEndRecord) == records.end());
+  CHECK(std::none_of(records.begin(), records.end(), is_pixel_record));
+}
+
+TEST_CASE("server shutdown mid-replay closes the stream without an end record") {
+  const std::vector<gvret::TimedCanFrame> frames = load_synthetic_gvret();
+  replay::WebEmulatorServer server(frames, gvret_options());
+  REQUIRE(server.start());
+  std::atomic_bool stop_requested{false};
+  std::thread serving([&] { (void)server.serve(stop_requested); });
+  std::vector<std::string> records;
+  bool closed = false;
+  {
+    BrowserClient browser(server);
+    records = browser.read_through(kHeaderRecord);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (auto frame = browser.next_frame(deadline)) {
+      if (frame->opcode != 0x1)
+        continue;
+      records.push_back(frame->payload);
+      if (is_pixel_record(frame->payload))
+        break;
+    }
+    server.request_shutdown();
+    const auto rest = browser.read_for(std::chrono::seconds(3));
+    records.insert(records.end(), rest.begin(), rest.end());
+    closed = browser.closed();
+  }
+  stop_requested.store(true);
+  serving.join();
+
+  CHECK(closed);
+  CHECK(std::any_of(records.begin(), records.end(), is_pixel_record));
+  CHECK(std::find(records.begin(), records.end(), kEndRecord) == records.end());
 }
 
 #else
