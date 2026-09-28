@@ -76,6 +76,21 @@ add_library(replay_signal_output STATIC src/signal_record_output.cpp)
 target_link_libraries(replay_signal_output PUBLIC replay_signal_observer)
 replay_warnings(replay_signal_output)
 
+# Local-only browser adapter. It reuses the production replay scheduler and
+# JSONL pixel sink through a WebSocket line transport; no ESP-IDF or renderer
+# internals cross this host-only boundary.
+add_library(replay_web_emulator STATIC src/web_emulator.cpp)
+target_include_directories(replay_web_emulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(
+  replay_web_emulator
+  PUBLIC gvret_parser replay_scheduler replay_local_argb_stage replay_pixel_output
+)
+if(WIN32)
+  target_link_libraries(replay_web_emulator PUBLIC ws2_32)
+endif()
+target_compile_features(replay_web_emulator PUBLIC cxx_std_17)
+replay_warnings(replay_web_emulator)
+
 add_executable(can-replay src/can_replay_cli.cpp)
 target_link_libraries(
   can-replay
@@ -88,3 +103,8 @@ target_link_libraries(
 )
 target_compile_features(can-replay PRIVATE cxx_std_17)
 replay_warnings(can-replay)
+
+add_executable(gvret-led-emulator src/gvret_led_emulator.cpp)
+target_link_libraries(gvret-led-emulator PRIVATE replay_web_emulator gvret_parser)
+target_compile_features(gvret-led-emulator PRIVATE cxx_std_17)
+replay_warnings(gvret-led-emulator)

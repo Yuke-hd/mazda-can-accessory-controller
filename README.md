@@ -161,6 +161,12 @@ generated from synthetic fixtures.
 [signal records](docs/development/mcan-94-signal-observers.md) to the same
 stream under the same restrictions.
 
+The local browser protocol adapter is available as
+[`gvret-led-emulator`](docs/development/mcan-69-web-emulator.md). It binds to
+`127.0.0.1` by default, optionally `::1`, serves its HTML/CSS/JS assets from
+the executable, and streams the same D1 JSONL records over a WebSocket. It
+does not accept capture uploads or make outbound network requests.
+
 ## Architecture and Data Flow
 
 ```text
