@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "gvret/csv_parser.hpp"
 #include "gvret/replay_stream.hpp"
 
 namespace {
@@ -88,4 +89,23 @@ TEST_CASE("replay does not narrow the selected source bus into RawCanFrame bus_i
   REQUIRE(result.ok());
   REQUIRE(result.frames.size() == 1);
   CHECK(result.frames.front().frame.bus_id == 0);
+}
+
+TEST_CASE("replay excludes transmitted GVRET rows from the receive path") {
+  const auto parsed =
+      gvret::parse_csv("Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8\n"
+                       "100,00000401,false,Tx,0,1,AA\n"
+                       "200,00000402,false,Rx,0,1,BB\n");
+
+  REQUIRE(parsed.ok());
+  REQUIRE(parsed.frames.size() == 2);
+  CHECK(parsed.frames[0].direction == gvret::Direction::Tx);
+  CHECK(parsed.frames[1].direction == gvret::Direction::Rx);
+
+  const auto result = gvret::prepare_replay(parsed.frames);
+
+  REQUIRE(result.ok());
+  REQUIRE(result.frames.size() == 1);
+  CHECK(result.frames.front().frame.identifier == 0x402);
+  CHECK(result.frames.front().relative_time_us == 0);
 }

@@ -40,11 +40,12 @@ struct ReplayOptions {
   std::uint32_t bus{0};
 };
 
-// Select one source bus and normalize its timestamps to a zero-based replay
-// clock. Rows from other buses are skipped in source order. Equal timestamps
-// are valid and retain their source-file order. A timestamp regression in the
-// selected bus fails the whole transformation rather than producing a stream
-// with an ambiguous unsigned time delta.
+// Select one source bus and normalize received (Rx) rows to a zero-based
+// replay clock. Rows from other buses and transmitted (Tx) rows are skipped in
+// source order. Equal timestamps are valid and retain their source-file order.
+// A timestamp regression in the selected receive stream fails the whole
+// transformation rather than producing a stream with an ambiguous unsigned
+// time delta.
 [[nodiscard]] ReplayResult prepare_replay(const std::vector<ParsedGvretFrame> &parsed,
                                           ReplayOptions options = {});
 

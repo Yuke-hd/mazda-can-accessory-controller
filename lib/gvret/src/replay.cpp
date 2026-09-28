@@ -21,7 +21,7 @@ ReplayResult prepare_replay(const std::vector<ParsedGvretFrame> &parsed,
 
   for (std::size_t source_index = 0; source_index < parsed.size(); ++source_index) {
     const ParsedGvretFrame &source = parsed[source_index];
-    if (source.bus != options.bus) {
+    if (source.direction != Direction::Rx || source.bus != options.bus) {
       continue;
     }
 

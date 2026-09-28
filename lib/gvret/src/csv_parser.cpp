@@ -7,10 +7,14 @@
 namespace gvret {
 namespace {
 
-constexpr std::string_view kExpectedHeader =
-    "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
-constexpr std::size_t kMetadataColumns = 5;
+constexpr std::string_view kLegacyHeader = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
+constexpr std::string_view kSavvyCanV2Header =
+    "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
+constexpr std::size_t kV1MetadataColumns = 5;
+constexpr std::size_t kV2MetadataColumns = 6;
 constexpr std::size_t kPayloadColumns = vehicle_core::kCanClassicPayloadBytes;
+
+enum class CsvSchema : std::uint8_t { V1, V2 };
 
 struct Fields {
   std::vector<std::string_view> values;
@@ -64,6 +68,18 @@ bool parse_extended(const std::string_view text, bool &value) {
   return false;
 }
 
+bool parse_direction(const std::string_view text, Direction &value) {
+  if (text == "Rx") {
+    value = Direction::Rx;
+    return true;
+  }
+  if (text == "Tx") {
+    value = Direction::Tx;
+    return true;
+  }
+  return false;
+}
+
 ParseResult failure(const std::size_t line_number, std::string reason) {
   ParseResult result;
   result.error = ParseError{line_number, std::move(reason)};
@@ -81,6 +97,7 @@ ParseResult parse_csv(const std::string_view csv) {
   std::size_t line_number = 1;
   std::size_t line_begin = 0;
   bool saw_header = false;
+  CsvSchema schema = CsvSchema::V1;
 
   while (line_begin <= csv.size()) {
     const std::size_t newline = csv.find('\n', line_begin);
@@ -96,9 +113,10 @@ ParseResult parse_csv(const std::string_view csv) {
     }
 
     if (!saw_header) {
-      if (line != kExpectedHeader) {
+      if (line != kLegacyHeader && line != kSavvyCanV2Header) {
         return failure(line_number, "malformed GVRET header");
       }
+      schema = line == kSavvyCanV2Header ? CsvSchema::V2 : CsvSchema::V1;
       saw_header = true;
     } else {
       if (line.empty()) {
@@ -106,7 +124,9 @@ ParseResult parse_csv(const std::string_view csv) {
       }
 
       const Fields fields = split_csv_line(line);
-      if (fields.values.size() < kMetadataColumns) {
+      const std::size_t metadata_columns =
+          schema == CsvSchema::V2 ? kV2MetadataColumns : kV1MetadataColumns;
+      if (fields.values.size() < metadata_columns) {
         return failure(line_number, "row is missing required columns");
       }
 
@@ -125,27 +145,35 @@ ParseResult parse_csv(const std::string_view csv) {
         return failure(line_number, "invalid Extended flag");
       }
 
+      Direction direction = Direction::Rx;
+      const std::size_t bus_column = schema == CsvSchema::V2 ? 4 : 3;
+      const std::size_t dlc_column = schema == CsvSchema::V2 ? 5 : 4;
+      if (schema == CsvSchema::V2 && !parse_direction(fields.values[3], direction)) {
+        return failure(line_number, "invalid direction; expected Rx or Tx");
+      }
+
       std::uint32_t bus = 0;
-      if (!parse_integer(fields.values[3], 10, bus)) {
+      if (!parse_integer(fields.values[bus_column], 10, bus)) {
         return failure(line_number, "invalid bus number");
       }
 
       std::uint32_t dlc = 0;
-      if (!parse_integer(fields.values[4], 10, dlc) || dlc > kPayloadColumns) {
+      if (!parse_integer(fields.values[dlc_column], 10, dlc) || dlc > kPayloadColumns) {
         return failure(line_number, "invalid DLC; expected a value from 0 to 8");
       }
 
-      if (fields.values.size() > kMetadataColumns + kPayloadColumns) {
+      if (fields.values.size() > metadata_columns + kPayloadColumns) {
         return failure(line_number, "row contains unsupported columns");
       }
 
-      if (fields.values.size() < kMetadataColumns + dlc) {
+      if (fields.values.size() < metadata_columns + dlc) {
         return failure(line_number, "row is missing a required payload byte");
       }
 
       ParsedGvretFrame parsed;
       parsed.timestamp_us = timestamp_us;
       parsed.bus = bus;
+      parsed.direction = direction;
       parsed.frame.timestamp_us = timestamp_us;
       // ParsedGvretFrame::bus retains the complete source value. Keep the
       // embedded frame's narrow bus_id neutral until A2 selects replay-bus
@@ -156,7 +184,7 @@ ParseResult parse_csv(const std::string_view csv) {
       parsed.frame.dlc = static_cast<std::uint8_t>(dlc);
 
       for (std::size_t index = 0; index < dlc; ++index) {
-        const std::string_view byte_text = fields.values[kMetadataColumns + index];
+        const std::string_view byte_text = fields.values[metadata_columns + index];
         if (byte_text.empty() || byte_text.size() > 2) {
           return failure(line_number, "invalid hexadecimal payload byte");
         }
