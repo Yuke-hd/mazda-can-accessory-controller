@@ -13,6 +13,17 @@
 <div><dt>State</dt><dd id="status" aria-live="polite">Connecting to local replay…</dd></div>
 <div><dt>Replay time</dt><dd id="replay-time">—</dd></div>
 </dl>
+<div class="controls" role="group" aria-label="Playback">
+<button id="play-pause" type="button" disabled>Pause</button>
+<button id="restart" type="button" disabled>Restart</button>
+<label>Rate <select id="rate" disabled>
+<option value="0.25">0.25×</option>
+<option value="0.5">0.5×</option>
+<option value="1" selected>1×</option>
+<option value="2">2×</option>
+<option value="5">5×</option>
+</select></label>
+</div>
 <div class="strip-frame">
 <div id="strip" class="strip" role="img" aria-label="Streamed LED strip"></div>
 <p class="stale-marker">No live frame</p>

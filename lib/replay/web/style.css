@@ -12,6 +12,18 @@ h1 { font-size: 1.6rem; }
 #status { color: #9ac7ff; }
 main[data-phase="disconnected"] #status,
 main[data-phase="invalid"] #status { color: #ff9a9a; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin: 0 0 1rem; }
+.controls button,
+.controls select {
+  font: inherit;
+  color: inherit;
+  background: #1c242c;
+  border: 1px solid #3a4652;
+  border-radius: 4px;
+  padding: 0.3rem 0.8rem;
+}
+.controls button { min-width: 5.5rem; }
+.controls :disabled { color: #5d6a75; border-color: #242d36; }
 
 /* Pixels are painted verbatim from the stream. Keep every change instant so
    the browser never shows colours that were not streamed. */

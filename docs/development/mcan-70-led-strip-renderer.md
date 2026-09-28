@@ -25,8 +25,10 @@ what that pipeline emitted.
   stream invalid: the strip is cleared, the reason is shown, the page closes
   the WebSocket, and later records are ignored. Unknown record types are ignored, as D1 allows.
 
-Replay is not wall-clock paced here; pacing and replay controls are separate
-follow-up work.
+Wall-clock pacing and the Play/Pause, Restart, and rate controls are
+described in [GH-71](web-emulator-replay-clock.md). They add `playback`,
+`restart`, and `rejected` records; a `restart` record is the only way a
+second `header` becomes valid.
 
 ## Assets and tests
 

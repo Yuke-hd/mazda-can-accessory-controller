@@ -51,6 +51,17 @@ add_library(replay_scheduler STATIC src/scheduler.cpp)
 target_link_libraries(replay_scheduler PUBLIC replay_controller mazda controller_config)
 replay_warnings(replay_scheduler)
 
+# Wall-time pacing and playback commands for interactive host players. The
+# scheduler sees only the ReplayGate interface; wall time stays out here.
+add_library(
+  replay_playback STATIC
+  src/playback_command.cpp
+  src/playback_pacer.cpp
+  src/wall_clock.cpp
+)
+target_link_libraries(replay_playback PUBLIC replay_scheduler)
+replay_warnings(replay_playback)
+
 # The local ARGB output stage: the only replay target that sees the local ARGB
 # renderer internals.
 add_library(replay_local_argb_stage STATIC src/local_argb_stage.cpp)
@@ -109,12 +120,18 @@ configure_file(
 add_library(
   replay_web_emulator STATIC
   src/web_emulator.cpp
+  src/websocket_client_frames.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/generated/web_emulator_assets.cpp
 )
 target_include_directories(replay_web_emulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(
   replay_web_emulator
-  PUBLIC gvret_parser replay_scheduler replay_local_argb_stage replay_pixel_output
+  PUBLIC
+    gvret_parser
+    replay_scheduler
+    replay_playback
+    replay_local_argb_stage
+    replay_pixel_output
 )
 if(WIN32)
   target_link_libraries(replay_web_emulator PUBLIC ws2_32)

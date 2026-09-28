@@ -2,7 +2,10 @@
 
 #include "replay/local_argb_stage.hpp"
 #include "replay/pixel_frame_output.hpp"
+#include "replay/playback_pacer.hpp"
+#include "replay/wall_clock.hpp"
 #include "replay/web_emulator_assets.hpp"
+#include "replay/websocket_client_frames.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string_view>
@@ -28,6 +32,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -145,6 +150,21 @@ bool set_blocking(const SocketHandle socket) noexcept {
 #else
   const int flags = ::fcntl(socket, F_GETFL, 0);
   return flags >= 0 && ::fcntl(socket, F_SETFL, flags & ~O_NONBLOCK) == 0;
+#endif
+}
+
+// True when a receive would not block: data, end of stream, or an error.
+bool readable_now(const SocketHandle socket) noexcept {
+#if defined(_WIN32)
+  WSAPOLLFD descriptor{};
+  descriptor.fd = socket;
+  descriptor.events = POLLRDNORM;
+  return ::WSAPoll(&descriptor, 1, 0) > 0;
+#else
+  pollfd descriptor{};
+  descriptor.fd = socket;
+  descriptor.events = POLLIN;
+  return ::poll(&descriptor, 1, 0) > 0;
 #endif
 }
 
@@ -570,21 +590,176 @@ private:
   JsonlPixelFrameSink encoder_;
 };
 
-bool serve_websocket(const SocketHandle socket, const std::vector<gvret::TimedCanFrame> &frames,
-                     const WebEmulatorOptions &options, const std::atomic_bool &stop_requested,
-                     const std::atomic_bool &server_shutdown) {
+std::string playback_record(const PlaybackState state) {
+  std::string record{"{\"type\":\"playback\",\"paused\":"};
+  record.append(state.paused ? "true" : "false");
+  record.append(",\"rate\":");
+  record.append(state.rate.text());
+  record.push_back('}');
+  return record;
+}
+
+std::string rejected_record(const std::string_view reason) {
+  std::string record{"{\"type\":\"rejected\",\"reason\":\""};
+  record.append(reason);
+  record.append("\"}");
+  return record;
+}
+
+constexpr std::string_view kRestartRecord{"{\"type\":\"restart\"}"};
+
+// The browser side of playback control: decodes control messages from the
+// WebSocket without blocking, answers pings, and acknowledges each playback
+// state change so the page shows what the server is actually doing.
+class WebSocketPlaybackChannel final : public PlaybackChannel {
+public:
+  WebSocketPlaybackChannel(const SocketHandle socket, const std::atomic_bool &stop_requested,
+                           const std::atomic_bool &server_shutdown) noexcept
+      : socket_(socket), stop_requested_(&stop_requested), server_shutdown_(&server_shutdown) {}
+
+  [[nodiscard]] PlaybackPoll poll() override {
+    while (open()) {
+      auto frame = decoder_.next();
+      if (!frame) {
+        if (!receive())
+          return PlaybackPoll{};
+        continue;
+      }
+      if (auto command = accept(std::move(*frame)))
+        return *command;
+    }
+    return PlaybackPoll{PlaybackPollStatus::Closed, {}};
+  }
+
+  void report(const PlaybackState state) override { (void)send_text(playback_record(state)); }
+
+  [[nodiscard]] bool send_text(const std::string_view text) {
+    if (!open())
+      return false;
+    closed_ = !send_websocket_frame(socket_, 0x1, text, *stop_requested_, *server_shutdown_);
+    return !closed_;
+  }
+
+  // Sends the close frame owed to the browser, if the session ended on one of
+  // its frames.
+  void finish() {
+    if (close_code_ != 0)
+      (void)send_websocket_close(socket_, close_code_, *stop_requested_, *server_shutdown_);
+  }
+
+private:
+  [[nodiscard]] bool open() const noexcept {
+    return !closed_ && !stop_requested_->load() && !server_shutdown_->load();
+  }
+
+  // Appends whatever the browser has sent; false when nothing is waiting.
+  bool receive() {
+    if (!readable_now(socket_))
+      return false;
+    std::array<char, 512> buffer{};
+#if defined(_WIN32)
+    const int count = ::recv(socket_, buffer.data(), static_cast<int>(buffer.size()), 0);
+#else
+    const ssize_t count = ::recv(socket_, buffer.data(), buffer.size(), 0);
+#endif
+    if (count > 0) {
+      decoder_.append(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+      return true;
+    }
+    if (count < 0 && retryable_socket_error())
+      return false;
+    closed_ = true;
+    return true;
+  }
+
+  std::optional<PlaybackPoll> accept(ClientFrame frame) {
+    switch (frame.kind) {
+    case ClientFrameKind::Text:
+      return accept_control(frame.payload);
+    case ClientFrameKind::Ping:
+      closed_ =
+          !send_websocket_frame(socket_, 0xA, frame.payload, *stop_requested_, *server_shutdown_);
+      return std::nullopt;
+    case ClientFrameKind::Pong:
+      return std::nullopt;
+    case ClientFrameKind::Close:
+    case ClientFrameKind::ProtocolError:
+    case ClientFrameKind::InvalidText:
+    case ClientFrameKind::Unsupported:
+    case ClientFrameKind::TooLarge:
+      break;
+    }
+    close_code_ = close_code_for(frame.kind);
+    closed_ = true;
+    return PlaybackPoll{PlaybackPollStatus::Closed, {}};
+  }
+
+  std::optional<PlaybackPoll> accept_control(const std::string_view text) {
+    const PlaybackCommandParse parsed = parse_playback_command(text);
+    if (parsed.command)
+      return PlaybackPoll{PlaybackPollStatus::Command, *parsed.command};
+    (void)send_text(rejected_record(parsed.rejection));
+    return std::nullopt;
+  }
+
+  SocketHandle socket_;
+  const std::atomic_bool *stop_requested_;
+  const std::atomic_bool *server_shutdown_;
+  ClientFrameDecoder decoder_{kMaxControlMessageBytes};
+  std::uint16_t close_code_{0};
+  bool closed_{false};
+};
+
+enum class ReplayPass : std::uint8_t { Ended, Restart, Closed, Failed };
+
+// Streams one replay from t=0 with a fresh clock, controller, and output
+// stage, so a restart always begins from the initial black strip.
+ReplayPass stream_replay_pass(const SocketHandle socket,
+                              const std::vector<gvret::TimedCanFrame> &frames,
+                              const WebEmulatorOptions &options, PlaybackPacer &pacer,
+                              const std::atomic_bool &stop_requested,
+                              const std::atomic_bool &server_shutdown) {
   ReplayClock clock;
   WebSocketPixelFrameSink pixels{clock, socket, stop_requested, server_shutdown};
   if (!pixels.write_header())
-    return false;
+    return ReplayPass::Failed;
+  pacer.begin_replay();
 
   LocalArgbOutputStage output{pixels};
   ReplayScheduleOptions schedule = options.schedule;
   schedule.end_time_us = frames.empty() ? 0 : frames.back().relative_time_us;
-  const ReplayScheduleResult replay = run_replay(frames, clock, output, schedule);
-  if (!replay.ok() || stop_requested.load() || server_shutdown.load())
-    return false;
-  return pixels.write_end() && send_websocket_close(socket, 1000, stop_requested, server_shutdown);
+  const ReplayScheduleResult replay = run_replay(frames, clock, output, schedule, nullptr, &pacer);
+  if (replay.status == ReplayScheduleStatus::Interrupted)
+    return pacer.interruption() == PlaybackInterruption::Restart ? ReplayPass::Restart
+                                                                 : ReplayPass::Closed;
+  if (!replay.ok() || stop_requested.load() || server_shutdown.load() || !pixels.write_end())
+    return ReplayPass::Failed;
+  return ReplayPass::Ended;
+}
+
+// Plays the recording paced against wall time and under browser control
+// until the browser closes the connection. A completed replay stays open so
+// the browser can restart it.
+bool serve_websocket(const SocketHandle socket, const std::vector<gvret::TimedCanFrame> &frames,
+                     const WebEmulatorOptions &options, const std::atomic_bool &stop_requested,
+                     const std::atomic_bool &server_shutdown) {
+  WebSocketPlaybackChannel channel{socket, stop_requested, server_shutdown};
+  SteadyWallClock wall;
+  PlaybackPacer pacer{wall, channel};
+  for (;;) {
+    ReplayPass pass =
+        stream_replay_pass(socket, frames, options, pacer, stop_requested, server_shutdown);
+    if (pass == ReplayPass::Ended)
+      pass = pacer.await_restart() ? ReplayPass::Restart : ReplayPass::Closed;
+    if (pass == ReplayPass::Failed)
+      return false;
+    if (pass == ReplayPass::Closed) {
+      channel.finish();
+      return true;
+    }
+    if (!channel.send_text(kRestartRecord))
+      return false;
+  }
 }
 
 bool serve_http_client(const SocketHandle socket, const std::vector<gvret::TimedCanFrame> &frames,

@@ -5,6 +5,7 @@
 #include "replay/pixel_frame_output.hpp"
 #include "replay/scheduler.hpp"
 #include "replay/web_emulator.hpp"
+#include "replay/websocket_client_frames.hpp"
 
 #ifndef _WIN32
 #include <arpa/inet.h>
@@ -13,16 +14,20 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -101,42 +106,189 @@ std::string websocket_request(const replay::WebEmulatorServer &server,
          "\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + std::string(key) + "\r\n\r\n";
 }
 
-std::vector<std::string> websocket_text_payloads(const std::string &response) {
-  std::vector<std::string> payloads;
-  const std::size_t header_end = response.find("\r\n\r\n");
-  if (header_end == std::string::npos)
-    return payloads;
-  std::size_t offset = header_end + 4;
-  while (offset + 2 <= response.size()) {
-    const std::uint8_t first = static_cast<std::uint8_t>(response[offset]);
-    const std::uint8_t second = static_cast<std::uint8_t>(response[offset + 1]);
-    offset += 2;
-    if ((first & 0x80U) == 0 || (second & 0x80U) != 0)
-      return {};
-    std::uint64_t length = second & 0x7fU;
-    if (length == 126U) {
-      if (offset + 2 > response.size())
-        return {};
-      length = (static_cast<std::uint64_t>(static_cast<std::uint8_t>(response[offset])) << 8U) |
-               static_cast<std::uint8_t>(response[offset + 1]);
-      offset += 2;
-    } else if (length == 127U) {
-      if (offset + 8 > response.size())
-        return {};
-      length = 0;
-      for (unsigned index = 0; index < 8; ++index)
-        length = (length << 8U) | static_cast<std::uint8_t>(response[offset + index]);
-      offset += 8;
-    }
-    if (length > response.size() - offset)
-      return {};
-    if ((first & 0x0fU) == 0x1U)
-      payloads.emplace_back(response.data() + offset, static_cast<std::size_t>(length));
-    offset += static_cast<std::size_t>(length);
-    if ((first & 0x0fU) == 0x8U)
-      break;
+struct ServerFrame final {
+  std::uint8_t opcode{0};
+  std::string payload;
+};
+
+// A minimal browser: completes the WebSocket handshake, sends masked client
+// frames, and reads the server's text records one at a time.
+class BrowserClient final {
+public:
+  explicit BrowserClient(const replay::WebEmulatorServer &server,
+                         const std::string_view connection = "Upgrade")
+      : socket_(connect_loopback(server)) {
+    send_request(socket_, websocket_request(server, connection));
   }
-  return payloads;
+  BrowserClient(const BrowserClient &) = delete;
+  BrowserClient &operator=(const BrowserClient &) = delete;
+  ~BrowserClient() {
+    ::shutdown(socket_, SHUT_RDWR);
+    ::close(socket_);
+  }
+
+  void send_frame(const std::uint8_t first_byte, const std::string_view payload,
+                  const bool masked = true) {
+    const std::array<std::uint8_t, 4> mask{0x12, 0x34, 0x56, 0x78};
+    std::string frame;
+    frame.push_back(static_cast<char>(first_byte));
+    const std::uint8_t mask_bit = masked ? 0x80U : 0U;
+    if (payload.size() < 126U) {
+      frame.push_back(static_cast<char>(mask_bit | payload.size()));
+    } else {
+      frame.push_back(static_cast<char>(mask_bit | 126U));
+      frame.push_back(static_cast<char>(payload.size() >> 8U));
+      frame.push_back(static_cast<char>(payload.size() & 0xffU));
+    }
+    if (masked)
+      frame.append(mask.begin(), mask.end());
+    for (std::size_t index = 0; index < payload.size(); ++index)
+      frame.push_back(static_cast<char>(payload[index] ^ (masked ? mask[index % 4] : 0U)));
+    send_request(socket_, frame);
+  }
+
+  void send_text(const std::string_view text) { send_frame(0x81, text); }
+
+  void send_control(const std::string_view command) {
+    send_text("{\"type\":\"control\",\"command\":\"" + std::string(command) + "\"}");
+  }
+
+  void send_rate(const std::string_view rate) {
+    send_text("{\"type\":\"control\",\"command\":\"rate\",\"rate\":" + std::string(rate) + "}");
+  }
+
+  // The next server frame, or nullopt at the deadline or end of stream.
+  std::optional<ServerFrame> next_frame(const std::chrono::steady_clock::time_point deadline) {
+    for (;;) {
+      if (auto frame = take_frame())
+        return frame;
+      if (closed_ || std::chrono::steady_clock::now() >= deadline)
+        return std::nullopt;
+      char buffer[4096];
+      const ssize_t count = ::recv(socket_, buffer, sizeof(buffer), MSG_DONTWAIT);
+      if (count > 0) {
+        buffer_.append(buffer, static_cast<std::size_t>(count));
+        continue;
+      }
+      if (count == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+        closed_ = true;
+        continue;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  }
+
+  // Text records up to and including the first one equal to last; REQUIREs
+  // that it arrives within timeout.
+  std::vector<std::string>
+  read_through(const std::string_view last,
+               const std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+    std::vector<std::string> records;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (auto frame = next_frame(deadline)) {
+      if (frame->opcode != 0x1)
+        continue;
+      records.push_back(frame->payload);
+      if (frame->payload == last)
+        return records;
+    }
+    CAPTURE(last);
+    FAIL("record did not arrive");
+    return records;
+  }
+
+  // Every text record that arrives during window.
+  std::vector<std::string> read_for(const std::chrono::milliseconds window) {
+    std::vector<std::string> records;
+    const auto deadline = std::chrono::steady_clock::now() + window;
+    while (auto frame = next_frame(deadline)) {
+      if (frame->opcode == 0x1)
+        records.push_back(frame->payload);
+    }
+    return records;
+  }
+
+  // The close code of the server's close frame, skipping text records.
+  std::optional<std::uint16_t> read_close_code() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (auto frame = next_frame(deadline)) {
+      if (frame->opcode == 0x8 && frame->payload.size() == 2)
+        return static_cast<std::uint16_t>(static_cast<std::uint8_t>(frame->payload[0]) << 8U |
+                                          static_cast<std::uint8_t>(frame->payload[1]));
+    }
+    return std::nullopt;
+  }
+
+  [[nodiscard]] const std::string &handshake() const noexcept { return handshake_; }
+
+private:
+  std::optional<ServerFrame> take_frame() {
+    if (handshake_.empty()) {
+      const std::size_t header_end = buffer_.find("\r\n\r\n");
+      if (header_end == std::string::npos)
+        return std::nullopt;
+      handshake_ = buffer_.substr(0, header_end + 4);
+      buffer_.erase(0, header_end + 4);
+    }
+    if (buffer_.size() < 2)
+      return std::nullopt;
+    const auto first = static_cast<std::uint8_t>(buffer_[0]);
+    const auto second = static_cast<std::uint8_t>(buffer_[1]);
+    REQUIRE((first & 0x80U) != 0);  // Server frames are never fragmented.
+    REQUIRE((second & 0x80U) == 0); // or masked.
+    std::size_t offset = 2;
+    std::uint64_t length = second & 0x7fU;
+    const std::size_t length_bytes = length == 126U ? 2 : (length == 127U ? 8 : 0);
+    if (buffer_.size() < offset + length_bytes)
+      return std::nullopt;
+    if (length_bytes != 0) {
+      length = 0;
+      for (std::size_t index = 0; index < length_bytes; ++index)
+        length = (length << 8U) | static_cast<std::uint8_t>(buffer_[offset + index]);
+      offset += length_bytes;
+    }
+    if (buffer_.size() - offset < length)
+      return std::nullopt;
+    ServerFrame frame{static_cast<std::uint8_t>(first & 0x0fU),
+                      buffer_.substr(offset, static_cast<std::size_t>(length))};
+    buffer_.erase(0, offset + static_cast<std::size_t>(length));
+    return frame;
+  }
+
+  int socket_;
+  std::string buffer_;
+  std::string handshake_;
+  bool closed_{false};
+};
+
+bool is_playback_record(const std::string &record) {
+  return record.rfind("{\"type\":\"playback\"", 0) == 0;
+}
+
+// Only the D1 stream: drops the playback acknowledgements that interleave it.
+std::vector<std::string> d1_records(std::vector<std::string> records) {
+  records.erase(std::remove_if(records.begin(), records.end(), is_playback_record), records.end());
+  return records;
+}
+
+constexpr std::string_view kHeaderRecord{"{\"type\":\"header\",\"version\":1,\"pixel_count\":100}"};
+constexpr std::string_view kEndRecord{"{\"type\":\"end\"}"};
+constexpr std::string_view kRestartRecord{"{\"type\":\"restart\"}"};
+
+std::string playback_state(const bool paused, const std::string_view rate) {
+  return "{\"type\":\"playback\",\"paused\":" + std::string(paused ? "true" : "false") +
+         ",\"rate\":" + std::string(rate) + "}";
+}
+
+std::string all_black_pixels() {
+  std::string pixels = "\"pixels\":[[0,0,0]";
+  for (int index = 1; index < 100; ++index)
+    pixels += ",[0,0,0]";
+  return pixels + "]}";
+}
+
+bool is_pixel_record(const std::string &record) {
+  return record.rfind("{\"type\":\"pixels\"", 0) == 0;
 }
 
 void stop_server(replay::WebEmulatorServer &server, std::atomic_bool &stop_requested,
@@ -268,22 +420,19 @@ TEST_CASE("web emulator serves local assets and streams D1 over WebSocket") {
   CHECK(static_response.find("https://") == std::string::npos);
   ::close(static_client);
 
-  const int websocket_client = connect_loopback(server);
-  send_request(websocket_client, websocket_request(server, "keep-alive, Upgrade"));
-  const std::string response = read_until_close(websocket_client);
-  CHECK(response.find("HTTP/1.1 101 Switching Protocols") != std::string::npos);
-  CHECK(response.find("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") != std::string::npos);
-  const auto messages = websocket_text_payloads(response);
-  REQUIRE(messages.size() >= 3);
-  CHECK(messages.front() == "{\"type\":\"header\",\"version\":1,\"pixel_count\":100}");
-  CHECK(messages[1].find("{\"type\":\"pixels\",\"timestamp_us\":0") == 0);
-  CHECK(messages.back() == "{\"type\":\"end\"}");
-
-  ::shutdown(websocket_client, SHUT_RDWR);
-  ::close(websocket_client);
-  server.request_shutdown();
-  stop_requested.store(true);
-  serving.join();
+  {
+    BrowserClient browser(server, "keep-alive, Upgrade");
+    const auto messages = browser.read_through(kEndRecord);
+    CHECK(browser.handshake().find("HTTP/1.1 101 Switching Protocols") != std::string::npos);
+    CHECK(browser.handshake().find("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=") !=
+          std::string::npos);
+    REQUIRE(messages.size() >= 4);
+    CHECK(messages[0] == kHeaderRecord);
+    CHECK(messages[1] == playback_state(false, "1"));
+    CHECK(messages[2].find("{\"type\":\"pixels\",\"timestamp_us\":0") == 0);
+    CHECK(messages.back() == kEndRecord);
+  }
+  stop_server(server, stop_requested, serving);
 }
 
 TEST_CASE("web emulator streams production PixelFrames for RPM, turn, hazard, and red zone") {
@@ -296,24 +445,329 @@ TEST_CASE("web emulator streams production PixelFrames for RPM, turn, hazard, an
   REQUIRE(server.start());
   std::atomic_bool stop_requested{false};
   std::thread serving([&] { (void)server.serve(stop_requested); });
-  const int client = connect_loopback(server);
-  send_request(client, websocket_request(server));
-  const auto messages = websocket_text_payloads(read_until_close(client, std::chrono::seconds(5)));
-  ::close(client);
+  std::vector<std::string> messages;
+  {
+    BrowserClient browser(server);
+    messages = d1_records(browser.read_through(kEndRecord));
+  }
   stop_server(server, stop_requested, serving);
 
   // The browser receives byte-identical D1 records to the production sink.
   CHECK(messages == expected);
   REQUIRE(expected.size() > 3);
-  const std::string black = "[0,0,0]";
-  std::string all_black = "\"pixels\":[" + black;
-  for (int index = 1; index < 100; ++index)
-    all_black += "," + black;
-  CHECK(any_record_contains(messages, all_black + "]}"));
+  CHECK(any_record_contains(messages, all_black_pixels()));
   CHECK(any_record_contains(messages, "[0,16,16]"));  // RPM fill cyan.
   CHECK(any_record_contains(messages, "[0,8,8]"));    // Half-bright fill edge.
   CHECK(any_record_contains(messages, "[16,0,0]"));   // Red zone.
   CHECK(any_record_contains(messages, "[128,16,0]")); // Turn and hazard amber.
+}
+
+// A server replaying the production scenario to one browser at a time.
+class ProductionReplay final {
+public:
+  ProductionReplay() : server_(production_scenario(), production_options()) {
+    REQUIRE(server_.start());
+    serving_ = std::thread([this] { (void)server_.serve(stop_requested_); });
+  }
+  ProductionReplay(const ProductionReplay &) = delete;
+  ProductionReplay &operator=(const ProductionReplay &) = delete;
+  ~ProductionReplay() { stop_server(server_, stop_requested_, serving_); }
+
+  [[nodiscard]] const replay::WebEmulatorServer &server() const noexcept { return server_; }
+
+  // What every playback must deliver, whatever the rate, pauses, or restarts.
+  [[nodiscard]] static std::vector<std::string> expected() {
+    return production_d1_records(production_scenario(), production_options().schedule);
+  }
+
+private:
+  static replay::WebEmulatorOptions production_options() {
+    replay::WebEmulatorOptions options;
+    options.schedule.poll_period_us = 50'000;
+    return options;
+  }
+
+  replay::WebEmulatorServer server_;
+  std::atomic_bool stop_requested_{false};
+  std::thread serving_;
+};
+
+// Replay time of a pixel record, or nullopt for any other record.
+static std::optional<std::uint64_t> pixel_timestamp_us(const std::string &record) {
+  constexpr std::string_view key = "{\"type\":\"pixels\",\"timestamp_us\":";
+  if (record.rfind(key, 0) != 0)
+    return std::nullopt;
+  return std::strtoull(record.c_str() + key.size(), nullptr, 10);
+}
+
+TEST_CASE("web emulator rate changes delivery timing but never the D1 frame sequence") {
+  const auto expected = ProductionReplay::expected();
+  constexpr std::uint64_t scenario_end_us = 600'000;
+  for (const auto &rate_and_scale : std::vector<std::pair<std::string, double>>{
+           {"0.25", 0.25}, {"0.5", 0.5}, {"1", 1.0}, {"2", 2.0}, {"5", 5.0}}) {
+    const std::string &rate = rate_and_scale.first;
+    const double scale = rate_and_scale.second;
+    CAPTURE(rate);
+    ProductionReplay replay;
+    BrowserClient browser(replay.server());
+    auto records = browser.read_through(kHeaderRecord);
+    browser.send_rate(rate);
+    const auto until_acknowledged = browser.read_through(playback_state(false, rate));
+    const auto acknowledged = std::chrono::steady_clock::now();
+    const auto rest = browser.read_through(kEndRecord, std::chrono::seconds(10));
+    const auto elapsed = std::chrono::steady_clock::now() - acknowledged;
+    records.insert(records.end(), until_acknowledged.begin(), until_acknowledged.end());
+    records.insert(records.end(), rest.begin(), rest.end());
+    CHECK(d1_records(records) == expected);
+
+    // Only replay time after the acknowledgement is paced at the new rate.
+    // Measure from the first pixel frame after it, which bounds that span from
+    // below whatever the scheduler or the test thread's wake-up latency.
+    std::optional<std::uint64_t> paced_from_us;
+    for (const auto &record : rest) {
+      paced_from_us = pixel_timestamp_us(record);
+      if (paced_from_us)
+        break;
+    }
+    REQUIRE(paced_from_us.has_value());
+    REQUIRE(*paced_from_us <= scenario_end_us);
+    // Generous margin: only a lower bound is asserted, never an upper one.
+    const auto minimum = std::chrono::microseconds(static_cast<std::int64_t>(
+        static_cast<double>(scenario_end_us - *paced_from_us) * 0.5 / scale));
+    CHECK(elapsed >= minimum);
+  }
+}
+
+TEST_CASE("web emulator pause stops replay time and resume continues from the same position") {
+  ProductionReplay replay;
+  BrowserClient browser(replay.server());
+  auto records = browser.read_through(kHeaderRecord);
+  // Pause at once so the 600 ms scenario cannot reach its end first, and
+  // measure only after the pause is acknowledged.
+  browser.send_control("pause");
+  const auto until_paused = browser.read_through(playback_state(true, "1"));
+  REQUIRE(std::find(until_paused.begin(), until_paused.end(), kEndRecord) == until_paused.end());
+  records.insert(records.end(), until_paused.begin(), until_paused.end());
+
+  // Nothing advances while paused: no pixel frames, no polls, no end. A slow
+  // host only makes this window quieter.
+  CHECK(browser.read_for(std::chrono::milliseconds(300)).empty());
+
+  browser.send_control("play");
+  const auto rest = browser.read_through(kEndRecord);
+  CHECK(rest.front() == playback_state(false, "1"));
+  records.insert(records.end(), rest.begin(), rest.end());
+  CHECK(d1_records(records) == ProductionReplay::expected());
+}
+
+TEST_CASE("web emulator restart after the end replays from t=0") {
+  const auto expected = ProductionReplay::expected();
+  ProductionReplay replay;
+  BrowserClient browser(replay.server());
+  CHECK(d1_records(browser.read_through(kEndRecord)) == expected);
+
+  // The connection stays open after the end so the browser can restart.
+  browser.send_control("restart");
+  const auto second = browser.read_through(kEndRecord);
+  REQUIRE(second.size() > 2);
+  CHECK(second[0] == kRestartRecord);
+  CHECK(second[1] == kHeaderRecord);
+  CHECK(second[2] == playback_state(false, "1"));
+  CHECK(d1_records({second.begin() + 1, second.end()}) == expected);
+}
+
+TEST_CASE("web emulator restart while paused fails off to black and replays from t=0") {
+  const auto expected = ProductionReplay::expected();
+  ProductionReplay replay;
+  BrowserClient browser(replay.server());
+  (void)browser.read_through(kHeaderRecord);
+  browser.send_rate("0.5");
+  (void)browser.read_for(std::chrono::milliseconds(250));
+  browser.send_control("pause");
+  (void)browser.read_through(playback_state(true, "0.5"));
+
+  browser.send_control("restart");
+  const auto interrupted = browser.read_through(kRestartRecord);
+  const auto last_pixels = std::find_if(interrupted.rbegin(), interrupted.rend(), is_pixel_record);
+  REQUIRE(last_pixels != interrupted.rend());
+  CHECK(last_pixels->find(all_black_pixels()) != std::string::npos);
+
+  // A restart keeps the chosen rate but always resumes playing.
+  const auto second = browser.read_through(kEndRecord, std::chrono::seconds(5));
+  REQUIRE(second.size() > 1);
+  CHECK(second[0] == kHeaderRecord);
+  CHECK(second[1] == playback_state(false, "0.5"));
+  CHECK(d1_records(second) == expected);
+}
+
+TEST_CASE("web emulator rejects invalid control messages and keeps playing") {
+  ProductionReplay replay;
+  BrowserClient browser(replay.server());
+  (void)browser.read_through(kHeaderRecord);
+  browser.send_rate("3");
+  (void)browser.read_through("{\"type\":\"rejected\",\"reason\":\"unsupported_rate\"}");
+  browser.send_text("not json");
+  (void)browser.read_through("{\"type\":\"rejected\",\"reason\":\"malformed\"}");
+  const auto rest = browser.read_through(kEndRecord);
+  CHECK(std::none_of(rest.begin(), rest.end(), is_playback_record));
+}
+
+TEST_CASE("web emulator answers pings and closes on client close or protocol errors") {
+  SUBCASE("ping") {
+    ProductionReplay replay;
+    BrowserClient browser(replay.server());
+    (void)browser.read_through(kHeaderRecord);
+    browser.send_frame(0x89, "beat");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    std::optional<ServerFrame> pong;
+    while (auto frame = browser.next_frame(deadline)) {
+      if (frame->opcode == 0xA) {
+        pong = frame;
+        break;
+      }
+    }
+    REQUIRE(pong.has_value());
+    CHECK(pong->payload == "beat");
+  }
+  const std::vector<std::tuple<std::string, std::uint8_t, std::string, bool, std::uint16_t>>
+      closing{
+          {"client close", 0x88, std::string("\x03\xe8", 2), true, 1000},
+          {"unmasked frame", 0x81, "{\"type\":\"control\",\"command\":\"pause\"}", false, 1002},
+          {"binary frame", 0x82, "x", true, 1003},
+          {"one-byte close", 0x88, std::string("\x03", 1), true, 1002},
+          {"reserved close code", 0x88, std::string("\x03\xed", 2), true, 1002},
+          {"invalid UTF-8 text", 0x81, "\xc3\x28", true, 1007},
+          {"oversized text", 0x81, std::string(257, ' '), true, 1009},
+      };
+  for (const auto &closing_case : closing) {
+    const auto &[name, first_byte, payload, masked, code] = closing_case;
+    const std::string &case_name = name;
+    CAPTURE(case_name);
+    ProductionReplay replay;
+    BrowserClient browser(replay.server());
+    (void)browser.read_through(kHeaderRecord);
+    browser.send_frame(first_byte, payload, masked);
+    CHECK(browser.read_close_code() == std::optional<std::uint16_t>{code});
+  }
+}
+
+TEST_CASE("client frame decoder unmasks text and answers control frames") {
+  const auto masked = [](const std::uint8_t first_byte, const std::string &payload) {
+    const std::array<std::uint8_t, 4> mask{1, 2, 3, 4};
+    std::string frame{static_cast<char>(first_byte)};
+    if (payload.size() < 126U) {
+      frame.push_back(static_cast<char>(0x80U | payload.size()));
+    } else {
+      frame.push_back(static_cast<char>(0x80U | 126U));
+      frame.push_back(static_cast<char>(payload.size() >> 8U));
+      frame.push_back(static_cast<char>(payload.size() & 0xffU));
+    }
+    frame.append(mask.begin(), mask.end());
+    for (std::size_t index = 0; index < payload.size(); ++index)
+      frame.push_back(static_cast<char>(payload[index] ^ mask[index % 4]));
+    return frame;
+  };
+
+  replay::ClientFrameDecoder decoder{16};
+  const std::string bytes = masked(0x81, "hello") + masked(0x89, "p") + masked(0x8A, "");
+  // Arrives one byte at a time.
+  for (std::size_t index = 0; index + 1 < bytes.size(); ++index)
+    decoder.append(bytes.substr(index, 1));
+  auto first = decoder.next();
+  REQUIRE(first.has_value());
+  CHECK(first->kind == replay::ClientFrameKind::Text);
+  CHECK(first->payload == "hello");
+  auto second = decoder.next();
+  REQUIRE(second.has_value());
+  CHECK(second->kind == replay::ClientFrameKind::Ping);
+  CHECK(second->payload == "p");
+  CHECK_FALSE(decoder.next().has_value());
+  decoder.append(bytes.substr(bytes.size() - 1));
+  CHECK(decoder.next()->kind == replay::ClientFrameKind::Pong);
+
+  SUBCASE("oversized text is refused from its header alone") {
+    decoder.append(std::string{static_cast<char>(0x81), static_cast<char>(0xFE), 0, 17});
+    CHECK(decoder.next()->kind == replay::ClientFrameKind::TooLarge);
+    decoder.append(masked(0x81, "ignored"));
+    CHECK_FALSE(decoder.next().has_value());
+  }
+  SUBCASE("fragments, reserved bits, unknown opcodes, and long control frames") {
+    for (const std::string &frame : {masked(0x01, "a"), masked(0xC1, "a"), masked(0x83, "a"),
+                                     masked(0x80, "a"), masked(0x89, std::string(126, 'x'))}) {
+      replay::ClientFrameDecoder fresh{16};
+      fresh.append(frame);
+      CHECK(fresh.next()->kind == replay::ClientFrameKind::ProtocolError);
+    }
+  }
+  SUBCASE("a 64-bit length with its most significant bit set") {
+    replay::ClientFrameDecoder fresh{16};
+    fresh.append(std::string{static_cast<char>(0x81), static_cast<char>(0xFF),
+                             static_cast<char>(0x80), 0, 0, 0, 0, 0, 0, 1});
+    CHECK(fresh.next()->kind == replay::ClientFrameKind::ProtocolError);
+  }
+  SUBCASE("text must be valid UTF-8") {
+    const std::vector<std::pair<std::string, bool>> texts{
+        {"caf\xc3\xa9", true},       // U+00E9
+        {"\xe2\x82\xac", true},      // U+20AC
+        {"\xf0\x9f\x98\x80", true},  // U+1F600
+        {"\xc3\x28", false},         // Bad continuation.
+        {"\xc0\xaf", false},         // Overlong '/'.
+        {"\xe0\x80\xaf", false},     // Overlong '/'.
+        {"\xed\xa0\x80", false},     // Surrogate U+D800.
+        {"\xf4\x90\x80\x80", false}, // Above U+10FFFF.
+        {"\xe2\x82", false},         // Truncated.
+        {"\xff", false},
+    };
+    for (const auto &text_case : texts) {
+      const std::string &text = text_case.first;
+      const bool valid = text_case.second;
+      CAPTURE(text);
+      replay::ClientFrameDecoder fresh{16};
+      fresh.append(masked(0x81, text));
+      const auto frame = fresh.next();
+      REQUIRE(frame.has_value());
+      CHECK(frame->kind ==
+            (valid ? replay::ClientFrameKind::Text : replay::ClientFrameKind::InvalidText));
+    }
+  }
+  SUBCASE("close frames carry nothing or a valid status and UTF-8 reason") {
+    const auto status = [](const std::uint16_t code, const std::string &reason = {}) {
+      return std::string{static_cast<char>(code >> 8U), static_cast<char>(code & 0xffU)} + reason;
+    };
+    const std::vector<std::pair<std::string, replay::ClientFrameKind>> closes{
+        {"", replay::ClientFrameKind::Close},
+        {status(1000, "bye"), replay::ClientFrameKind::Close},
+        {status(1001), replay::ClientFrameKind::Close},
+        {status(1014), replay::ClientFrameKind::Close},
+        {status(3000), replay::ClientFrameKind::Close},
+        {status(4999), replay::ClientFrameKind::Close},
+        {std::string("\x03", 1), replay::ClientFrameKind::ProtocolError},
+        {status(999), replay::ClientFrameKind::ProtocolError},
+        {status(1004), replay::ClientFrameKind::ProtocolError},
+        {status(1005), replay::ClientFrameKind::ProtocolError},
+        {status(1006), replay::ClientFrameKind::ProtocolError},
+        {status(1015), replay::ClientFrameKind::ProtocolError},
+        {status(2999), replay::ClientFrameKind::ProtocolError},
+        {status(5000), replay::ClientFrameKind::ProtocolError},
+        {status(1000, "\xc3\x28"), replay::ClientFrameKind::InvalidText},
+    };
+    for (const auto &close_case : closes) {
+      const std::string &payload = close_case.first;
+      CAPTURE(payload.size());
+      replay::ClientFrameDecoder fresh{16};
+      fresh.append(masked(0x88, payload) + masked(0x81, "late"));
+      CHECK(fresh.next()->kind == close_case.second);
+      CHECK_FALSE(fresh.next().has_value());
+    }
+  }
+  SUBCASE("close ends the stream") {
+    decoder.append(masked(0x88, std::string("\x03\xe8", 2)) + masked(0x81, "late"));
+    CHECK(decoder.next()->kind == replay::ClientFrameKind::Close);
+    CHECK_FALSE(decoder.next().has_value());
+  }
+  CHECK(replay::close_code_for(replay::ClientFrameKind::Text) == 0);
+  CHECK(replay::close_code_for(replay::ClientFrameKind::TooLarge) == 1009);
+  CHECK(replay::close_code_for(replay::ClientFrameKind::InvalidText) == 1007);
 }
 
 TEST_CASE("web emulator rejects capture uploads") {

@@ -21,6 +21,9 @@ const header = (pixelCount, version = 1) =>
 const pixels = (timestampUs, values) =>
   JSON.stringify({ type: 'pixels', timestamp_us: timestampUs, pixels: values });
 const end = () => JSON.stringify({ type: 'end' });
+const playback = (paused, rate) => JSON.stringify({ type: 'playback', paused, rate });
+const restart = () => JSON.stringify({ type: 'restart' });
+const rejected = (reason) => JSON.stringify({ type: 'rejected', reason });
 const solid = (count, rgb) => Array.from({ length: count }, () => rgb.slice());
 
 function run(...events) {
@@ -172,6 +175,12 @@ const invalidCases = [
     [open, message(header(1)), message(pixels(10, [[0, 0, 0]])), message(pixels(9, [[0, 0, 0]]))],
   ],
   ['pixels after end', [open, message(header(1)), message(end()), message(pixels(0, [[0, 0, 0]]))]],
+  ['playback before header', [open, message(playback(false, 1))]],
+  ['unsupported playback rate', [open, message(header(1)), message(playback(false, 3))]],
+  ['non-boolean paused flag', [open, message(header(1)), message(playback('yes', 1))]],
+  ['restart before header', [open, message(restart())]],
+  ['header without restart after end', [open, message(header(1)), message(end()), message(header(1))]],
+  ['non-string rejection', [open, message(header(1)), message(JSON.stringify({ type: 'rejected' }))]],
 ];
 
 for (const [name, events] of invalidCases) {
@@ -213,6 +222,90 @@ test('the connection is closed only when the stream first becomes invalid', () =
   assert.equal(Renderer.shouldCloseConnection(streamingState, streamingState), false);
 });
 
+test('acknowledged playback state is shown, never the requested one', () => {
+  const playing = streaming(1, pixels(0, [[1, 1, 1]]), playback(false, 1));
+  assert.equal(playing.paused, false);
+  assert.equal(playing.rate, 1);
+  const paused = Renderer.reduce(playing, message(playback(true, 0.25)));
+  assert.equal(paused.paused, true);
+  assert.equal(paused.rate, 0.25);
+  assert.deepEqual(paused.pixels, playing.pixels);
+  assert.equal(paused.timestampUs, playing.timestampUs);
+  assert.match(Renderer.statusText(paused), /paused/i);
+  for (const rate of [0.25, 0.5, 1, 2, 5]) {
+    assert.equal(Renderer.reduce(playing, message(playback(false, rate))).rate, rate);
+  }
+});
+
+test('control messages match the server protocol', () => {
+  const playing = streaming(1, playback(false, 1));
+  const paused = Renderer.reduce(playing, message(playback(true, 1)));
+  assert.deepEqual(JSON.parse(Renderer.controlMessage(playing, 'toggle')), {
+    type: 'control',
+    command: 'pause',
+  });
+  assert.deepEqual(JSON.parse(Renderer.controlMessage(paused, 'toggle')), {
+    type: 'control',
+    command: 'play',
+  });
+  assert.deepEqual(JSON.parse(Renderer.controlMessage(playing, 'restart')), {
+    type: 'control',
+    command: 'restart',
+  });
+  assert.equal(
+    Renderer.controlMessage(playing, '0.25'),
+    '{"type":"control","command":"rate","rate":0.25}',
+  );
+  assert.deepEqual(Renderer.playbackRates, [0.25, 0.5, 1, 2, 5]);
+});
+
+test('controls are available only while a replay is live', () => {
+  const unavailable = (state) => {
+    const available = Renderer.controlAvailability(state);
+    return !available.toggle && !available.restart && !available.rate;
+  };
+  assert.ok(unavailable(Renderer.initialState()));
+  assert.ok(unavailable(run(open)));
+  assert.ok(unavailable(run(open, message(header(1)), close)));
+  assert.ok(unavailable(run(open, message('{not json'))));
+
+  const live = Renderer.controlAvailability(streaming(1, playback(false, 1)));
+  assert.deepEqual([live.toggle, live.restart, live.rate, live.toggleLabel],
+    [true, true, true, 'Pause']);
+  const paused = Renderer.controlAvailability(streaming(1, playback(true, 1)));
+  assert.equal(paused.toggleLabel, 'Play');
+  const complete = Renderer.controlAvailability(streaming(1, end()));
+  assert.deepEqual([complete.toggle, complete.restart, complete.rate], [false, true, true]);
+});
+
+test('restart returns to the initial black state and accepts a fresh header', () => {
+  for (const before of [
+    streaming(1, pixels(0, [[9, 9, 9]]), playback(true, 2)),
+    streaming(1, pixels(0, [[9, 9, 9]]), end()),
+  ]) {
+    const restarted = Renderer.reduce(before, message(restart()));
+    assert.equal(restarted.phase, 'awaiting-header');
+    assert.equal(restarted.pixels, null);
+    assert.equal(restarted.timestampUs, null);
+    const replaying = [header(1), playback(false, before.rate), pixels(0, [[0, 0, 0]])]
+      .map(message)
+      .reduce(Renderer.reduce, restarted);
+    assert.equal(replaying.phase, 'streaming');
+    assert.equal(replaying.paused, false);
+    assert.equal(replaying.timestampUs, 0);
+    assert.deepEqual(replaying.pixels, [[0, 0, 0]]);
+  }
+});
+
+test('a rejected control is reported until the next acknowledged state', () => {
+  const playing = streaming(1, playback(false, 1));
+  const refused = Renderer.reduce(playing, message(rejected('unsupported_rate')));
+  assert.equal(refused.phase, 'streaming');
+  assert.match(Renderer.statusText(refused), /rejected \(unsupported_rate\)/);
+  const accepted = Renderer.reduce(refused, message(playback(true, 1)));
+  assert.doesNotMatch(Renderer.statusText(accepted), /rejected/);
+});
+
 // Minimal stand-ins for the DOM nodes LedStripView.render touches when the
 // pixel count is unchanged, counting status writes (an aria-live region).
 function fakeElements(pixelCount) {
@@ -228,8 +321,97 @@ function fakeElements(pixelCount) {
     },
   };
   const strip = { children: Array.from({ length: pixelCount }, () => ({ style: {} })) };
-  return { root: { dataset: {} }, status, time: { textContent: '' }, strip, guides: {} };
+  return {
+    root: { dataset: {} },
+    status,
+    time: { textContent: '' },
+    strip,
+    guides: {},
+    toggle: { disabled: true, textContent: '' },
+    restart: { disabled: true },
+    rate: { disabled: true, value: '1' },
+  };
 }
+
+test('the view reflects control availability and the acknowledged rate', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 1));
+  Renderer.LedStripView.render(elements, playing, playing);
+  assert.equal(elements.toggle.disabled, false);
+  assert.equal(elements.toggle.textContent, 'Pause');
+  assert.equal(elements.restart.disabled, false);
+  assert.equal(elements.rate.disabled, false);
+
+  // A choice still awaiting acknowledgement is left alone.
+  elements.rate.value = '5';
+  const paused = Renderer.reduce(playing, message(playback(true, 1)));
+  Renderer.LedStripView.render(elements, paused, playing);
+  assert.equal(elements.rate.value, '5');
+  assert.equal(elements.toggle.textContent, 'Play');
+
+  const slower = Renderer.reduce(paused, message(playback(true, 0.5)));
+  Renderer.LedStripView.render(elements, slower, paused);
+  assert.equal(elements.rate.value, '0.5');
+
+  const disconnected = Renderer.reduce(slower, close);
+  Renderer.LedStripView.render(elements, disconnected, slower);
+  assert.equal(elements.toggle.disabled, true);
+  assert.equal(elements.restart.disabled, true);
+  assert.equal(elements.rate.disabled, true);
+});
+
+test('a rejected rate choice reverts to the acknowledged rate', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 1));
+  Renderer.LedStripView.render(elements, playing, playing);
+
+  elements.rate.value = '5';
+  const refused = Renderer.reduce(playing, message(rejected('unsupported_rate')));
+  Renderer.LedStripView.render(elements, refused, playing);
+  assert.equal(elements.rate.value, '1');
+
+  // The same reason again is still a new rejection.
+  elements.rate.value = '2';
+  const refusedAgain = Renderer.reduce(refused, message(rejected('unsupported_rate')));
+  Renderer.LedStripView.render(elements, refusedAgain, refused);
+  assert.equal(elements.rate.value, '1');
+
+  // Later frames while the notice is shown leave a new choice alone.
+  elements.rate.value = '2';
+  const later = Renderer.reduce(refusedAgain, message(pixels(1, [[1, 1, 1]])));
+  Renderer.LedStripView.render(elements, later, refusedAgain);
+  assert.equal(elements.rate.value, '2');
+});
+
+test('a control request is sent only on an open socket, otherwise the rate reverts', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 0.5));
+  const sent = [];
+  const socket = { OPEN: 1, readyState: 1, send: (text) => sent.push(text) };
+
+  elements.rate.value = '2';
+  Renderer.LedStripView.requestControl(elements, playing, socket, '2');
+  assert.deepEqual(sent.map((text) => JSON.parse(text)), [
+    { type: 'control', command: 'rate', rate: 2 },
+  ]);
+  assert.equal(elements.rate.value, '2');
+
+  socket.readyState = 2;
+  elements.rate.value = '5';
+  Renderer.LedStripView.requestControl(elements, playing, socket, '5');
+  assert.equal(sent.length, 1);
+  assert.equal(elements.rate.value, '0.5');
+});
+
+test('an unavailable rate control shows the acknowledged rate', () => {
+  const elements = fakeElements(1);
+  const playing = streaming(1, playback(false, 2));
+  Renderer.LedStripView.render(elements, playing, playing);
+  elements.rate.value = '5';
+  const disconnected = Renderer.reduce(playing, close);
+  Renderer.LedStripView.render(elements, disconnected, playing);
+  assert.equal(elements.rate.value, '2');
+});
 
 test('the status text is rewritten only when it changes', () => {
   const elements = fakeElements(1);

@@ -16,6 +16,8 @@ enum class ReplayScheduleStatus : std::uint8_t {
   InvalidOptions,
   ClockFailure,
   ControllerFailure,
+  // A ReplayGate refused the next due time; the controller was still stopped.
+  Interrupted,
 };
 
 // Declaration order is not dispatch order: SignalSample is appended to keep
@@ -39,6 +41,17 @@ class ReplayEventSink {
 public:
   virtual ~ReplayEventSink() = default;
   virtual void record(ReplayEvent event) noexcept = 0;
+};
+
+// Admits each replay-time step before the scheduler advances the replay clock
+// to it. The scheduler itself never consults wall time: a host player can
+// implement this to pace, pause, or cancel a replay without the pipeline
+// seeing anything but replay-time units. Returning false interrupts the
+// replay before any work at next_time_us is processed.
+class ReplayGate {
+public:
+  virtual ~ReplayGate() = default;
+  [[nodiscard]] virtual bool admit(vehicle_core::MonotonicTimestamp next_time_us) = 0;
 };
 
 struct ReplayScheduleOptions {
@@ -84,17 +97,20 @@ struct ReplayScheduleResult {
 // timeout that changed them is processed, so they precede that timestamp's
 // signal sample and output tick.
 // Invalid input/options are rejected before the controller or stage is started.
+// An optional gate is asked before every clock advance (including the final
+// advance to the horizon); a refusal returns Interrupted after stopping the
+// controller, so the stage still fails off.
 [[nodiscard]] ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames,
                                               ReplayClock &clock, OutputStage &output,
                                               ReplayScheduleOptions options,
-                                              ReplayEventSink *events = nullptr);
+                                              ReplayEventSink *events = nullptr,
+                                              ReplayGate *gate = nullptr);
 
 // As above, with SignalObservers injected into the controller alongside the
 // output stage. An empty list is identical to the overload above.
-[[nodiscard]] ReplayScheduleResult run_replay(std::vector<gvret::TimedCanFrame> frames,
-                                              ReplayClock &clock, OutputStage &output,
-                                              SignalObservers observers,
-                                              ReplayScheduleOptions options,
-                                              ReplayEventSink *events = nullptr);
+[[nodiscard]] ReplayScheduleResult
+run_replay(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock, OutputStage &output,
+           SignalObservers observers, ReplayScheduleOptions options,
+           ReplayEventSink *events = nullptr, ReplayGate *gate = nullptr);
 
 } // namespace replay
