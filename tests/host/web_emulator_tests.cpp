@@ -1,6 +1,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include <doctest/doctest.h>
 
+#include "replay/local_argb_stage.hpp"
+#include "replay/pixel_frame_output.hpp"
+#include "replay/scheduler.hpp"
 #include "replay/web_emulator.hpp"
 
 #ifndef _WIN32
@@ -15,6 +18,8 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -141,6 +146,67 @@ void stop_server(replay::WebEmulatorServer &server, std::atomic_bool &stop_reque
   serving.join();
 }
 
+gvret::TimedCanFrame vehicle_frame(const vehicle_core::Microseconds timestamp,
+                                   const std::uint32_t identifier,
+                                   const std::initializer_list<std::uint8_t> bytes) {
+  gvret::TimedCanFrame frame;
+  frame.relative_time_us = timestamp;
+  frame.frame.timestamp_us = timestamp;
+  frame.frame.identifier = identifier;
+  frame.frame.dlc = static_cast<std::uint8_t>(bytes.size());
+  std::copy(bytes.begin(), bytes.end(), frame.frame.data.begin());
+  return frame;
+}
+
+gvret::TimedCanFrame engine_rpm(const vehicle_core::Microseconds timestamp,
+                                const std::uint16_t raw_rpm_times_four) {
+  return vehicle_frame(timestamp, 0x202,
+                       {static_cast<std::uint8_t>(raw_rpm_times_four >> 8),
+                        static_cast<std::uint8_t>(raw_rpm_times_four & 0xff), 0, 0, 0, 0, 0, 0});
+}
+
+gvret::TimedCanFrame turn_switch(const vehicle_core::Microseconds timestamp,
+                                 const std::uint8_t state) {
+  return vehicle_frame(timestamp, 0x091, {0, state, 0, 0, 0, 0, 0, 0});
+}
+
+// The production scenario from replay_output_tests: RPM fill and red zone,
+// both turn directions, hazard, and the return to the RPM baseline.
+std::vector<gvret::TimedCanFrame> production_scenario() {
+  return {
+      engine_rpm(0, 6'500),        engine_rpm(50'000, 10'000), engine_rpm(100'000, 13'000),
+      engine_rpm(200'000, 30'000), turn_switch(300'000, 0x20), turn_switch(400'000, 0x10),
+      turn_switch(500'000, 0x04),  turn_switch(600'000, 0x00),
+  };
+}
+
+// D1 records produced by the production pipeline without any transport: the
+// local ARGB stage writing through the JSONL PixelFrameSink.
+std::vector<std::string> production_d1_records(const std::vector<gvret::TimedCanFrame> &frames,
+                                               replay::ReplayScheduleOptions schedule) {
+  replay::ReplayClock clock;
+  std::ostringstream output;
+  replay::JsonlPixelFrameSink pixels{clock, output};
+  REQUIRE(pixels.write_header());
+  replay::LocalArgbOutputStage stage{pixels};
+  // Mirrors serve_websocket in lib/replay/src/web_emulator.cpp; keep in sync.
+  schedule.end_time_us = frames.back().relative_time_us;
+  REQUIRE(replay::run_replay(frames, clock, stage, schedule).ok());
+  REQUIRE(pixels.write_end());
+
+  std::vector<std::string> records;
+  std::istringstream lines(output.str());
+  for (std::string line; std::getline(lines, line);)
+    records.push_back(line);
+  return records;
+}
+
+bool any_record_contains(const std::vector<std::string> &records, const std::string_view text) {
+  return std::any_of(records.begin(), records.end(), [text](const std::string &record) {
+    return record.find(text) != std::string::npos;
+  });
+}
+
 } // namespace
 
 TEST_CASE("web emulator response reader keeps an absolute deadline while data streams") {
@@ -218,6 +284,36 @@ TEST_CASE("web emulator serves local assets and streams D1 over WebSocket") {
   server.request_shutdown();
   stop_requested.store(true);
   serving.join();
+}
+
+TEST_CASE("web emulator streams production PixelFrames for RPM, turn, hazard, and red zone") {
+  const std::vector<gvret::TimedCanFrame> scenario = production_scenario();
+  replay::WebEmulatorOptions options;
+  options.schedule.poll_period_us = 50'000;
+  const std::vector<std::string> expected = production_d1_records(scenario, options.schedule);
+
+  replay::WebEmulatorServer server(scenario, options);
+  REQUIRE(server.start());
+  std::atomic_bool stop_requested{false};
+  std::thread serving([&] { (void)server.serve(stop_requested); });
+  const int client = connect_loopback(server);
+  send_request(client, websocket_request(server));
+  const auto messages = websocket_text_payloads(read_until_close(client, std::chrono::seconds(5)));
+  ::close(client);
+  stop_server(server, stop_requested, serving);
+
+  // The browser receives byte-identical D1 records to the production sink.
+  CHECK(messages == expected);
+  REQUIRE(expected.size() > 3);
+  const std::string black = "[0,0,0]";
+  std::string all_black = "\"pixels\":[" + black;
+  for (int index = 1; index < 100; ++index)
+    all_black += "," + black;
+  CHECK(any_record_contains(messages, all_black + "]}"));
+  CHECK(any_record_contains(messages, "[0,16,16]"));  // RPM fill cyan.
+  CHECK(any_record_contains(messages, "[0,8,8]"));    // Half-bright fill edge.
+  CHECK(any_record_contains(messages, "[16,0,0]"));   // Red zone.
+  CHECK(any_record_contains(messages, "[128,16,0]")); // Turn and hazard amber.
 }
 
 TEST_CASE("web emulator rejects capture uploads") {

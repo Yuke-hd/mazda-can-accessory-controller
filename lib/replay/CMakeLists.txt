@@ -79,7 +79,38 @@ replay_warnings(replay_signal_output)
 # Local-only browser adapter. It reuses the production replay scheduler and
 # JSONL pixel sink through a WebSocket line transport; no ESP-IDF or renderer
 # internals cross this host-only boundary.
-add_library(replay_web_emulator STATIC src/web_emulator.cpp)
+# Browser assets are ordinary files under web/ so they can be edited and unit
+# tested directly; configure time embeds them as raw string literals.
+set(REPLAY_WEB_DELIMITER "WEBASSET")
+set(REPLAY_WEB_ASSET_DIR ${CMAKE_CURRENT_SOURCE_DIR}/web)
+foreach(asset IN ITEMS index.html style.css app.js)
+  set(asset_path ${REPLAY_WEB_ASSET_DIR}/${asset})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${asset_path})
+  file(READ ${asset_path} asset_body)
+  # MSVC rejects string literals longer than 16,380 bytes (C2026).
+  string(LENGTH "${asset_body}" asset_length)
+  if(asset_length GREATER 16000)
+    message(FATAL_ERROR "${asset_path} is ${asset_length} bytes; split it below 16000 bytes")
+  endif()
+  string(FIND "${asset_body}" ")${REPLAY_WEB_DELIMITER}\"" delimiter_position)
+  if(NOT delimiter_position EQUAL -1)
+    message(FATAL_ERROR "${asset_path} contains the raw string delimiter ${REPLAY_WEB_DELIMITER}")
+  endif()
+  string(MAKE_C_IDENTIFIER "REPLAY_WEB_${asset}" asset_variable)
+  string(TOUPPER ${asset_variable} asset_variable)
+  set(${asset_variable} "${asset_body}")
+endforeach()
+configure_file(
+  src/web_emulator_assets.cpp.in
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/web_emulator_assets.cpp
+  @ONLY
+)
+
+add_library(
+  replay_web_emulator STATIC
+  src/web_emulator.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/generated/web_emulator_assets.cpp
+)
 target_include_directories(replay_web_emulator PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(
   replay_web_emulator

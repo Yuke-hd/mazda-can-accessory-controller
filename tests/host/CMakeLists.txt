@@ -155,6 +155,28 @@ else()
 endif()
 doctest_discover_tests(web_emulator_tests)
 
+add_executable(web_emulator_assets_tests web_emulator_assets_tests.cpp)
+target_link_libraries(web_emulator_assets_tests PRIVATE replay_web_emulator doctest::doctest)
+target_compile_features(web_emulator_assets_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(web_emulator_assets_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(web_emulator_assets_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(web_emulator_assets_tests)
+
+# The browser renderer core is plain JavaScript with no packages. Its unit
+# tests run only where Node.js is already installed; CI does not require it.
+find_program(NODE_EXECUTABLE node)
+if(NODE_EXECUTABLE)
+  add_test(
+    NAME web_emulator_renderer_js_tests
+    COMMAND
+      ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/web_emulator_renderer_tests.js
+      ${PROJECT_SOURCE_DIR}/lib/replay/web/app.js
+  )
+endif()
+
 add_executable(mazda_turn_tests mazda_turn_tests.cpp)
 target_link_libraries(mazda_turn_tests PRIVATE mazda telemetry_test_support doctest::doctest)
 target_compile_features(mazda_turn_tests PRIVATE cxx_std_17)

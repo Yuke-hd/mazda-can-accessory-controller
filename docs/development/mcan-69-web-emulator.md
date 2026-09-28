@@ -15,8 +15,9 @@ client.
 
 The browser connects to `/ws`. Each WebSocket session receives the same D1
 messages as the C5 `PixelFrame` JSONL output: a `header`, timestamped
-`pixels` records, and an `end` marker. The emulator intentionally does not
-visualize pixels or add replay controls; those are separate follow-up work.
+`pixels` records, and an `end` marker. The page draws those frames as
+described in [MCAN-70](mcan-70-led-strip-renderer.md); replay controls are
+separate follow-up work.
 Closing the process or sending SIGINT/SIGTERM stops the replay controller,
 closes the active connection, and releases the loopback listener.
 
