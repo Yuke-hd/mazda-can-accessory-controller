@@ -191,6 +191,10 @@ so they remain with the runtime apply step and keep their existing
 YAML is an authoring format only. The host-side compiler parses it with the
 PyYAML library, applies the schema checks above, and emits deterministic,
 compact JSON using the persisted field names. The ESP32 has no YAML parser.
+Before emitting JSON, it also checks each rule against the checked-in host
+signal catalog manifest at `tools/controller_signal_catalog.json`: signal
+existence, delivery capability, operand type, and enum choice keys must match
+the catalog exposed by the Mazda telemetry provider.
 
 Install the host-only dependency and compile a profile with:
 

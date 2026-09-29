@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
+import struct
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -25,10 +27,19 @@ VERSION = 1
 PIXEL_COUNT = 100
 DEFAULT_FRESHNESS = "fresh"
 DEFAULT_PRIORITY = 100
+MAX_JSON_BYTES = 16 * 1024
 # The persisted C++ model stores numeric fields as float. Reject values that
 # the runtime model would convert to infinity even when Python can represent
 # them as a finite double.
 FLOAT_MAX = 3.4028234663852886e38
+SIGNAL_CATALOG_PATH = Path(__file__).with_name("controller_signal_catalog.json")
+SIGNAL_TYPES = {"boolean", "number", "enum"}
+RULE_CAPABILITIES = {
+    "state": "notify",
+    "event": "notify",
+    "sampled_state": "read",
+    "range": "read",
+}
 
 ENUMS = {
     "type": {
@@ -149,14 +160,22 @@ def _non_blank_string(value: Any, path: str, description: str) -> str:
     return text
 
 
+def _runtime_float(value: int | float, path: str) -> float:
+    """Round a number exactly as the persisted C++ model does."""
+    try:
+        converted = struct.unpack("<f", struct.pack("<f", float(value)))[0]
+    except (OverflowError, ValueError):
+        raise CompileError(path, "number must be finite") from None
+    if not math.isfinite(converted):
+        raise CompileError(path, "number must be finite")
+    return converted
+
+
 def _finite_number(value: Any, path: str) -> int | float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise CompileError(path, "expected a finite number")
-    try:
-        converted = float(value)
-    except (OverflowError, ValueError):
-        raise CompileError(path, "number must be finite") from None
-    if not math.isfinite(converted) or abs(converted) > FLOAT_MAX:
+    converted = _runtime_float(value, path)
+    if abs(converted) > FLOAT_MAX:
         raise CompileError(path, "number must be finite")
     if converted.is_integer():
         return int(converted)
@@ -176,6 +195,106 @@ def _enum(value: Any, path: str, kind: str) -> str:
     if normalized is None:
         raise CompileError(path, f"unsupported {kind} '{name}'")
     return normalized
+
+
+def _load_signal_catalog() -> Mapping[str, Mapping[str, Any]]:
+    try:
+        source = SIGNAL_CATALOG_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CompileError("$", f"cannot read signal catalog: {error}") from error
+    try:
+        document = json.loads(source)
+    except json.JSONDecodeError as error:
+        raise CompileError("$", f"malformed signal catalog: {error.msg}") from error
+
+    root = _mapping(document, "signal_catalog")
+    _fields(root, "signal_catalog", ("version", "signals"), ("source",))
+    version = _integer(root["version"], "signal_catalog.version", "catalog version")
+    if version != VERSION:
+        raise CompileError(
+            "signal_catalog.version",
+            f"unsupported signal catalog version {version}; expected {VERSION}",
+        )
+
+    signals: dict[str, Mapping[str, Any]] = {}
+    raw_signals = _mapping(root["signals"], "signal_catalog.signals")
+    for key, raw_signal in raw_signals.items():
+        path = _path("signal_catalog.signals", key)
+        metadata = _mapping(raw_signal, path)
+        _fields(metadata, path, ("type", "capabilities"), ("choices",))
+        signal_type = _string(metadata["type"], _path(path, "type"))
+        if signal_type not in SIGNAL_TYPES:
+            raise CompileError(_path(path, "type"), f"unsupported signal type '{signal_type}'")
+        capabilities = _sequence(metadata["capabilities"], _path(path, "capabilities"))
+        normalized_capabilities: set[str] = set()
+        for index, capability in enumerate(capabilities):
+            capability_path = _index(_path(path, "capabilities"), index)
+            name = _string(capability, capability_path)
+            if name not in {"read", "notify"}:
+                raise CompileError(capability_path, f"unsupported signal capability '{name}'")
+            normalized_capabilities.add(name)
+        if not normalized_capabilities:
+            raise CompileError(_path(path, "capabilities"), "signal must expose a capability")
+
+        choices: tuple[str, ...] = ()
+        if signal_type == "enum":
+            if "choices" not in metadata:
+                raise CompileError(_path(path, "choices"), "enum signal choices are required")
+            raw_choices = _sequence(metadata["choices"], _path(path, "choices"))
+            normalized_choices: list[str] = []
+            for index, choice in enumerate(raw_choices):
+                choice_path = _index(_path(path, "choices"), index)
+                name = _non_blank_string(choice, choice_path, "signal choice")
+                if name in normalized_choices:
+                    raise CompileError(choice_path, "signal choices must be unique")
+                normalized_choices.append(name)
+            if not normalized_choices:
+                raise CompileError(_path(path, "choices"), "enum signal choices must not be empty")
+            choices = tuple(normalized_choices)
+        elif "choices" in metadata:
+            raise CompileError(_path(path, "choices"), "only enum signals may declare choices")
+
+        signals[key] = {
+            "type": signal_type,
+            "capabilities": frozenset(normalized_capabilities),
+            "choices": choices,
+        }
+    return signals
+
+
+def _validate_rule_signal(rule: Mapping[str, Any], path: str,
+                          catalog: Mapping[str, Mapping[str, Any]]) -> None:
+    signal_key = rule["signal_key"]
+    metadata = catalog.get(signal_key)
+    if metadata is None:
+        raise CompileError(_path(path, "signal_key"), f"unknown signal '{signal_key}'")
+    required_capability = RULE_CAPABILITIES[rule["type"]]
+    if required_capability not in metadata["capabilities"]:
+        raise CompileError(
+            _path(path, "type"),
+            f"signal '{signal_key}' does not support {required_capability} delivery",
+        )
+    if rule["type"] == "range":
+        if metadata["type"] != "number":
+            raise CompileError(
+                _path(path, "signal_key"),
+                f"range signal '{signal_key}' must be numeric",
+            )
+        return
+
+    operand = rule["operand"]
+    operand_kind = next(iter(operand))
+    expected_type = {"boolean": "boolean", "number": "number", "choice": "enum"}[operand_kind]
+    if metadata["type"] != expected_type:
+        raise CompileError(
+            _path(path, "operand"),
+            f"operand type '{operand_kind}' does not match signal '{signal_key}'",
+        )
+    if operand_kind == "choice" and operand["choice"] not in metadata["choices"]:
+        raise CompileError(
+            _path(path, "operand.choice"),
+            f"unknown choice '{operand['choice']}' for signal '{signal_key}'",
+        )
 
 
 def _normalize_actions(value: Any) -> tuple[list[dict[str, str]], set[str]]:
@@ -389,11 +508,13 @@ def normalize_document(document: Any) -> dict[str, Any]:
         raise CompileError("version", f"unsupported configuration version {version}; expected {VERSION}")
 
     actions, action_names = _normalize_actions(root["actions"])
+    signal_catalog = _load_signal_catalog()
     rules: list[dict[str, Any]] = []
     level_actions: set[str] = set()
     for index, raw_rule in enumerate(_sequence(root["rules"], "rules")):
         path = _index("rules", index)
         rule, is_level = _normalize_rule(raw_rule, path, action_names)
+        _validate_rule_signal(rule, path, signal_catalog)
         if is_level and rule["action"] in level_actions:
             raise CompileError(_path(path, "action"), "an action may have only one level rule")
         if is_level:
@@ -419,6 +540,24 @@ def _yaml_loader() -> Any:
 
     class UniqueKeyLoader(yaml.SafeLoader):  # type: ignore[misc]
         """SafeLoader variant that rejects silently overwritten YAML keys."""
+
+    # PyYAML's default YAML 1.1 resolver turns ``off``/``on``/``yes``/``no``
+    # into booleans. Controller signal choices use those words legitimately,
+    # so keep only the JSON/YAML 1.2 boolean spellings.
+    UniqueKeyLoader.yaml_implicit_resolvers = {
+        key: list(resolvers)
+        for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+    }
+    bool_tag = "tag:yaml.org,2002:bool"
+    for key, resolvers in UniqueKeyLoader.yaml_implicit_resolvers.items():
+        UniqueKeyLoader.yaml_implicit_resolvers[key] = [
+            (tag, pattern) for tag, pattern in resolvers if tag != bool_tag
+        ]
+    UniqueKeyLoader.add_implicit_resolver(
+        bool_tag,
+        re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+        list("tTfF"),
+    )
 
     def construct_mapping(loader: Any, node: Any, deep: bool = False) -> dict[str, Any]:
         mapping: dict[str, Any] = {}
@@ -448,6 +587,8 @@ def load_yaml(path: Path) -> Any:
         raise CompileError("$", f"cannot read input: {error}") from error
     try:
         return yaml.load(source, Loader=_yaml_loader())
+    except RecursionError as error:
+        raise CompileError("$", "YAML nesting exceeds the supported parser depth") from error
     except yaml.YAMLError as error:  # type: ignore[union-attr]
         mark = getattr(error, "problem_mark", None)
         location = ""
@@ -458,9 +599,14 @@ def load_yaml(path: Path) -> Any:
 
 
 def compile_file(input_path: Path, output_path: Path) -> None:
-    document = load_yaml(input_path)
-    normalized = normalize_document(document)
+    try:
+        document = load_yaml(input_path)
+        normalized = normalize_document(document)
+    except RecursionError as error:
+        raise CompileError("$", "configuration nesting exceeds the supported depth") from error
     payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
+    if len(payload.encode("utf-8")) > MAX_JSON_BYTES:
+        raise CompileError("$", f"compiled JSON exceeds the maximum supported size of {MAX_JSON_BYTES} bytes")
     try:
         output_path.write_text(payload, encoding="utf-8")
     except OSError as error:
