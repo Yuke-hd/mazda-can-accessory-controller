@@ -36,9 +36,10 @@ using local_argb_actions::LedEffect;
   return comparison != Comparison::Equal && comparison != Comparison::NotEqual;
 }
 
-[[nodiscard]] ValidationResult failure(const SchemaError error,
-                                       const std::size_t index = 0) noexcept {
-  return ValidationResult{error, index};
+[[nodiscard]] ValidationResult
+failure(const SchemaError error, const std::size_t index = 0,
+        const ValidationSection section = ValidationSection::None) noexcept {
+  return ValidationResult{error, index, section};
 }
 
 [[nodiscard]] std::optional<std::size_t> action_index(const Configuration &configuration,
@@ -168,13 +169,13 @@ using local_argb_actions::LedEffect;
   for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
     const ActionSpec &action = configuration.actions[index];
     if (is_blank(action.name))
-      return failure(SchemaError::EmptyActionName, index);
+      return failure(SchemaError::EmptyActionName, index, ValidationSection::Actions);
     const std::uint32_t id = static_cast<std::uint32_t>(index + 1U);
     if (id > std::numeric_limits<std::uint16_t>::max())
-      return failure(SchemaError::ActionIdExhausted, index);
+      return failure(SchemaError::ActionIdExhausted, index, ValidationSection::Actions);
     for (std::size_t other = 0; other < index; ++other) {
       if (configuration.actions[other].name == action.name)
-        return failure(SchemaError::DuplicateActionName, index);
+        return failure(SchemaError::DuplicateActionName, index, ValidationSection::Actions);
     }
   }
   return ValidationResult{};
@@ -184,26 +185,26 @@ using local_argb_actions::LedEffect;
   for (std::size_t index = 0; index < configuration.effect_bindings.size(); ++index) {
     const auto &binding = configuration.effect_bindings[index];
     if (!action_index(configuration, binding.action).has_value())
-      return failure(SchemaError::UnknownAction, index);
+      return failure(SchemaError::UnknownAction, index, ValidationSection::EffectBindings);
     if (!led_effect_from_name(binding.effect).has_value())
-      return failure(SchemaError::UnknownLedEffect, index);
+      return failure(SchemaError::UnknownLedEffect, index, ValidationSection::EffectBindings);
     if (binding.priority < 0 || binding.priority > std::numeric_limits<std::uint8_t>::max())
-      return failure(SchemaError::InvalidPriority, index);
+      return failure(SchemaError::InvalidPriority, index, ValidationSection::EffectBindings);
   }
   for (std::size_t index = 0; index < configuration.fill_bindings.size(); ++index) {
     const auto &binding = configuration.fill_bindings[index];
     if (!action_index(configuration, binding.action).has_value())
-      return failure(SchemaError::UnknownAction, index);
+      return failure(SchemaError::UnknownAction, index, ValidationSection::FillBindings);
     if (!fill_direction_from_name(binding.zone.direction).has_value())
-      return failure(SchemaError::UnknownFillDirection, index);
+      return failure(SchemaError::UnknownFillDirection, index, ValidationSection::FillBindings);
     if (binding.zone.start >= kLogicalStripPixelCount || binding.zone.length == 0U ||
         binding.zone.length > kLogicalStripPixelCount - binding.zone.start)
-      return failure(SchemaError::InvalidLedZone, index);
+      return failure(SchemaError::InvalidLedZone, index, ValidationSection::FillBindings);
     if (binding.color.red < 0 || binding.color.red > 255 || binding.color.green < 0 ||
         binding.color.green > 255 || binding.color.blue < 0 || binding.color.blue > 255)
-      return failure(SchemaError::InvalidRgb, index);
+      return failure(SchemaError::InvalidRgb, index, ValidationSection::FillBindings);
     if (binding.priority < 0 || binding.priority > std::numeric_limits<std::uint8_t>::max())
-      return failure(SchemaError::InvalidPriority, index);
+      return failure(SchemaError::InvalidPriority, index, ValidationSection::FillBindings);
   }
   return ValidationResult{};
 }
@@ -217,10 +218,10 @@ using local_argb_actions::LedEffect;
   for (std::size_t index = 0; index < configuration.rules.size(); ++index) {
     const auto &rule = configuration.rules[index];
     if (!action_index(configuration, rule.action).has_value())
-      return failure(SchemaError::UnknownAction, index);
+      return failure(SchemaError::UnknownAction, index, ValidationSection::Rules);
     const auto shape = validate_rule_shape(rule);
     if (!shape.ok()) {
-      return ValidationResult{shape.error, index};
+      return ValidationResult{shape.error, index, ValidationSection::Rules};
     }
   }
   return validate_bindings(configuration);
@@ -366,7 +367,7 @@ ValidationResult validate(const Configuration &configuration,
         },
         *runtime);
     if (error != SchemaError::None)
-      return failure(error, index);
+      return failure(error, index, ValidationSection::Rules);
   }
   return ValidationResult{};
 }

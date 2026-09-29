@@ -2,12 +2,20 @@
 
 `controller_config::Configuration` is the parser-independent model for a
 versioned controller profile. It owns every persisted string with
-`std::string`; a JSON loader can populate it later without making the action
-engine or LED adapter depend on a JSON library. The model does not parse JSON
-yet. `to_action_engine_rule()` creates the existing action-engine persisted
-rule types using string views into the owning configuration, so the
-configuration must remain alive and must not be mutated while those rules are
-registered.
+`std::string`; `controller_config::parse_controller_config()` populates it
+without making the action engine or LED adapter depend on a JSON library.
+`to_action_engine_rule()` creates the existing action-engine persisted rule
+types using string views into the owning configuration, so the configuration
+must remain alive and must not be mutated while those rules are registered.
+
+The loader rejects malformed JSON, missing or mistyped fields, unknown fields,
+unsupported enum names, duplicate actions, unresolved action references, and
+semantic range/zone/priority errors. `ConfigLoadResult::diagnostic` contains a
+parse/structural/semantic category, a path such as `rules[3].input`, an
+optional `SchemaError`, an array index where applicable, and a human-readable
+message. A failed load never returns a partial `Configuration`. The overload accepting a
+`vehicle_signals::SignalCatalogView` additionally delegates signal type,
+capability, and enum-choice checks to the action engine.
 
 ## Version 1
 
@@ -16,7 +24,7 @@ the following portable fields:
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `version` | integer | Exactly `1`. |
+| `version` | mathematically integral JSON number | Exactly `1`; JSON spellings such as `1.0` are accepted. |
 | `actions` | array of `{name}` | Names are non-empty and unique. Runtime `ActionId`s are assigned one-based in declaration order; numeric IDs are not persisted. |
 | `rules` | array | `type` is `state`, `sampled_state`, `event`, or `range`; `action` must name an action; `signal` is a vehicle signal catalog key. |
 | `effect_bindings` | array | `action`, `effect` (`left_turn`, `right_turn`, `brake`), and integer `priority` in `0..255`. |
@@ -41,6 +49,11 @@ Fill zones use `zone.start`, `zone.length`, and `zone.direction`, where the
 direction is `start_to_end`, `end_to_start`, or `center_out`. The logical strip
 has exactly 100 pixels for schema validation: a zone must have positive length
 and fit entirely within `[0, 100)`. RGB channels are integers in `0..255`.
+
+The loader accepts at most 16 KiB of JSON payload and 16 nested arrays/objects.
+One terminal NUL byte is allowed in addition to that payload when a
+configuration comes from a NUL-terminated NVS blob. Embedded NUL bytes and
+`\\u0000` string escapes are rejected with a dedicated `EmbeddedNul` diagnostic.
 
 ## Production profile example
 

@@ -18,8 +18,8 @@
 
 // This header is the owning, parser-independent representation of a persisted
 // controller configuration. It deliberately contains no GPIO, driver, task,
-// or renderer-lifecycle settings. A future JSON adapter can populate this
-// model, validate it, and then hand the string views produced by
+// or renderer-lifecycle settings. The JSON loader populates this model,
+// validates it, and then hands the string views produced by
 // to_action_engine_rule() to the action engine while this object remains
 // alive.
 
@@ -58,9 +58,18 @@ enum class SchemaError : std::uint8_t {
   InvalidPriority,
 };
 
+enum class ValidationSection : std::uint8_t {
+  None,
+  Actions,
+  Rules,
+  EffectBindings,
+  FillBindings,
+};
+
 struct ValidationResult final {
   SchemaError error{SchemaError::None};
   std::size_t index{0};
+  ValidationSection section{ValidationSection::None};
 
   [[nodiscard]] bool ok() const noexcept { return error == SchemaError::None; }
 };
