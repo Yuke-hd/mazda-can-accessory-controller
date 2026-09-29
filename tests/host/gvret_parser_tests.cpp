@@ -53,7 +53,7 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
 
 TEST_CASE("parser accepts SavvyCAN V2 direction and keeps bus and payload columns aligned") {
   const auto parsed = gvret::parse_csv(
-      std::string(kV2Header) + "\n39747828,000005EB,false,Rx,0,8,E8,45,85,4B,4A,28,36,69\n");
+      std::string(kV2Header) + "\n39747828,000005EB,false,Rx,0,8,E8,45,85,4B,4A,28,36,69,\n");
 
   REQUIRE(parsed.ok());
   REQUIRE(parsed.frames.size() == 1);
@@ -129,6 +129,21 @@ TEST_CASE("parser rejects malformed headers and rows with useful diagnostics") {
 TEST_CASE("parser rejects an invalid SavvyCAN V2 direction with its row number") {
   check_failure(std::string(kV2Header) + "\n1,00000123,false,Transmit,0,0\n", 2,
                 "invalid direction; expected Rx or Tx");
+}
+
+TEST_CASE("parser rejects SavvyCAN V2 rows with missing columns or an invalid bus") {
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,0\n", 2,
+                "row is missing required columns");
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,not-a-bus,0\n", 2,
+                "invalid bus number");
+}
+
+TEST_CASE("parser accepts only one SavvyCAN row terminator separator") {
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,0,8,00,11,22,33,44,55,66,77,,\n", 2,
+                "row contains unsupported columns");
+  check_failure(std::string(kV2Header) +
+                    "\n1,00000123,false,Rx,0,8,00,11,22,33,44,55,66,77,extra\n",
+                2, "row contains unsupported columns");
 }
 
 TEST_CASE("parser rejects IDs that do not match their frame format") {

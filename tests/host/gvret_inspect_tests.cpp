@@ -62,13 +62,14 @@ TEST_CASE("file loader parses, selects, and summarizes a generated CSV") {
 }
 
 TEST_CASE("file loader accepts a SavvyCAN V2 capture and excludes Tx rows") {
-  const TemporaryCsv csv(std::string(kV2Header) + "\n100,00000401,false,Tx,0,1,AA\n"
-                                                  "200,00000402,false,Rx,0,1,BB\n");
+  const TemporaryCsv csv(std::string(kV2Header) + "\n100,00000401,false,Tx,0,1,AA,,,,,,,,\n"
+                                                  "200,00000402,false,Rx,0,1,BB,,,,,,,,\n");
 
   const auto loaded = gvret::load_file(csv.path());
 
   REQUIRE(loaded.ok());
   REQUIRE(loaded.frames.size() == 1);
+  CHECK(loaded.skipped_transmit_count == 1);
   CHECK(loaded.frames.front().frame.identifier == 0x402);
   CHECK(loaded.frames.front().frame.dlc == 1);
   CHECK(loaded.frames.front().frame.data[0] == 0xBB);

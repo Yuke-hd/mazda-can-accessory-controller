@@ -11,19 +11,21 @@
 
 namespace gvret {
 
-enum class Direction : std::uint8_t { Rx, Tx };
+enum class Direction : std::uint8_t { Rx, Tx, Unknown };
 
 // A parsed GVRET row with the source bus retained for downstream filtering.
 // `bus` is the sole source-bus authority. The embedded frame keeps its
 // RawCanFrame default bus_id until replay selects the frame-bus semantics.
 // The frame timestamp and convenience timestamp_us field are both kept in the
 // source unit. Timestamp normalization belongs to the replay layer. The
-// source direction is retained; V1 rows have an implicit Rx direction.
+// source direction is retained; V1 rows have an implicit Rx direction. A
+// manually constructed row without an explicit direction is Unknown and is
+// rejected by replay preparation.
 struct ParsedGvretFrame {
   std::uint64_t timestamp_us{0};
   std::uint32_t bus{0};
   vehicle_core::RawCanFrame frame{};
-  Direction direction{Direction::Rx};
+  Direction direction{Direction::Unknown};
 };
 
 struct ParseError {

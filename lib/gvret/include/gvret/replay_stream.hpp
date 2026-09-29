@@ -30,6 +30,7 @@ struct ReplayError {
 
 struct ReplayResult {
   std::vector<TimedCanFrame> frames;
+  std::size_t skipped_transmit_count{0};
   std::optional<ReplayError> error;
 
   [[nodiscard]] bool ok() const noexcept { return !error.has_value(); }
@@ -42,8 +43,9 @@ struct ReplayOptions {
 
 // Select one source bus and normalize received (Rx) rows to a zero-based
 // replay clock. Rows from other buses and transmitted (Tx) rows are skipped in
-// source order. Equal timestamps are valid and retain their source-file order.
-// A timestamp regression in the selected receive stream fails the whole
+// source order; the latter are counted for diagnostics. Unknown directions are
+// skipped fail-closed. Equal timestamps are valid and retain their source-file
+// order. A timestamp regression in the selected receive stream fails the whole
 // transformation rather than producing a stream with an ambiguous unsigned
 // time delta.
 [[nodiscard]] ReplayResult prepare_replay(const std::vector<ParsedGvretFrame> &parsed,

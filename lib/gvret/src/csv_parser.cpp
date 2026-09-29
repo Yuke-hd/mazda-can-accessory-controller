@@ -10,11 +10,24 @@ namespace {
 constexpr std::string_view kLegacyHeader = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
 constexpr std::string_view kSavvyCanV2Header =
     "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
-constexpr std::size_t kV1MetadataColumns = 5;
-constexpr std::size_t kV2MetadataColumns = 6;
 constexpr std::size_t kPayloadColumns = vehicle_core::kCanClassicPayloadBytes;
 
 enum class CsvSchema : std::uint8_t { V1, V2 };
+
+struct CsvLayout {
+  bool has_direction;
+  std::size_t direction_column;
+  std::size_t bus_column;
+  std::size_t dlc_column;
+  std::size_t first_payload_column;
+};
+
+constexpr CsvLayout kV1Layout{false, 0, 3, 4, 5};
+constexpr CsvLayout kV2Layout{true, 3, 4, 5, 6};
+
+constexpr const CsvLayout &layout_for(const CsvSchema schema) noexcept {
+  return schema == CsvSchema::V2 ? kV2Layout : kV1Layout;
+}
 
 struct Fields {
   std::vector<std::string_view> values;
@@ -124,9 +137,8 @@ ParseResult parse_csv(const std::string_view csv) {
       }
 
       const Fields fields = split_csv_line(line);
-      const std::size_t metadata_columns =
-          schema == CsvSchema::V2 ? kV2MetadataColumns : kV1MetadataColumns;
-      if (fields.values.size() < metadata_columns) {
+      const CsvLayout &layout = layout_for(schema);
+      if (fields.values.size() < layout.first_payload_column) {
         return failure(line_number, "row is missing required columns");
       }
 
@@ -145,28 +157,35 @@ ParseResult parse_csv(const std::string_view csv) {
         return failure(line_number, "invalid Extended flag");
       }
 
-      Direction direction = Direction::Rx;
-      const std::size_t bus_column = schema == CsvSchema::V2 ? 4 : 3;
-      const std::size_t dlc_column = schema == CsvSchema::V2 ? 5 : 4;
-      if (schema == CsvSchema::V2 && !parse_direction(fields.values[3], direction)) {
-        return failure(line_number, "invalid direction; expected Rx or Tx");
+      Direction direction = Direction::Unknown;
+      if (layout.has_direction) {
+        if (!parse_direction(fields.values[layout.direction_column], direction)) {
+          return failure(line_number, "invalid direction; expected Rx or Tx");
+        }
+      } else {
+        direction = Direction::Rx;
       }
 
       std::uint32_t bus = 0;
-      if (!parse_integer(fields.values[bus_column], 10, bus)) {
+      if (!parse_integer(fields.values[layout.bus_column], 10, bus)) {
         return failure(line_number, "invalid bus number");
       }
 
       std::uint32_t dlc = 0;
-      if (!parse_integer(fields.values[dlc_column], 10, dlc) || dlc > kPayloadColumns) {
+      if (!parse_integer(fields.values[layout.dlc_column], 10, dlc) || dlc > kPayloadColumns) {
         return failure(line_number, "invalid DLC; expected a value from 0 to 8");
       }
 
-      if (fields.values.size() > metadata_columns + kPayloadColumns) {
+      std::size_t field_count = fields.values.size();
+      if (field_count > layout.first_payload_column && fields.values.back().empty()) {
+        --field_count;
+      }
+
+      if (field_count > layout.first_payload_column + kPayloadColumns) {
         return failure(line_number, "row contains unsupported columns");
       }
 
-      if (fields.values.size() < metadata_columns + dlc) {
+      if (field_count < layout.first_payload_column + dlc) {
         return failure(line_number, "row is missing a required payload byte");
       }
 
@@ -184,7 +203,7 @@ ParseResult parse_csv(const std::string_view csv) {
       parsed.frame.dlc = static_cast<std::uint8_t>(dlc);
 
       for (std::size_t index = 0; index < dlc; ++index) {
-        const std::string_view byte_text = fields.values[metadata_columns + index];
+        const std::string_view byte_text = fields.values[layout.first_payload_column + index];
         if (byte_text.empty() || byte_text.size() > 2) {
           return failure(line_number, "invalid hexadecimal payload byte");
         }
