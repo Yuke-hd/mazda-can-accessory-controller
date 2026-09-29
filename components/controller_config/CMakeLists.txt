@@ -39,8 +39,14 @@ else()
     GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
     GIT_TAG v1.7.19
     GIT_SHALLOW TRUE)
+  # cJSON v1.7.19 predates CMake 4's policy floor and does not publish its
+  # source directory as a target include path. Keep those compatibility
+  # details at the import boundary instead of exposing them to consumers.
+  set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
   FetchContent_MakeAvailable(controller_config_cjson_source)
   if(TARGET cjson)
+    target_include_directories(cjson PUBLIC
+      "${controller_config_cjson_source_SOURCE_DIR}")
     set(_controller_config_cjson_target cjson)
   else()
     message(FATAL_ERROR "cJSON v1.7.19 did not provide the expected cjson target")
