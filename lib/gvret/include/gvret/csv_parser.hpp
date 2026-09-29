@@ -11,15 +11,21 @@
 
 namespace gvret {
 
+enum class Direction : std::uint8_t { Rx, Tx, Unknown };
+
 // A parsed GVRET row with the source bus retained for downstream filtering.
 // `bus` is the sole source-bus authority. The embedded frame keeps its
 // RawCanFrame default bus_id until replay selects the frame-bus semantics.
 // The frame timestamp and convenience timestamp_us field are both kept in the
-// source unit. Timestamp normalization belongs to the replay layer.
+// source unit. Timestamp normalization belongs to the replay layer. The
+// source direction is retained; V1 rows have an implicit Rx direction. A
+// manually constructed row without an explicit direction is Unknown and is
+// rejected by replay preparation.
 struct ParsedGvretFrame {
   std::uint64_t timestamp_us{0};
   std::uint32_t bus{0};
   vehicle_core::RawCanFrame frame{};
+  Direction direction{Direction::Unknown};
 };
 
 struct ParseError {
@@ -37,14 +43,16 @@ struct ParseResult {
   explicit operator bool() const noexcept { return ok(); }
 };
 
-// Parse a complete SavvyCAN/GVRET CSV stream. The parser accepts the
-// following header exactly (apart from a CR line ending):
+// Parse a complete SavvyCAN/GVRET CSV stream. The parser accepts either
+// header exactly (apart from a CR line ending):
 //
 //   Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
+//   Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
 //
 // Timestamps and buses are unsigned decimal values. IDs and payload bytes are
-// hexadecimal. The first LEN payload columns are required and validated;
-// remaining D columns may be populated by SavvyCAN and are ignored.
+// hexadecimal. V2 Dir values are Rx or Tx. The first LEN payload columns are
+// required and validated; remaining D columns may be populated by SavvyCAN and
+// are ignored.
 [[nodiscard]] ParseResult parse_csv(std::string_view csv);
 
 } // namespace gvret

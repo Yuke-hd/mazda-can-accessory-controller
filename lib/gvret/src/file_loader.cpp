@@ -56,6 +56,7 @@ FileReplayResult load_file(const std::filesystem::path &path, const ReplayOption
 
   FileReplayResult result;
   result.frames = replay.frames;
+  result.skipped_transmit_count = replay.skipped_transmit_count;
   return result;
 }
 

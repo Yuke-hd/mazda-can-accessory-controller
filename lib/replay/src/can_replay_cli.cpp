@@ -238,10 +238,11 @@ std::string format_identifier(const std::uint32_t identifier) {
   return formatted.str();
 }
 
-void print_summary(const gvret::ReplaySummary &summary) {
+void print_summary(const gvret::ReplaySummary &summary, const std::size_t skipped_transmit_count) {
   std::cout << "GVRET replay summary\n"
             << "selected bus: " << summary.selected_bus << '\n'
             << "frames: " << summary.frame_count << '\n'
+            << "transmitted rows skipped: " << skipped_transmit_count << '\n'
             << "relative duration (us): " << summary.relative_duration_us << '\n'
             << "standard frames: " << summary.standard_frame_count << '\n'
             << "extended frames: " << summary.extended_frame_count << '\n';
@@ -268,7 +269,7 @@ int main(const int argc, char **argv) {
   }
 
   if (arguments.command == Arguments::Command::Inspect) {
-    print_summary(gvret::summarize(replay.frames, arguments.bus));
+    print_summary(gvret::summarize(replay.frames, arguments.bus), replay.skipped_transmit_count);
     return 0;
   }
 

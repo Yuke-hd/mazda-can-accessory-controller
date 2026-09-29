@@ -5,11 +5,28 @@ fixture, and validator remain retired. SavvyCAN/GVRET CSV is the supported
 host ingestion format for the replay work tracked by epic #52.
 
 Ticket A1 provides the host-only `gvret_parser` library in
-`lib/gvret/`. It parses the expected SavvyCAN header and rows into validated
-`vehicle_core::RawCanFrame` values while retaining the source timestamp and
-bus. It does not open files, normalize timestamps, select a bus, schedule
-replay, or couple to Mazda or firmware code. Those concerns belong to the
-follow-up A2 and A3 tickets.
+`lib/gvret/`. SavvyCAN's native V2 CSV schema is preferred:
+
+```text
+Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
+```
+
+V2 `Dir` values are `Rx` and `Tx`. The parser retains that direction with the
+validated frame; the replay preparation boundary admits only `Rx` rows into
+the receive-only controller path. SavvyCAN terminates each data row with one
+empty column after `D8`; that trailing separator is accepted, while other
+unsupported columns remain errors. The legacy/project V1 schema remains
+accepted for existing generated fixtures:
+
+```text
+Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
+```
+
+V1 rows are treated as received (`Rx`). The parser retains the source
+timestamp and bus and does not open files, normalize timestamps, select a bus,
+schedule replay, or couple to Mazda or firmware code. Those concerns belong to
+the follow-up A2 and A3 tickets. The inspection CLI reports how many selected
+bus `Tx` rows were skipped before replay.
 
 A2 applies the parser result to one selected source bus and rewrites timestamps
 to a zero-based relative replay clock. A3 provides the host-only file loader

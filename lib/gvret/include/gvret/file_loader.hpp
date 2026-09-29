@@ -23,6 +23,7 @@ struct FileError {
 
 struct FileReplayResult {
   std::vector<TimedCanFrame> frames;
+  std::size_t skipped_transmit_count{0};
   std::optional<FileError> error;
 
   [[nodiscard]] bool ok() const noexcept { return !error.has_value(); }

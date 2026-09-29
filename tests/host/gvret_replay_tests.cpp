@@ -14,6 +14,7 @@ gvret::ParsedGvretFrame parsed(const std::uint64_t timestamp_us, const std::uint
   gvret::ParsedGvretFrame result;
   result.timestamp_us = timestamp_us;
   result.bus = bus;
+  result.direction = gvret::Direction::Rx;
   result.frame.timestamp_us = timestamp_us;
   result.frame.identifier = identifier;
   result.frame.dlc = 1;
@@ -88,4 +89,44 @@ TEST_CASE("replay does not narrow the selected source bus into RawCanFrame bus_i
   REQUIRE(result.ok());
   REQUIRE(result.frames.size() == 1);
   CHECK(result.frames.front().frame.bus_id == 0);
+}
+
+TEST_CASE("replay skips Tx rows before checking timestamp order") {
+  auto transmitted = parsed(50, 0, 0x402);
+  transmitted.direction = gvret::Direction::Tx;
+  const std::vector<gvret::ParsedGvretFrame> source{parsed(100, 0, 0x401), transmitted,
+                                                    parsed(200, 0, 0x403)};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE(result.ok());
+  REQUIRE(result.frames.size() == 2);
+  CHECK(result.skipped_transmit_count == 1);
+  CHECK(result.frames[0].frame.identifier == 0x401);
+  CHECK(result.frames[0].relative_time_us == 0);
+  CHECK(result.frames[1].frame.identifier == 0x403);
+  CHECK(result.frames[1].relative_time_us == 100);
+}
+
+TEST_CASE("replay returns no frames for a selected bus containing only Tx rows") {
+  auto transmitted = parsed(100, 0, 0x404);
+  transmitted.direction = gvret::Direction::Tx;
+  const std::vector<gvret::ParsedGvretFrame> source{transmitted};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE(result.ok());
+  CHECK(result.frames.empty());
+  CHECK(result.skipped_transmit_count == 1);
+}
+
+TEST_CASE("replay skips a parsed frame whose direction is unknown") {
+  const std::vector<gvret::ParsedGvretFrame> source{parsed(100, 0, 0x405),
+                                                    gvret::ParsedGvretFrame{}};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE(result.ok());
+  REQUIRE(result.frames.size() == 1);
+  CHECK(result.frames.front().frame.identifier == 0x405);
 }

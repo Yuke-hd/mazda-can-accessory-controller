@@ -24,6 +24,13 @@ ReplayResult prepare_replay(const std::vector<ParsedGvretFrame> &parsed,
     if (source.bus != options.bus) {
       continue;
     }
+    if (source.direction == Direction::Tx) {
+      ++result.skipped_transmit_count;
+      continue;
+    }
+    if (source.direction != Direction::Rx) {
+      continue;
+    }
 
     if (previous_timestamp.has_value() && source.timestamp_us < *previous_timestamp) {
       result.frames.clear();

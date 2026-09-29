@@ -17,6 +17,7 @@
 namespace {
 
 constexpr char kHeader[] = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
+constexpr char kV2Header[] = "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
 
 std::filesystem::path g_replay_executable;
 std::atomic<std::uint64_t> g_temp_suffix{0};
@@ -181,6 +182,22 @@ TEST_CASE("inspect command prints a privacy-safe summary for a generated CSV") {
   CHECK(result.standard_output.find("CC") == std::string::npos);
   CHECK(result.standard_output.find("100000") == std::string::npos);
   CHECK(result.standard_output.find(input.path().string()) == std::string::npos);
+}
+
+TEST_CASE("inspect command accepts a SavvyCAN V2 file with trailing separators") {
+  const TemporaryFile input("gvret-cli-v2-input",
+                            std::string(kV2Header) +
+                                "\n100,00000401,false,Tx,0,1,AA,,,,,,,,\n"
+                                "200,000005EB,false,Rx,0,8,E8,45,85,4B,4A,28,36,69,\n");
+  TemporaryPath standard_output("gvret-cli-v2-stdout");
+  TemporaryPath standard_error("gvret-cli-v2-stderr");
+
+  const CommandResult result = run_inspect(input.path(), "0", standard_output, standard_error);
+
+  REQUIRE(result.exit_code == 0);
+  CHECK(result.standard_error.empty());
+  CHECK(result.standard_output.find("frames: 1") != std::string::npos);
+  CHECK(result.standard_output.find("transmitted rows skipped: 1") != std::string::npos);
 }
 
 TEST_CASE("inspect command returns a diagnostic without echoing invalid input") {

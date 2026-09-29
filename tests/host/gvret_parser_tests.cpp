@@ -8,6 +8,7 @@
 namespace {
 
 constexpr char kHeader[] = "Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
+constexpr char kV2Header[] = "Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8";
 
 std::string csv_row(const char *timestamp, const char *id, const char *extended, const char *bus,
                     const char *length, const char *bytes) {
@@ -38,6 +39,7 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
   const auto &frame = parsed.frames.front();
   CHECK(frame.timestamp_us == 973);
   CHECK(frame.bus == 3);
+  CHECK(frame.direction == gvret::Direction::Rx);
   CHECK(frame.frame.timestamp_us == 973);
   CHECK(frame.frame.bus_id == 0);
   CHECK(frame.frame.identifier == 0x13B);
@@ -47,6 +49,21 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
   CHECK(frame.frame.data[1] == 0x01);
   CHECK(frame.frame.data[2] == 0xFE);
   CHECK(frame.frame.data[3] == 0);
+}
+
+TEST_CASE("parser accepts SavvyCAN V2 direction and keeps bus and payload columns aligned") {
+  const auto parsed = gvret::parse_csv(
+      std::string(kV2Header) + "\n39747828,000005EB,false,Rx,0,8,E8,45,85,4B,4A,28,36,69,\n");
+
+  REQUIRE(parsed.ok());
+  REQUIRE(parsed.frames.size() == 1);
+  const auto &frame = parsed.frames.front();
+  CHECK(frame.timestamp_us == 39'747'828);
+  CHECK(frame.bus == 0);
+  CHECK(frame.direction == gvret::Direction::Rx);
+  CHECK(frame.frame.dlc == 8);
+  CHECK(frame.frame.data[0] == 0xE8);
+  CHECK(frame.frame.data[7] == 0x69);
 }
 
 TEST_CASE("parser preserves source bus values wider than RawCanFrame bus_id") {
@@ -107,6 +124,26 @@ TEST_CASE("parser rejects malformed headers and rows with useful diagnostics") {
                 "row is missing a required payload byte");
   check_failure(one_row(csv_row("1.5", "123", "0", "0", "0", "")), 2, "invalid timestamp");
   check_failure(one_row(csv_row("1", "123", "maybe", "0", "0", "")), 2, "invalid Extended flag");
+}
+
+TEST_CASE("parser rejects an invalid SavvyCAN V2 direction with its row number") {
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Transmit,0,0\n", 2,
+                "invalid direction; expected Rx or Tx");
+}
+
+TEST_CASE("parser rejects SavvyCAN V2 rows with missing columns or an invalid bus") {
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,0\n", 2,
+                "row is missing required columns");
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,not-a-bus,0\n", 2,
+                "invalid bus number");
+}
+
+TEST_CASE("parser accepts only one SavvyCAN row terminator separator") {
+  check_failure(std::string(kV2Header) + "\n1,00000123,false,Rx,0,8,00,11,22,33,44,55,66,77,,\n", 2,
+                "row contains unsupported columns");
+  check_failure(std::string(kV2Header) +
+                    "\n1,00000123,false,Rx,0,8,00,11,22,33,44,55,66,77,extra\n",
+                2, "row contains unsupported columns");
 }
 
 TEST_CASE("parser rejects IDs that do not match their frame format") {
