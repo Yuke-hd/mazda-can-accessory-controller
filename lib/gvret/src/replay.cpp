@@ -16,8 +16,8 @@ std::string ReplayError::message() const {
 ReplayResult prepare_replay(const std::vector<ParsedGvretFrame> &parsed,
                             const ReplayOptions options) {
   ReplayResult result;
-  std::optional<std::uint64_t> first_timestamp;
-  std::optional<std::uint64_t> previous_timestamp;
+  std::optional<SourceTimestamp> first_timestamp;
+  std::optional<SourceTimestamp> previous_timestamp;
 
   for (std::size_t source_index = 0; source_index < parsed.size(); ++source_index) {
     const ParsedGvretFrame &source = parsed[source_index];

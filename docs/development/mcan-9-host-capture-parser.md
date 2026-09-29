@@ -28,6 +28,21 @@ schedule replay, or couple to Mazda or firmware code. Those concerns belong to
 the follow-up A2 and A3 tickets. The inspection CLI reports how many selected
 bus `Tx` rows were skipped before replay.
 
+## Timestamp convention
+
+The `Time Stamp` field is always a decimal unsigned microsecond count. SavvyCAN
+may write either a capture-relative counter or a Unix-epoch microsecond value
+(for example, `1790000000999900`); both forms are accepted without narrowing or
+truncation. Formatted date/time text is not a GVRET timestamp, and no timezone
+conversion is performed because Unix-epoch microseconds are timezone-independent.
+
+Replay preparation treats the source value as opaque ordering data, checks the
+selected receive rows for a genuine regression, and subtracts the first
+selected timestamp. For example, `1790000000999900`, `1790000001000100`, and
+`1790000002250000` become `0`, `200`, and `1250100` microseconds. Equal source
+timestamps remain valid and retain their input order. The original wall-clock
+value never reaches PixelFrame, signal JSONL, or browser-facing replay data.
+
 A2 applies the parser result to one selected source bus and rewrites timestamps
 to a zero-based relative replay clock. A3 provides the host-only file loader
 and `can-replay inspect <capture.csv> --bus <number>` command. The command

@@ -276,6 +276,42 @@ TEST_CASE("render command emits only relative timestamped 100-pixel JSONL") {
         result.standard_output.size() - std::string{"{\"type\":\"end\"}\n"}.size());
 }
 
+TEST_CASE("render command accepts epoch microseconds and emits only replay-relative time") {
+  const TemporaryFile input("gvret-render-epoch-input",
+                            std::string(kHeader) +
+                                "\n1790000000999900,00000202,false,0,8,32,C8,00,00,00,00,00,00\n"
+                                "1790000001000100,00000091,false,0,8,00,20,00,00,00,00,00,00\n"
+                                "1790000002250000,00000091,false,0,0\n");
+  TemporaryPath standard_output("gvret-render-epoch-stdout");
+  TemporaryPath standard_error("gvret-render-epoch-stderr");
+
+  const CommandResult result =
+      run_render(input.path(), "0", "1250100", standard_output, standard_error);
+
+  REQUIRE(result.exit_code == 0);
+  CHECK(result.standard_error.empty());
+  CHECK(result.standard_output.find("1790000000999900") == std::string::npos);
+  CHECK(result.standard_output.find("1790000001000100") == std::string::npos);
+  CHECK(result.standard_output.find("1790000002250000") == std::string::npos);
+
+  bool saw_relative_timestamp = false;
+  std::size_t timestamp_begin = 0;
+  constexpr std::string_view kTimestampField = "\"timestamp_us\":";
+  while ((timestamp_begin = result.standard_output.find(kTimestampField, timestamp_begin)) !=
+         std::string::npos) {
+    timestamp_begin += kTimestampField.size();
+    const std::size_t timestamp_end =
+        result.standard_output.find_first_not_of("0123456789", timestamp_begin);
+    REQUIRE(timestamp_end != timestamp_begin);
+    const auto timestamp = std::stoull(result.standard_output.substr(
+        timestamp_begin,
+        timestamp_end == std::string::npos ? timestamp_end : timestamp_end - timestamp_begin));
+    CHECK(timestamp <= 1'250'100ULL);
+    saw_relative_timestamp = true;
+  }
+  CHECK(saw_relative_timestamp);
+}
+
 TEST_CASE("render command requires an explicit bounded replay horizon") {
   const TemporaryFile input("gvret-render-no-end",
                             std::string(kHeader) + "\n123456789,00000202,false,0,0\n");

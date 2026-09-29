@@ -61,6 +61,24 @@ TEST_CASE("file loader parses, selects, and summarizes a generated CSV") {
   CHECK(*summary.max_identifier == 0x1ABCDE);
 }
 
+TEST_CASE("file loader normalizes epoch-microsecond captures without exposing wall time") {
+  const TemporaryCsv csv(std::string(kHeader) + "\n1790000000999900,00000123,false,0,0\n"
+                                                "1790000001000100,00000124,false,0,0\n"
+                                                "1790000002250000,00000125,false,0,0\n");
+
+  const auto loaded = gvret::load_file(csv.path());
+
+  REQUIRE(loaded.ok());
+  REQUIRE(loaded.frames.size() == 3);
+  CHECK(loaded.frames[0].relative_time_us == 0);
+  CHECK(loaded.frames[1].relative_time_us == 200);
+  CHECK(loaded.frames[2].relative_time_us == 1'250'100);
+  CHECK(loaded.frames[0].frame.timestamp_us == 0);
+  CHECK(loaded.frames[1].frame.timestamp_us == 200);
+  CHECK(loaded.frames[2].frame.timestamp_us == 1'250'100);
+  CHECK(loaded.frames[2].frame.timestamp_us != 1'790'000'002'250'000ULL);
+}
+
 TEST_CASE("file loader accepts a SavvyCAN V2 capture and excludes Tx rows") {
   const TemporaryCsv csv(std::string(kV2Header) + "\n100,00000401,false,Tx,0,1,AA,,,,,,,,\n"
                                                   "200,00000402,false,Rx,0,1,BB,,,,,,,,\n");
