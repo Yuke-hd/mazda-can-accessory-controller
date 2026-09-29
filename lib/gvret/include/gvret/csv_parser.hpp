@@ -22,6 +22,9 @@ enum class Direction : std::uint8_t { Rx, Tx, Unknown };
 // manually constructed row without an explicit direction is Unknown and is
 // rejected by replay preparation.
 struct ParsedGvretFrame {
+  // GVRET stores timestamps as unsigned microseconds. The value may be a
+  // capture-relative counter or a Unix-epoch timestamp; replay normalization
+  // deliberately treats both forms as opaque source observations.
   std::uint64_t timestamp_us{0};
   std::uint32_t bus{0};
   vehicle_core::RawCanFrame frame{};
@@ -49,7 +52,10 @@ struct ParseResult {
 //   Time Stamp,ID,Extended,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
 //   Time Stamp,ID,Extended,Dir,Bus,LEN,D1,D2,D3,D4,D5,D6,D7,D8
 //
-// Timestamps and buses are unsigned decimal values. IDs and payload bytes are
+// Timestamps and buses are unsigned decimal values. A timestamp is interpreted
+// only as a microsecond count: formatted date/time text and timezone conversion
+// are not supported. This accepts both relative counters and full-width
+// Unix-epoch microseconds without narrowing. IDs and payload bytes are
 // hexadecimal. V2 Dir values are Rx or Tx. The first LEN payload columns are
 // required and validated; remaining D columns may be populated by SavvyCAN and
 // are ignored.

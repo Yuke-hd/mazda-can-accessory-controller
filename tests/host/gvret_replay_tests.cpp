@@ -41,6 +41,29 @@ TEST_CASE("replay defaults to bus zero and makes its first frame time zero") {
   CHECK(result.frames[1].frame.timestamp_us == 750);
 }
 
+TEST_CASE("replay normalizes epoch microseconds across second and multi-second boundaries") {
+  const std::vector<gvret::ParsedGvretFrame> source{
+      parsed(1'790'000'000'999'900ULL, 0, 0x201), parsed(1'790'000'000'999'900ULL, 0, 0x202),
+      parsed(1'790'000'001'000'100ULL, 0, 0x203), parsed(1'790'000'002'250'000ULL, 0, 0x204)};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE(result.ok());
+  REQUIRE(result.frames.size() == 4);
+  CHECK(result.frames[0].frame.identifier == 0x201);
+  CHECK(result.frames[1].frame.identifier == 0x202);
+  CHECK(result.frames[2].frame.identifier == 0x203);
+  CHECK(result.frames[3].frame.identifier == 0x204);
+  CHECK(result.frames[0].relative_time_us == 0);
+  CHECK(result.frames[1].relative_time_us == 0);
+  CHECK(result.frames[2].relative_time_us == 200);
+  CHECK(result.frames[3].relative_time_us == 1'250'100);
+  CHECK(result.frames[0].frame.timestamp_us == 0);
+  CHECK(result.frames[1].frame.timestamp_us == 0);
+  CHECK(result.frames[2].frame.timestamp_us == 200);
+  CHECK(result.frames[3].frame.timestamp_us == 1'250'100);
+}
+
 TEST_CASE("replay selects an explicit bus and preserves equal timestamp order") {
   const std::vector<gvret::ParsedGvretFrame> source{
       parsed(5'000, 2, 0x201), parsed(5'000, 2, 0x202), parsed(5'001, 0, 0x203),
@@ -79,6 +102,33 @@ TEST_CASE("replay rejects timestamp regressions in the selected bus") {
   CHECK(result.error->source_index == 2);
   CHECK(result.frames.empty());
   CHECK(result.error->message().find("source index 2") != std::string::npos);
+}
+
+TEST_CASE("replay rejects an epoch-microsecond timestamp regression") {
+  const std::vector<gvret::ParsedGvretFrame> source{parsed(1'790'000'001'000'100ULL, 0, 0x406),
+                                                    parsed(1'790'000'001'000'099ULL, 0, 0x407)};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE_FALSE(result.ok());
+  REQUIRE(result.error.has_value());
+  CHECK(result.error->code == gvret::ReplayErrorCode::TimestampRegression);
+  CHECK(result.error->source_index == 1);
+  CHECK(result.frames.empty());
+  CHECK(result.error->message().find("source index 1") != std::string::npos);
+}
+
+TEST_CASE("replay rejects an ambiguous one-second timestamp wrap") {
+  const std::vector<gvret::ParsedGvretFrame> source{parsed(999'900, 0, 0x408),
+                                                    parsed(100, 0, 0x409)};
+
+  const auto result = gvret::prepare_replay(source);
+
+  REQUIRE_FALSE(result.ok());
+  REQUIRE(result.error.has_value());
+  CHECK(result.error->code == gvret::ReplayErrorCode::TimestampRegression);
+  CHECK(result.error->source_index == 1);
+  CHECK(result.frames.empty());
 }
 
 TEST_CASE("replay does not narrow the selected source bus into RawCanFrame bus_id") {

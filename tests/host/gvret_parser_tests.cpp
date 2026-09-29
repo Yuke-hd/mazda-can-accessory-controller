@@ -51,6 +51,16 @@ TEST_CASE("parser accepts standard CAN IDs and preserves the source bus") {
   CHECK(frame.frame.data[3] == 0);
 }
 
+TEST_CASE("parser preserves full-width Unix-epoch microseconds") {
+  const auto parsed =
+      gvret::parse_csv(one_row(csv_row("1790000000999900", "0000013B", "false", "0", "0", "")));
+
+  REQUIRE(parsed.ok());
+  REQUIRE(parsed.frames.size() == 1);
+  CHECK(parsed.frames.front().timestamp_us == 1'790'000'000'999'900ULL);
+  CHECK(parsed.frames.front().frame.timestamp_us == 1'790'000'000'999'900ULL);
+}
+
 TEST_CASE("parser accepts SavvyCAN V2 direction and keeps bus and payload columns aligned") {
   const auto parsed = gvret::parse_csv(
       std::string(kV2Header) + "\n39747828,000005EB,false,Rx,0,8,E8,45,85,4B,4A,28,36,69,\n");

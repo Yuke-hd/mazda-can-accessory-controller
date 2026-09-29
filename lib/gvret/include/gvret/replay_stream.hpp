@@ -12,8 +12,10 @@ namespace gvret {
 
 // A parsed frame with a replay-relative schedule time. The frame timestamp is
 // rewritten to the same relative value so downstream consumers never observe
-// an absolute capture timestamp. RawCanFrame::bus_id remains at the neutral
-// parser value; the selected source bus is retained only as a filtering input.
+// an absolute capture timestamp. This is also what converts Unix-epoch
+// microseconds into the zero-based replay clock. RawCanFrame::bus_id remains at
+// the neutral parser value; the selected source bus is retained only as a
+// filtering input.
 struct TimedCanFrame {
   vehicle_core::Microseconds relative_time_us{0};
   vehicle_core::RawCanFrame frame{};
