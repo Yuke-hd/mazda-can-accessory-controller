@@ -532,9 +532,6 @@ struct ValidationLocation final {
 }
 
 [[nodiscard]] ValidationLocation validation_location(const ValidationResult validation) {
-  if (validation.error == SchemaError::UnsupportedVersion)
-    return {"version", "unsupported configuration version; expected version 1"};
-
   const std::string item = validation_item_path(validation);
   switch (validation.error) {
   case SchemaError::UnsupportedVersion:
@@ -634,17 +631,17 @@ enum class InputPreflight { Ok, EmbeddedNul, TooDeep };
 
 [[nodiscard]] ConfigLoadResult parse_impl(std::string_view json,
                                           const vehicle_signals::SignalCatalogView *catalog) {
-  if (json.size() > kMaxControllerConfigJsonBytes)
-    return failure(ConfigDiagnostic{Category::Parse, Code::InputTooLarge, SchemaError::None, 0U,
-                                    "$", "configuration JSON exceeds the maximum supported size"});
-
   // NVS blobs commonly include one terminal C-string NUL. Accept that single
   // terminator, while rejecting embedded NUL bytes and JSON \u0000 strings.
   const std::size_t parse_length =
       json.size() > 0U && json.back() == '\0' ? json.size() - 1U : json.size();
+  if (parse_length > kMaxControllerConfigJsonBytes)
+    return failure(ConfigDiagnostic{Category::Parse, Code::InputTooLarge, SchemaError::None, 0U,
+                                    "$", "configuration JSON exceeds the maximum supported size"});
+
   const InputPreflight preflight = preflight_input(json, parse_length);
   if (preflight == InputPreflight::EmbeddedNul)
-    return failure(ConfigDiagnostic{Category::Parse, Code::InvalidValue, SchemaError::None, 0U, "$",
+    return failure(ConfigDiagnostic{Category::Parse, Code::EmbeddedNul, SchemaError::None, 0U, "$",
                                     "configuration JSON must not contain NUL characters"});
   if (preflight == InputPreflight::TooDeep)
     return failure(ConfigDiagnostic{Category::Parse, Code::NestingLimitExceeded, SchemaError::None,

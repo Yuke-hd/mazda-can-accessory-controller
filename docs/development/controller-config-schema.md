@@ -50,9 +50,10 @@ direction is `start_to_end`, `end_to_start`, or `center_out`. The logical strip
 has exactly 100 pixels for schema validation: a zone must have positive length
 and fit entirely within `[0, 100)`. RGB channels are integers in `0..255`.
 
-The loader accepts at most 16 KiB and 16 nested arrays/objects. It also accepts
-one terminal NUL byte when a configuration comes from a NUL-terminated NVS
-blob, but rejects embedded NUL bytes and `\\u0000` string escapes.
+The loader accepts at most 16 KiB of JSON payload and 16 nested arrays/objects.
+One terminal NUL byte is allowed in addition to that payload when a
+configuration comes from a NUL-terminated NVS blob. Embedded NUL bytes and
+`\\u0000` string escapes are rejected with a dedicated `EmbeddedNul` diagnostic.
 
 ## Production profile example
 

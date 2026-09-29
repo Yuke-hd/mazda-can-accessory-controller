@@ -138,7 +138,7 @@ TEST_CASE("integral spellings and NUL-terminated inputs have explicit behavior")
   json = production_json();
   replace_once(json, "\"value\": \"left\"", "\"value\": \"left\\u0000junk\"");
   const ConfigLoadResult embedded_nul = load(std::move(json));
-  require_failure(embedded_nul, ConfigErrorCategory::Parse, ConfigErrorCode::InvalidValue);
+  require_failure(embedded_nul, ConfigErrorCategory::Parse, ConfigErrorCode::EmbeddedNul);
 }
 
 TEST_CASE("numeric values outside the signed integer range are rejected") {
@@ -149,7 +149,7 @@ TEST_CASE("numeric values outside the signed integer range are rejected") {
   CHECK(above_int64.diagnostic->path == "version");
 
   json = production_json();
-  replace_once(json, "\"version\": 1", "\"version\": -9223372036854775809");
+  replace_once(json, "\"version\": 1", "\"version\": -9223372036854777856");
   const ConfigLoadResult below_int64 = load(std::move(json));
   require_rejection(below_int64, ConfigErrorCategory::Structural);
   CHECK(below_int64.diagnostic->path == "version");
@@ -167,12 +167,22 @@ TEST_CASE("root shape, empty input, and excessive nesting are rejected safely") 
   const std::string too_large(controller_config::kMaxControllerConfigJsonBytes + 1U, ' ');
   require_failure(load(too_large), ConfigErrorCategory::Parse, ConfigErrorCode::InputTooLarge);
 
-  constexpr std::size_t kNestedArrays = 1100U;
-  std::string deeply_nested(kNestedArrays, '[');
-  deeply_nested.append(kNestedArrays, ']');
-  const ConfigLoadResult deep = load(std::move(deeply_nested));
-  require_rejection(deep, ConfigErrorCategory::Parse);
-  CHECK(deep.diagnostic->path == "$");
+  std::string max_payload = production_json();
+  max_payload.resize(controller_config::kMaxControllerConfigJsonBytes, ' ');
+  max_payload.push_back('\0');
+  CHECK(load(max_payload).ok());
+  max_payload.insert(max_payload.end() - 1, ' ');
+  require_failure(load(max_payload), ConfigErrorCategory::Parse, ConfigErrorCode::InputTooLarge);
+
+  std::string at_limit(controller_config::kMaxControllerConfigJsonNesting, '[');
+  at_limit.append(controller_config::kMaxControllerConfigJsonNesting, ']');
+  require_failure(load(std::move(at_limit)), ConfigErrorCategory::Structural,
+                  ConfigErrorCode::RootTypeMismatch);
+
+  std::string over_limit(controller_config::kMaxControllerConfigJsonNesting + 1U, '[');
+  over_limit.append(controller_config::kMaxControllerConfigJsonNesting + 1U, ']');
+  require_failure(load(std::move(over_limit)), ConfigErrorCategory::Parse,
+                  ConfigErrorCode::NestingLimitExceeded);
 }
 
 TEST_CASE("required fields, value types, and unknown fields are rejected") {

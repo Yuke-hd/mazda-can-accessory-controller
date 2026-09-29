@@ -21,6 +21,7 @@ enum class ConfigErrorCategory : std::uint8_t {
 
 enum class ConfigErrorCode : std::uint8_t {
   MalformedJson,
+  EmbeddedNul,
   InputTooLarge,
   NestingLimitExceeded,
   RootTypeMismatch,
