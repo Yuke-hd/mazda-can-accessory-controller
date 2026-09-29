@@ -186,6 +186,23 @@ so they remain with the runtime apply step and keep their existing
 - A future loader may accept older versions by migrating them into the
   current model before validation. Version 1 needs no migrations.
 
+## YAML compiler
+
+YAML is an authoring format only. The host-side compiler parses it with the
+PyYAML library, applies the schema checks above, and emits deterministic,
+compact JSON using the persisted field names. The ESP32 has no YAML parser.
+
+Install the host-only dependency and compile a profile with:
+
+```sh
+python3 -m pip install --user -r tools/requirements.txt
+python3 tools/compile_controller_config.py \
+  docs/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
+```
+
+The generated JSON can be inspected or passed to host tooling. It remains
+subject to the normal runtime loader validation when applied to firmware.
+
 ## Not configurable
 
 The schema describes controller behaviour only. Board and platform safety

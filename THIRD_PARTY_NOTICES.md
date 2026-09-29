@@ -82,5 +82,15 @@ source, exact version or commit, license, and required notices.
 - **License:** MIT, upstream [LICENSE](https://github.com/actions/checkout/blob/v4.2.2/LICENSE)
 - **Role/status:** pinned CI checkout action in `.github/workflows/ci.yml`.
 
+## PyYAML
+
+- **Source:** <https://github.com/yaml/pyyaml>
+- **Exact version:** `6.0.2` (pinned in `tools/requirements.txt`).
+- **License:** MIT, upstream [LICENSE](https://github.com/yaml/pyyaml/blob/6.0.2/LICENSE).
+- **Role/status:** host-only YAML parser used by
+  `tools/compile_controller_config.py` to convert authoring files into the
+  canonical controller JSON format. It is not included in ESP-IDF manifests,
+  firmware images, or runtime dependencies.
+
 No third-party source files, vehicle captures, credentials, or private data are
 included by this scaffold.

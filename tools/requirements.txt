@@ -1,0 +1,2 @@
+# Host-only YAML authoring support for compile_controller_config.py.
+PyYAML==6.0.2
