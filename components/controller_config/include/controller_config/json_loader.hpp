@@ -21,6 +21,8 @@ enum class ConfigErrorCategory : std::uint8_t {
 
 enum class ConfigErrorCode : std::uint8_t {
   MalformedJson,
+  InputTooLarge,
+  NestingLimitExceeded,
   RootTypeMismatch,
   MissingField,
   UnknownField,
@@ -29,10 +31,16 @@ enum class ConfigErrorCode : std::uint8_t {
   SchemaValidation,
 };
 
+inline constexpr std::size_t kMaxControllerConfigJsonBytes = 16U * 1024U;
+inline constexpr std::size_t kMaxControllerConfigJsonNesting = 16U;
+
 struct ConfigDiagnostic final {
   ConfigErrorCategory category{ConfigErrorCategory::Parse};
   ConfigErrorCode code{ConfigErrorCode::MalformedJson};
   SchemaError schema_error{SchemaError::None};
+  // For structural errors in an array, this is the containing item index;
+  // top-level and parse errors leave it at zero. Semantic errors always use
+  // the index reported by ValidationResult.
   std::size_t index{0};
   std::string path{};
   std::string message{};

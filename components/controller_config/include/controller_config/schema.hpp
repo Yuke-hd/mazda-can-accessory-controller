@@ -58,9 +58,18 @@ enum class SchemaError : std::uint8_t {
   InvalidPriority,
 };
 
+enum class ValidationSection : std::uint8_t {
+  None,
+  Actions,
+  Rules,
+  EffectBindings,
+  FillBindings,
+};
+
 struct ValidationResult final {
   SchemaError error{SchemaError::None};
   std::size_t index{0};
+  ValidationSection section{ValidationSection::None};
 
   [[nodiscard]] bool ok() const noexcept { return error == SchemaError::None; }
 };

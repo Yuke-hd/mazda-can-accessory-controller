@@ -11,9 +11,9 @@ must remain alive and must not be mutated while those rules are registered.
 The loader rejects malformed JSON, missing or mistyped fields, unknown fields,
 unsupported enum names, duplicate actions, unresolved action references, and
 semantic range/zone/priority errors. `ConfigLoadResult::diagnostic` contains a
-parse/structural/semantic category, a path such as `rules[3].input.to`, an
-optional `SchemaError`, and a human-readable message. A failed load never
-returns a partial `Configuration`. The overload accepting a
+parse/structural/semantic category, a path such as `rules[3].input`, an
+optional `SchemaError`, an array index where applicable, and a human-readable
+message. A failed load never returns a partial `Configuration`. The overload accepting a
 `vehicle_signals::SignalCatalogView` additionally delegates signal type,
 capability, and enum-choice checks to the action engine.
 
@@ -24,7 +24,7 @@ the following portable fields:
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `version` | integer | Exactly `1`. |
+| `version` | mathematically integral JSON number | Exactly `1`; JSON spellings such as `1.0` are accepted. |
 | `actions` | array of `{name}` | Names are non-empty and unique. Runtime `ActionId`s are assigned one-based in declaration order; numeric IDs are not persisted. |
 | `rules` | array | `type` is `state`, `sampled_state`, `event`, or `range`; `action` must name an action; `signal` is a vehicle signal catalog key. |
 | `effect_bindings` | array | `action`, `effect` (`left_turn`, `right_turn`, `brake`), and integer `priority` in `0..255`. |
@@ -49,6 +49,10 @@ Fill zones use `zone.start`, `zone.length`, and `zone.direction`, where the
 direction is `start_to_end`, `end_to_start`, or `center_out`. The logical strip
 has exactly 100 pixels for schema validation: a zone must have positive length
 and fit entirely within `[0, 100)`. RGB channels are integers in `0..255`.
+
+The loader accepts at most 16 KiB and 16 nested arrays/objects. It also accepts
+one terminal NUL byte when a configuration comes from a NUL-terminated NVS
+blob, but rejects embedded NUL bytes and `\\u0000` string escapes.
 
 ## Production profile example
 

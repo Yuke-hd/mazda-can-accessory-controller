@@ -4,6 +4,8 @@
 #include "controller_config/json_loader.hpp"
 #include "vehicle_signals/signal_catalog.hpp"
 #include "vehicle_signals/signal_contracts.hpp"
+#include <fstream>
+#include <iterator>
 
 #include <string>
 #include <string_view>
@@ -86,6 +88,15 @@ void require_failure(const ConfigLoadResult &result, const ConfigErrorCategory c
   CHECK_FALSE(result.diagnostic->message.empty());
 }
 
+void require_rejection(const ConfigLoadResult &result, const ConfigErrorCategory category) {
+  REQUIRE_FALSE(result.ok());
+  REQUIRE_FALSE(result.configuration.has_value());
+  REQUIRE(result.diagnostic.has_value());
+  CHECK(result.diagnostic->category == category);
+  CHECK_FALSE(result.diagnostic->path.empty());
+  CHECK_FALSE(result.diagnostic->message.empty());
+}
+
 TEST_CASE("canonical production JSON loads into the owning runtime model") {
   const ConfigLoadResult result = load(production_json());
 
@@ -115,14 +126,65 @@ TEST_CASE("malformed JSON and an unsupported schema are rejected with parse cont
   CHECK(result.diagnostic->path == "version");
 }
 
+TEST_CASE("integral spellings and NUL-terminated inputs have explicit behavior") {
+  auto json = production_json();
+  replace_once(json, "\"version\": 1", "\"version\": 1.0");
+  CHECK(load(json).ok());
+
+  json = production_json();
+  json.push_back('\0');
+  CHECK(load(json).ok());
+
+  json = production_json();
+  replace_once(json, "\"value\": \"left\"", "\"value\": \"left\\u0000junk\"");
+  const ConfigLoadResult embedded_nul = load(std::move(json));
+  require_failure(embedded_nul, ConfigErrorCategory::Parse, ConfigErrorCode::InvalidValue);
+}
+
+TEST_CASE("numeric values outside the signed integer range are rejected") {
+  auto json = production_json();
+  replace_once(json, "\"version\": 1", "\"version\": 9223372036854775808");
+  const ConfigLoadResult above_int64 = load(std::move(json));
+  require_rejection(above_int64, ConfigErrorCategory::Structural);
+  CHECK(above_int64.diagnostic->path == "version");
+
+  json = production_json();
+  replace_once(json, "\"version\": 1", "\"version\": -9223372036854775809");
+  const ConfigLoadResult below_int64 = load(std::move(json));
+  require_rejection(below_int64, ConfigErrorCategory::Structural);
+  CHECK(below_int64.diagnostic->path == "version");
+}
+
+TEST_CASE("root shape, empty input, and excessive nesting are rejected safely") {
+  const ConfigLoadResult root_array = load("[]");
+  require_failure(root_array, ConfigErrorCategory::Structural, ConfigErrorCode::RootTypeMismatch);
+  CHECK(root_array.diagnostic->path == "$");
+
+  const ConfigLoadResult empty = load("");
+  require_failure(empty, ConfigErrorCategory::Parse, ConfigErrorCode::MalformedJson);
+  CHECK(empty.diagnostic->path == "$");
+
+  const std::string too_large(controller_config::kMaxControllerConfigJsonBytes + 1U, ' ');
+  require_failure(load(too_large), ConfigErrorCategory::Parse, ConfigErrorCode::InputTooLarge);
+
+  constexpr std::size_t kNestedArrays = 1100U;
+  std::string deeply_nested(kNestedArrays, '[');
+  deeply_nested.append(kNestedArrays, ']');
+  const ConfigLoadResult deep = load(std::move(deeply_nested));
+  require_rejection(deep, ConfigErrorCategory::Parse);
+  CHECK(deep.diagnostic->path == "$");
+}
+
 TEST_CASE("required fields, value types, and unknown fields are rejected") {
   require_failure(load("{\"version\": 1}"), ConfigErrorCategory::Structural,
                   ConfigErrorCode::MissingField);
 
   auto json = production_json();
   replace_once(json, "\"name\": \"left_turn\"", "\"name\": 4");
-  require_failure(load(std::move(json)), ConfigErrorCategory::Structural,
-                  ConfigErrorCode::TypeMismatch);
+  const ConfigLoadResult action_type = load(std::move(json));
+  require_failure(action_type, ConfigErrorCategory::Structural, ConfigErrorCode::TypeMismatch);
+  CHECK(action_type.diagnostic->index == 0U);
+  CHECK(action_type.diagnostic->path == "actions[0].name");
 
   json = production_json();
   const std::size_t actions_position = json.find("\"actions\"");
@@ -155,6 +217,8 @@ TEST_CASE("action and rule references are validated after parsing") {
   const ConfigLoadResult unknown_rule = load(std::move(json));
   require_failure(unknown_rule, ConfigErrorCategory::Structural, ConfigErrorCode::InvalidValue);
   CHECK(unknown_rule.diagnostic->schema_error == controller_config::SchemaError::UnknownRuleType);
+  CHECK(unknown_rule.diagnostic->index == 0U);
+  CHECK(unknown_rule.diagnostic->path == "rules[0].type");
 
   json = production_json();
   replace_once(json, "\"comparison\": \"equal\"", "\"comparison\": \"unsupported\"");
@@ -190,6 +254,8 @@ TEST_CASE("duplicate actions, operand shapes, and numeric ranges are rejected") 
   const ConfigLoadResult range = load(std::move(json));
   require_failure(range, ConfigErrorCategory::Semantic, ConfigErrorCode::SchemaValidation);
   CHECK(range.diagnostic->schema_error == controller_config::SchemaError::InvalidRange);
+  CHECK(range.diagnostic->path == "rules[3].input");
+  CHECK(range.diagnostic->message.find("from") != std::string::npos);
 }
 
 TEST_CASE("LED effects, fill directions, zones, and binding priorities are validated") {
@@ -226,6 +292,95 @@ TEST_CASE("catalog-aware loading delegates operand compatibility to the action e
   const ConfigLoadResult result = controller_config::parse_controller_config(json, kCatalog);
   require_failure(result, ConfigErrorCategory::Semantic, ConfigErrorCode::SchemaValidation);
   CHECK(result.diagnostic->schema_error == controller_config::SchemaError::TypeMismatch);
+}
+
+TEST_CASE("catalog-aware loading accepts the canonical production profile") {
+  const ConfigLoadResult result =
+      controller_config::parse_controller_config(production_json(), kCatalog);
+
+  REQUIRE(result.ok());
+  REQUIRE(result.configuration.has_value());
+  CHECK(result.configuration->rules.size() == 5U);
+  CHECK(result.configuration->action_id("left_turn") == action_engine::ActionId{1});
+  CHECK(result.configuration->action_id("red_zone") == action_engine::ActionId{5});
+}
+
+TEST_CASE("semantic binding failures identify effect and fill binding paths") {
+  auto json = production_json();
+  replace_once(json, "{\"action\": \"left_turn\", \"effect\": \"right_turn\", \"priority\": 100}",
+               "{\"action\": \"missing_effect\", \"effect\": \"right_turn\", \"priority\": 100}");
+  const ConfigLoadResult effect = load(std::move(json));
+  require_failure(effect, ConfigErrorCategory::Semantic, ConfigErrorCode::SchemaValidation);
+  CHECK(effect.diagnostic->schema_error == controller_config::SchemaError::UnknownAction);
+  CHECK(effect.diagnostic->path == "effect_bindings[0].action");
+
+  json = production_json();
+  replace_once(json, "\"action\": \"rpm_fill\",\n      \"zone\"",
+               "\"action\": \"missing_fill\",\n      \"zone\"");
+  const ConfigLoadResult fill = load(std::move(json));
+  require_failure(fill, ConfigErrorCategory::Semantic, ConfigErrorCode::SchemaValidation);
+  CHECK(fill.diagnostic->schema_error == controller_config::SchemaError::UnknownAction);
+  CHECK(fill.diagnostic->path == "fill_bindings[0].action");
+}
+
+TEST_CASE("canonical production JSON matches the in-code default configuration") {
+  const auto expected = controller_config::default_configuration();
+  const ConfigLoadResult result = load(production_json());
+
+  REQUIRE(result.ok());
+  REQUIRE(result.configuration.has_value());
+  const auto &actual = *result.configuration;
+  REQUIRE(actual.actions.size() == expected.actions.size());
+  REQUIRE(actual.rules.size() == expected.rules.size());
+  REQUIRE(actual.effect_bindings.size() == expected.effect_bindings.size());
+  REQUIRE(actual.fill_bindings.size() == expected.fill_bindings.size());
+  CHECK(actual.version == expected.version);
+
+  for (std::size_t index = 0; index < actual.actions.size(); ++index)
+    CHECK(actual.actions[index].name == expected.actions[index].name);
+  for (std::size_t index = 0; index < actual.rules.size(); ++index) {
+    CHECK(actual.rules[index].type == expected.rules[index].type);
+    CHECK(actual.rules[index].action == expected.rules[index].action);
+    CHECK(actual.rules[index].signal == expected.rules[index].signal);
+    CHECK(actual.rules[index].comparison == expected.rules[index].comparison);
+    CHECK(actual.rules[index].freshness == expected.rules[index].freshness);
+  }
+  for (std::size_t index = 0; index < actual.effect_bindings.size(); ++index) {
+    CHECK(actual.effect_bindings[index].action == expected.effect_bindings[index].action);
+    CHECK(actual.effect_bindings[index].effect == expected.effect_bindings[index].effect);
+    CHECK(actual.effect_bindings[index].priority == expected.effect_bindings[index].priority);
+  }
+  for (std::size_t index = 0; index < actual.fill_bindings.size(); ++index) {
+    CHECK(actual.fill_bindings[index].action == expected.fill_bindings[index].action);
+    CHECK(actual.fill_bindings[index].zone.start == expected.fill_bindings[index].zone.start);
+    CHECK(actual.fill_bindings[index].zone.length == expected.fill_bindings[index].zone.length);
+    CHECK(actual.fill_bindings[index].zone.direction ==
+          expected.fill_bindings[index].zone.direction);
+    CHECK(actual.fill_bindings[index].color.red == expected.fill_bindings[index].color.red);
+    CHECK(actual.fill_bindings[index].color.green == expected.fill_bindings[index].color.green);
+    CHECK(actual.fill_bindings[index].color.blue == expected.fill_bindings[index].color.blue);
+    CHECK(actual.fill_bindings[index].priority == expected.fill_bindings[index].priority);
+  }
+}
+
+TEST_CASE("the checked-in production example loads as the default profile") {
+  std::ifstream input(CONTROLLER_CONFIG_EXAMPLE_PATH);
+  REQUIRE(input.good());
+  const std::string example((std::istreambuf_iterator<char>(input)),
+                            std::istreambuf_iterator<char>());
+  const ConfigLoadResult result = load(example);
+  REQUIRE(result.ok());
+  REQUIRE(result.configuration.has_value());
+  const auto expected = controller_config::default_configuration();
+  CHECK(result.configuration->version == expected.version);
+  REQUIRE(result.configuration->actions.size() == expected.actions.size());
+  REQUIRE(result.configuration->rules.size() == expected.rules.size());
+  REQUIRE(result.configuration->effect_bindings.size() == expected.effect_bindings.size());
+  REQUIRE(result.configuration->fill_bindings.size() == expected.fill_bindings.size());
+  CHECK(result.configuration->actions[0].name == expected.actions[0].name);
+  CHECK(result.configuration->rules[3].input.to == expected.rules[3].input.to);
+  CHECK(result.configuration->effect_bindings[4].effect == expected.effect_bindings[4].effect);
+  CHECK(result.configuration->fill_bindings[0].color.blue == expected.fill_bindings[0].color.blue);
 }
 
 TEST_CASE("event rules are loaded with named actions and edge semantics") {

@@ -13,45 +13,38 @@ if(COMMAND idf_component_register)
 endif()
 
 # Host tests use the same ESP-IDF-supported cJSON implementation as firmware.
-# Prefer an ESP-IDF checkout when available, allow an explicit offline source,
-# and otherwise import the pinned upstream release through FetchContent.
+# An explicit source checkout is supported for offline builds; otherwise the
+# pinned upstream release is fetched. The upstream CMake project is not added
+# to this build: only cJSON.c is compiled into a private static target, so its
+# options, tests, and shared-library targets cannot leak into this project.
 set(CONTROLLER_CONFIG_CJSON_SOURCE_DIR "" CACHE PATH
     "Path to a cJSON source checkout for host builds")
-set(_controller_config_cjson_target "")
-if(CONTROLLER_CONFIG_CJSON_SOURCE_DIR AND
-   EXISTS "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}/cJSON.c" AND
-   EXISTS "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}/cJSON.h")
-  add_library(controller_config_cjson STATIC
-    "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}/cJSON.c")
-  target_include_directories(controller_config_cjson PUBLIC
-    "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}")
-  set(_controller_config_cjson_target controller_config_cjson)
-elseif(DEFINED ENV{IDF_PATH} AND
-       EXISTS "$ENV{IDF_PATH}/components/json/cJSON/cJSON.c")
-  add_library(controller_config_cjson STATIC
-    "$ENV{IDF_PATH}/components/json/cJSON/cJSON.c")
-  target_include_directories(controller_config_cjson PUBLIC
-    "$ENV{IDF_PATH}/components/json/cJSON")
-  set(_controller_config_cjson_target controller_config_cjson)
+if(CONTROLLER_CONFIG_CJSON_SOURCE_DIR)
+  if(NOT EXISTS "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}/cJSON.c" OR
+     NOT EXISTS "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}/cJSON.h")
+    message(FATAL_ERROR
+      "CONTROLLER_CONFIG_CJSON_SOURCE_DIR must contain cJSON.c and cJSON.h")
+  endif()
+  set(_controller_config_cjson_source_dir
+      "${CONTROLLER_CONFIG_CJSON_SOURCE_DIR}")
 else()
   include(FetchContent)
   FetchContent_Declare(controller_config_cjson_source
     GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
-    GIT_TAG v1.7.19
-    GIT_SHALLOW TRUE)
-  # cJSON v1.7.19 predates CMake 4's policy floor and does not publish its
-  # source directory as a target include path. Keep those compatibility
-  # details at the import boundary instead of exposing them to consumers.
-  set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+    # v1.7.19 release commit; use the immutable SHA rather than a movable tag.
+    GIT_TAG c859b25da02955fef659d658b8f324b5cde87be3
+    GIT_SHALLOW FALSE
+    # Populate the source without adding cJSON's own CMake project.
+    SOURCE_SUBDIR cmake-import-disabled)
   FetchContent_MakeAvailable(controller_config_cjson_source)
-  if(TARGET cjson)
-    target_include_directories(cjson PUBLIC
-      "$<BUILD_INTERFACE:${controller_config_cjson_source_SOURCE_DIR}>")
-    set(_controller_config_cjson_target cjson)
-  else()
-    message(FATAL_ERROR "cJSON v1.7.19 did not provide the expected cjson target")
-  endif()
+  set(_controller_config_cjson_source_dir
+      "${controller_config_cjson_source_SOURCE_DIR}")
 endif()
+
+add_library(controller_config_cjson STATIC EXCLUDE_FROM_ALL
+  "${_controller_config_cjson_source_dir}/cJSON.c")
+target_include_directories(controller_config_cjson PRIVATE
+  "${_controller_config_cjson_source_dir}")
 
 add_library(controller_config STATIC
   src/lighting_profile_application.cpp
@@ -61,8 +54,10 @@ add_library(controller_config STATIC
   src/json_loader.cpp
 )
 target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(controller_config PRIVATE
+  "${_controller_config_cjson_source_dir}")
 target_link_libraries(controller_config PUBLIC action_engine local_argb_actions vehicle_core)
-target_link_libraries(controller_config PRIVATE ${_controller_config_cjson_target})
+target_link_libraries(controller_config PRIVATE controller_config_cjson)
 target_compile_features(controller_config PUBLIC cxx_std_17)
 
 if(MSVC)
