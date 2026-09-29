@@ -18,8 +18,8 @@
 
 // This header is the owning, parser-independent representation of a persisted
 // controller configuration. It deliberately contains no GPIO, driver, task,
-// or renderer-lifecycle settings. A future JSON adapter can populate this
-// model, validate it, and then hand the string views produced by
+// or renderer-lifecycle settings. The JSON loader populates this model,
+// validates it, and then hands the string views produced by
 // to_action_engine_rule() to the action engine while this object remains
 // alive.
 

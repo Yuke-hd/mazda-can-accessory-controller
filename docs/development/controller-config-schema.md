@@ -2,12 +2,20 @@
 
 `controller_config::Configuration` is the parser-independent model for a
 versioned controller profile. It owns every persisted string with
-`std::string`; a JSON loader can populate it later without making the action
-engine or LED adapter depend on a JSON library. The model does not parse JSON
-yet. `to_action_engine_rule()` creates the existing action-engine persisted
-rule types using string views into the owning configuration, so the
-configuration must remain alive and must not be mutated while those rules are
-registered.
+`std::string`; `controller_config::parse_controller_config()` populates it
+without making the action engine or LED adapter depend on a JSON library.
+`to_action_engine_rule()` creates the existing action-engine persisted rule
+types using string views into the owning configuration, so the configuration
+must remain alive and must not be mutated while those rules are registered.
+
+The loader rejects malformed JSON, missing or mistyped fields, unknown fields,
+unsupported enum names, duplicate actions, unresolved action references, and
+semantic range/zone/priority errors. `ConfigLoadResult::diagnostic` contains a
+parse/structural/semantic category, a path such as `rules[3].input.to`, an
+optional `SchemaError`, and a human-readable message. A failed load never
+returns a partial `Configuration`. The overload accepting a
+`vehicle_signals::SignalCatalogView` additionally delegates signal type,
+capability, and enum-choice checks to the action engine.
 
 ## Version 1
 
