@@ -230,6 +230,10 @@ diagnostics about partial setup. The WeAct firmware and future host replay
 consumers can therefore apply the same production profile without copying its
 turn, hazard or RPM values.
 
+The same profile, expressed as a version 1 persisted configuration with named
+actions instead of ActionIds, is documented in
+[controller-config.md](controller-config.md#production-lighting-profile).
+
 The WeAct composition root invokes `kDefaultLightingProfile` and keeps the
 profile's full-strip RPM zone tied to the board capability with a compile-time
 assertion. This catches a board/profile pixel-count mismatch before firmware

@@ -402,6 +402,16 @@ else()
 endif()
 doctest_discover_tests(lighting_profile_tests)
 
+add_executable(controller_config_schema_tests controller_config_schema_tests.cpp)
+target_link_libraries(controller_config_schema_tests PRIVATE controller_config doctest::doctest)
+target_compile_features(controller_config_schema_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(controller_config_schema_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(controller_config_schema_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(controller_config_schema_tests)
+
 add_executable(lighting_profile_application_tests lighting_profile_application_tests.cpp)
 target_link_libraries(lighting_profile_application_tests PRIVATE controller_config
                                                                    vehicle_signals_test_support

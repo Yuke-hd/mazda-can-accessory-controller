@@ -5,7 +5,9 @@
 # the firmware composition root applies it.
 if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/lighting_profile_application.cpp" "src/rpm_level_fill.cpp"
-                              "src/rpm_threshold.cpp"
+                              "src/rpm_threshold.cpp" "src/persisted/names.cpp"
+                              "src/persisted/production_profile.cpp"
+                              "src/persisted/validation.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES action_engine local_argb_actions vehicle_core)
   return()
@@ -15,6 +17,9 @@ add_library(controller_config STATIC
   src/lighting_profile_application.cpp
   src/rpm_level_fill.cpp
   src/rpm_threshold.cpp
+  src/persisted/names.cpp
+  src/persisted/production_profile.cpp
+  src/persisted/validation.cpp
 )
 target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(controller_config PUBLIC action_engine local_argb_actions vehicle_core)
