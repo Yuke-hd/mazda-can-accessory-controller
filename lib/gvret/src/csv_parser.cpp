@@ -142,7 +142,7 @@ ParseResult parse_csv(const std::string_view csv) {
         return failure(line_number, "row is missing required columns");
       }
 
-      SourceTimestamp timestamp_us = 0;
+      std::uint64_t timestamp_us = 0;
       if (!parse_integer(fields.values[0], 10, timestamp_us)) {
         return failure(line_number, "invalid timestamp");
       }

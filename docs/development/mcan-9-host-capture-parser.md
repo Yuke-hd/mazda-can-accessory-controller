@@ -40,8 +40,10 @@ Replay preparation treats the source value as opaque ordering data, checks the
 selected receive rows for a genuine regression, and subtracts the first
 selected timestamp. For example, `1790000000999900`, `1790000001000100`, and
 `1790000002250000` become `0`, `200`, and `1250100` microseconds. Equal source
-timestamps remain valid and retain their input order. The original wall-clock
-value never reaches PixelFrame, signal JSONL, or browser-facing replay data.
+timestamps remain valid and retain their input order. The parser's intermediate
+`ParsedGvretFrame` retains the source value for ordering, but replay preparation
+rewrites `TimedCanFrame::frame.timestamp_us` before any PixelFrame, signal JSONL,
+or browser-facing replay consumer sees it.
 
 A2 applies the parser result to one selected source bus and rewrites timestamps
 to a zero-based relative replay clock. A3 provides the host-only file loader

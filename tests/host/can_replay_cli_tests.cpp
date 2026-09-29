@@ -108,6 +108,21 @@ std::string read_file(const std::filesystem::path &path) {
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
+void check_replay_output_contains_only_relative_numbers(const std::string &output,
+                                                        const std::uint64_t horizon_us) {
+  bool saw_number = false;
+  std::size_t number_begin = 0;
+  while ((number_begin = output.find_first_of("0123456789", number_begin)) != std::string::npos) {
+    const std::size_t number_end = output.find_first_not_of("0123456789", number_begin);
+    const auto value = std::stoull(output.substr(
+        number_begin, number_end == std::string::npos ? number_end : number_end - number_begin));
+    CHECK(value <= horizon_us);
+    saw_number = true;
+    number_begin = number_end == std::string::npos ? output.size() : number_end;
+  }
+  CHECK(saw_number);
+}
+
 CommandResult run_inspect(const std::filesystem::path &input_path, const std::string_view bus,
                           TemporaryPath &standard_output, TemporaryPath &standard_error) {
   const std::string command = shell_quote(g_replay_executable) + " inspect " +
@@ -159,10 +174,11 @@ std::filesystem::path replay_executable_for(const char *test_executable) {
 } // namespace
 
 TEST_CASE("inspect command prints a privacy-safe summary for a generated CSV") {
-  const TemporaryFile input("gvret-cli-input", std::string(kHeader) +
-                                                   "\n100000,00000123,false,0,2,AA,BB,,,,,,\n" +
-                                                   "100750,001ABCDE,true,0,1,CC,,,,,,,\n" +
-                                                   "100900,00000456,false,1,0\n");
+  const TemporaryFile input("gvret-cli-input",
+                            std::string(kHeader) +
+                                "\n1790000000999900,00000123,false,0,2,AA,BB,,,,,,\n" +
+                                "1790000001000650,001ABCDE,true,0,1,CC,,,,,,,\n" +
+                                "1790000001000900,00000456,false,1,0\n");
   TemporaryPath standard_output("gvret-cli-stdout");
   TemporaryPath standard_error("gvret-cli-stderr");
 
@@ -180,8 +196,11 @@ TEST_CASE("inspect command prints a privacy-safe summary for a generated CSV") {
   CHECK(result.standard_output.find("AA") == std::string::npos);
   CHECK(result.standard_output.find("BB") == std::string::npos);
   CHECK(result.standard_output.find("CC") == std::string::npos);
-  CHECK(result.standard_output.find("100000") == std::string::npos);
+  CHECK(result.standard_output.find("1790000000999900") == std::string::npos);
+  CHECK(result.standard_output.find("1790000001000650") == std::string::npos);
+  CHECK(result.standard_output.find("1790000001000900") == std::string::npos);
   CHECK(result.standard_output.find(input.path().string()) == std::string::npos);
+  check_replay_output_contains_only_relative_numbers(result.standard_output, 750);
 }
 
 TEST_CASE("inspect command accepts a SavvyCAN V2 file with trailing separators") {
@@ -294,22 +313,26 @@ TEST_CASE("render command accepts epoch microseconds and emits only replay-relat
   CHECK(result.standard_output.find("1790000001000100") == std::string::npos);
   CHECK(result.standard_output.find("1790000002250000") == std::string::npos);
 
-  bool saw_relative_timestamp = false;
-  std::size_t timestamp_begin = 0;
-  constexpr std::string_view kTimestampField = "\"timestamp_us\":";
-  while ((timestamp_begin = result.standard_output.find(kTimestampField, timestamp_begin)) !=
-         std::string::npos) {
-    timestamp_begin += kTimestampField.size();
-    const std::size_t timestamp_end =
-        result.standard_output.find_first_not_of("0123456789", timestamp_begin);
-    REQUIRE(timestamp_end != timestamp_begin);
-    const auto timestamp = std::stoull(result.standard_output.substr(
-        timestamp_begin,
-        timestamp_end == std::string::npos ? timestamp_end : timestamp_end - timestamp_begin));
-    CHECK(timestamp <= 1'250'100ULL);
-    saw_relative_timestamp = true;
-  }
-  CHECK(saw_relative_timestamp);
+  check_replay_output_contains_only_relative_numbers(result.standard_output, 1'250'100ULL);
+}
+
+TEST_CASE("render signal JSONL keeps epoch captures on the relative replay clock") {
+  const TemporaryFile input("gvret-render-epoch-signals-input",
+                            std::string(kHeader) +
+                                "\n1790000000999900,00000202,false,0,8,32,C8,00,00,00,00,00,00\n"
+                                "1790000001099900,00000091,false,0,8,00,20,00,00,00,00,00,00\n");
+  TemporaryPath standard_output("gvret-render-epoch-signals-stdout");
+  TemporaryPath standard_error("gvret-render-epoch-signals-stderr");
+
+  const CommandResult result = run_render_options(input.path(), "--bus 0 --end-us 110000 --signals",
+                                                  standard_output, standard_error);
+
+  REQUIRE(result.exit_code == 0);
+  CHECK(result.standard_error.empty());
+  CHECK(result.standard_output.find("1790000000999900") == std::string::npos);
+  CHECK(result.standard_output.find("1790000001099900") == std::string::npos);
+  CHECK(result.standard_output.find("\"type\":\"signal\"") != std::string::npos);
+  check_replay_output_contains_only_relative_numbers(result.standard_output, 110'000);
 }
 
 TEST_CASE("render command requires an explicit bounded replay horizon") {

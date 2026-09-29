@@ -13,11 +13,6 @@ namespace gvret {
 
 enum class Direction : std::uint8_t { Rx, Tx, Unknown };
 
-// GVRET stores timestamps as unsigned microseconds. The value may be a
-// capture-relative counter or a Unix-epoch timestamp; replay normalization
-// deliberately treats both forms as opaque source observations.
-using SourceTimestamp = vehicle_core::Microseconds;
-
 // A parsed GVRET row with the source bus retained for downstream filtering.
 // `bus` is the sole source-bus authority. The embedded frame keeps its
 // RawCanFrame default bus_id until replay selects the frame-bus semantics.
@@ -27,7 +22,10 @@ using SourceTimestamp = vehicle_core::Microseconds;
 // manually constructed row without an explicit direction is Unknown and is
 // rejected by replay preparation.
 struct ParsedGvretFrame {
-  SourceTimestamp timestamp_us{0};
+  // GVRET stores timestamps as unsigned microseconds. The value may be a
+  // capture-relative counter or a Unix-epoch timestamp; replay normalization
+  // deliberately treats both forms as opaque source observations.
+  std::uint64_t timestamp_us{0};
   std::uint32_t bus{0};
   vehicle_core::RawCanFrame frame{};
   Direction direction{Direction::Unknown};
