@@ -46,7 +46,7 @@ else()
   FetchContent_MakeAvailable(controller_config_cjson_source)
   if(TARGET cjson)
     target_include_directories(cjson PUBLIC
-      "${controller_config_cjson_source_SOURCE_DIR}")
+      "$<BUILD_INTERFACE:${controller_config_cjson_source_SOURCE_DIR}>")
     set(_controller_config_cjson_target cjson)
   else()
     message(FATAL_ERROR "cJSON v1.7.19 did not provide the expected cjson target")
