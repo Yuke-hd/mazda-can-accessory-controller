@@ -16,7 +16,7 @@ Before creating product-development tickets, establish an auditable GitHub repos
 
 - GitHub repository: `Yuke-hd/mazda-can-accessory-controller`.
 - Description: `Listen-only Mazda CAN accessory controller for addressable lights and other isolated outputs.`
-- Visibility: **public** by explicit project decision. Project-authored material is Apache-2.0; third-party attribution and vehicle-data anonymization are governed by [the confirmed MCAN-2 policy](../policies/license-and-vehicle-data.md).
+- Visibility: **public** by explicit project decision. Project-authored material is Apache-2.0; third-party attribution and vehicle-data anonymization are governed by [the confirmed MCAN-2 policy](../development/license-and-vehicle-data.md).
 - Default branch: `main`.
 - Work tracking: GitHub Issues. Use GitHub's native Issue references; an MCAN number is not required. Do not create product backlog Issues until this work item passes acceptance.
 - Development model: trunk-based development without a long-lived `develop` branch.

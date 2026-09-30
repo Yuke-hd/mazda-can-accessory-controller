@@ -1,65 +1,79 @@
 # Supported host builds
 
-Stage 0-B keeps the host build reproducible across the supported CMake floor
-and a modern CMake release. The supported minimum is CMake `3.20`; CI tests
-that floor with `3.20.5` and the modern compatibility leg with `4.4.3`.
-Both legs use Ninja, C++17, and the exact doctest `v2.5.0` commit pinned in
-`tests/host/CMakeLists.txt`.
+Portable host code uses C++17. CI covers CMake `3.20.5` and `4.4.3` with
+Ninja. The host test dependency is doctest `v2.5.0`, pinned to commit
+`d44d4f6e66232d716af82f00a063759e9d0e50d6` in
+`tests/host/CMakeLists.txt`. The exact pin avoids the pre-3.5 CMake minimum
+in doctest `v2.4.11` metadata, which CMake 4 rejects. The firmware toolchain
+is documented separately in [Firmware builds](firmware-build.md).
 
-Run the checker before configuring:
+Check the host tools before configuring:
 
-```text
+```sh
 python3 tools/check_toolchain.py --scope host
 ```
 
-Use a fresh temporary build directory for each verification. The following
-commands are the baseline evidence recorded for this change (the build path
-may be changed to another empty temporary directory):
+Install the host-only Python dependencies used by the configuration compiler
+and its CTest loader checks:
 
-```text
-cmake -S . -B /tmp/mazda-accessory-controller-host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+```sh
+python3 -m pip install --user -r tools/requirements.txt
+```
+
+Use a fresh build directory for each verification:
+
+```sh
+cmake -S . -B /tmp/mazda-accessory-controller-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON
 cmake --build /tmp/mazda-accessory-controller-host --parallel
 ctest --test-dir /tmp/mazda-accessory-controller-host --output-on-failure
 ```
 
-The doctest dependency is fetched by CMake at configure time. Network access
-is therefore required on a clean build unless the pinned source is already in
-the CMake FetchContent cache. No workaround policy flags are required. If a
-compiler, Ninja, network, or CMake leg is unavailable, record that exact
-command and mark the leg unavailable rather than claiming it passed.
+The doctest dependency is fetched by CMake at configure time. A clean build
+therefore needs network access unless the pinned source is already in the
+FetchContent cache. The generic companion core is pinned at release `0.1.0`;
+for an offline build, point `VEHICLE_CAN_CORE_SOURCE_DIR` at an exact `0.1.0`
+checkout. If a compiler, Ninja, network, or supported CMake leg is unavailable,
+record the exact command and report that leg as unavailable.
 
-## Sanitizer host build
+## Sanitizers
 
-CI also runs every portable host test and the Mazda telemetry service tests
-under AddressSanitizer (ASan) and UndefinedBehaviorSanitizer (UBSan). This
-gate is intentionally reproducible on the same `ubuntu-22.04` Linux runner
-with the Ubuntu `clang-14` package, CMake, and Ninja. The sanitizer runtime is
-linked into each test executable and leak checking is enabled; a sanitizer
-diagnostic prints a stack trace and fails the job.
+CI also runs portable host tests and Mazda telemetry service tests under
+AddressSanitizer and UndefinedBehaviorSanitizer on Linux with Clang 14. The
+sanitizer runtime is linked into each test executable and leak checking is
+enabled. Reproduce the gate with:
 
-The equivalent local commands are:
-
-```text
+```sh
 sudo apt-get update
 sudo apt-get install --no-install-recommends -y clang-14 cmake ninja-build python3
 export CC=clang-14
 export CXX=clang++-14
 export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1:print_summary=1
 export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-cmake -S . -B /tmp/mazda-accessory-controller-sanitizers -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake -S . -B /tmp/mazda-accessory-controller-sanitizers -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
 cmake --build /tmp/mazda-accessory-controller-sanitizers --parallel
 ctest --test-dir /tmp/mazda-accessory-controller-sanitizers --output-on-failure
 ```
 
-This is a host-only sanitizer gate. The supported sanitizer combination is
-limited to Linux with Clang 14 because LeakSanitizer behavior and runtime
-availability differ on macOS, Windows/MSVC, and other compiler versions; the
-ordinary host jobs remain the compatibility signal for those platforms. The
-ESP-IDF firmware jobs are also excluded because their embedded toolchain does
-not use the host sanitizer runtime. Do not disable leak detection or add a
-blanket test exclusion when reproducing a failure: fix the reported test or
-record the specific unsupported platform/toolchain instead.
+This sanitizer gate is limited to Linux with Clang 14 because LeakSanitizer
+runtime availability and behavior differ on macOS, Windows/MSVC, and other
+compiler versions. Ordinary host jobs provide the compatibility signal for
+those platforms. ESP-IDF firmware jobs do not use the host sanitizer runtime.
+Do not disable leak detection or add a blanket test exclusion when reproducing
+a failure; fix the reported test or record the specific unsupported
+platform/toolchain.
 
-The firmware builds remain separately pinned to ESP-IDF `v5.5.4`; see the
-[MCAN-3 scaffold](mcan-3-scaffold.md) for the isolated vehicle
-commands.
+The formatter checked by CI is clang-format major version `14`.
+
+## Host test inputs
+
+Portable decoder and freshness tests use `tests/support/fake_clock.hpp` for an
+injectable monotonic clock and `tests/support/direct_frame_feeder.hpp` to
+deliver synthetic frames. These tests do not depend on the retired capture
+parser. The repository uses reviewed synthetic fixtures; no parser or replay
+API for the retired custom capture format remains in test infrastructure.
+Follow the [vehicle-data policy](license-and-vehicle-data.md) when adding or
+changing fixtures.

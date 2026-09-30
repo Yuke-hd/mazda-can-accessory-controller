@@ -67,25 +67,25 @@ inline constexpr const char *kCaptureConfirmedProvenance =
     "capture-derived Mazda custom DBC; confirmed from passive real-world capture";
 
 inline constexpr const char *kEngineRpmEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L95";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L95";
 inline constexpr const char *kSelectorEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L98";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L98";
 inline constexpr const char *kActualGearEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L99";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L99";
 inline constexpr const char *kFrontRightDoorEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L101";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L101";
 inline constexpr const char *kWiperLowEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L108";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L108";
 inline constexpr const char *kFrontWiperEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L110";
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L110";
 inline constexpr const char *kSourceOnlyEvidenceProvenance =
-    "docs/development/signal-evidence.md; reviewed source mapping in "
+    "docs/protocol/signal-evidence.md; reviewed source mapping in "
     "docs/protocol/mazda_custom.dbc";
 inline constexpr const char *kFrontOtherDoorEvidenceProvenance =
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L49 and #L102; "
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L49 and #L102; "
     "FrontOtherDoor is a Reference-only source field interpreted as a front-left RHD channel";
 inline constexpr const char *kSpeedCandidateEvidenceProvenance =
-    "docs/development/signal-evidence.md; retained SPEED candidate has no field in the reviewed "
+    "docs/protocol/signal-evidence.md; retained SPEED candidate has no field in the reviewed "
     "Mazda custom DBC";
 
 // The capture-derived DBC has no cycle-time declaration. Null periods/timeouts
@@ -254,7 +254,7 @@ MAZDA_BOOLEAN_DEFINITION(kTurnLeftSwitchDefinition, "LeftIndicatorSwitch", kTurn
 MAZDA_BOOLEAN_DEFINITION(
     kBrakePressedDefinition, "BrakePressed", kBrakePedalId, 4, 4, Motorola, "0=Released; 1=Pressed",
     vehicle_core::ValidationStatus::Confirmed,
-    "docs/development/signal-evidence.md; docs/protocol/mazda_custom.dbc#L112");
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L112");
 
 #undef MAZDA_BOOLEAN_DEFINITION
 

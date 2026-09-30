@@ -13,7 +13,7 @@
 #include "local_argb_actions/effect_bindings.hpp"
 
 // Version 1 persisted controller configuration model: the typed form of the
-// shared YAML/JSON contract described in docs/development/controller-config.md.
+// shared YAML/JSON contract described in docs/specs/configuration/controller-config.md.
 // It describes "vehicle signal -> rule -> named action -> output binding" with
 // the action engine's persisted-form concepts and the local LED adapter's
 // binding concepts. It owns its strings, so a loader can fill it from any

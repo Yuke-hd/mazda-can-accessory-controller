@@ -22,7 +22,7 @@ constexpr char kTag[] = "weact_can485_v11";
 // The portable production profile owns the mirrored turn bindings, strict
 // freshness rules, RPM fill and red-zone configuration. Firmware retains the
 // lifecycle and board-specific responsibilities around that profile. See
-// docs/development/local-led-actions.md#firmware-composition.
+// docs/architecture/firmware-composition.md.
 static_assert(controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.start == 0 &&
                   controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.length ==
                       board::kWeActCan485V11.vehicle_light_strip.pixel_count,
