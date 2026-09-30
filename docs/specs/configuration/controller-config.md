@@ -253,6 +253,30 @@ the factory YAML at host configure time through the canonical parser, compares
 every persisted field with that C++ builder, and checks full board-strip RPM
 coverage, mirrored turns, the RPM fill range and red-zone threshold, and fail-off.
 
+## Boot-time override storage
+
+The firmware exposes a configuration storage boundary with `load_override()`,
+`save_override()` and `clear_override()`. The ESP-IDF adapter keeps its NVS
+handles and APIs private and uses the dedicated `mazda_config` namespace. The
+stored slot values contain only the canonical JSON document; they never contain
+YAML, parser objects or runtime `action_engine::ActionId` values.
+
+`save_override()` parses and semantically validates the candidate with the same
+`parse_controller_config()` loader used for the embedded factory document, then
+serializes the owning `ControllerConfig` into deterministic JSON before writing
+it. A rejected candidate does not reach the backend, and a failed backend write
+does not replace the active override. The adapter verifies the written slot and
+active marker after each NVS commit and restores the previous marker when a
+commit or read-back check fails.
+
+At boot, a present override is parsed through that same loader. A malformed or
+semantically invalid override is retained for diagnostics, logged, and ignored
+for the current boot; the embedded factory JSON is selected instead. A missing
+override and a storage read failure also use the factory document, with the
+failure reported. Clearing the active marker restores factory selection on the
+next boot. Configuration is loaded and applied once during startup; this
+iteration has no WebUI, hot reload, or live action-engine mutation.
+
 ```yaml
 version: 1
 

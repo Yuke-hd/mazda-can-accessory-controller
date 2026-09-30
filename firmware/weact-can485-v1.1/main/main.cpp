@@ -2,6 +2,7 @@
 #include "board/board_config.h"
 #include "controller_config/factory_default.hpp"
 #include "controller_config/persisted/application.hpp"
+#include "controller_config/persisted/config_store.hpp"
 #include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/timing.hpp"
 #include "esp_log.h"
@@ -14,6 +15,7 @@
 #include "mazda/vehicle_telemetry.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -81,27 +83,53 @@ static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(
 static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
-static controller_config::persisted::ControllerConfig factory_configuration{};
+static controller_config::persisted::ControllerConfig active_configuration{};
 
-// Loads and applies the embedded canonical JSON while the engine is detached.
-// The persisted model owns every string referenced by the engine and remains
-// alive for the lifetime of the firmware process.
-bool configure_engine_lighting() noexcept {
-  const auto loaded = controller_config::persisted::parse_controller_config(
-      controller_config::factory_default_config_json());
-  if (!loaded.ok()) {
-    if (loaded.diagnostic.has_value()) {
-      const auto &diagnostic = *loaded.diagnostic;
-      ESP_LOGE(kTag, "factory configuration rejected: code=%u path=%s message=%s",
-               static_cast<unsigned>(diagnostic.code), diagnostic.path.c_str(),
-               diagnostic.message.c_str());
-    } else {
+void log_configuration_diagnostic(
+    const char *const prefix, const controller_config::persisted::ConfigDiagnostic &diagnostic) {
+  ESP_LOGE(kTag, "%s: code=%u path=%s message=%s", prefix, static_cast<unsigned>(diagnostic.code),
+           diagnostic.path.c_str(), diagnostic.message.c_str());
+}
+
+// Loads and applies one boot-time JSON configuration while the engine is
+// detached. The persisted model owns every string referenced by the engine and
+// remains alive for the lifetime of the firmware process.
+bool configure_engine_lighting(
+    controller_config::persisted::ConfigStoreBackend *const backend) noexcept {
+  controller_config::persisted::BootConfigurationResult selected{};
+  if (backend != nullptr) {
+    controller_config::persisted::ConfigStore store{*backend};
+    selected = controller_config::persisted::load_boot_configuration(
+        &store, controller_config::factory_default_config_json());
+  } else {
+    selected = controller_config::persisted::load_boot_configuration(
+        nullptr, controller_config::factory_default_config_json());
+  }
+  if (!selected.ok()) {
+    if (selected.override_diagnostic.has_value())
+      log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);
+    if (!selected.override_storage_message.empty())
+      ESP_LOGE(kTag, "persisted override read failed: %s",
+               selected.override_storage_message.c_str());
+    if (selected.factory_diagnostic.has_value())
+      log_configuration_diagnostic("factory configuration rejected", *selected.factory_diagnostic);
+    else
       ESP_LOGE(kTag, "factory configuration rejected without a diagnostic");
-    }
     return false;
   }
-  factory_configuration = std::move(*loaded.configuration);
-  const auto status = controller_config::persisted::apply_controller_config(factory_configuration,
+  if (selected.override_diagnostic.has_value())
+    log_configuration_diagnostic("persisted override rejected; using factory configuration",
+                                 *selected.override_diagnostic);
+  if (!selected.override_storage_message.empty())
+    ESP_LOGE(kTag, "persisted override read failed; using factory configuration: %s",
+             selected.override_storage_message.c_str());
+  if (selected.source == controller_config::persisted::ConfigurationSource::PersistedOverride)
+    ESP_LOGI(kTag, "using valid persisted controller configuration override");
+  else
+    ESP_LOGI(kTag, "using embedded factory controller configuration");
+
+  active_configuration = std::move(*selected.configuration);
+  const auto status = controller_config::persisted::apply_controller_config(active_configuration,
                                                                             led_actions, engine);
   if (!status.ok()) {
     ESP_LOGE(kTag,
@@ -127,7 +155,10 @@ extern "C" void app_main(void) {
     return;
   }
 
-  if (!configure_engine_lighting()) {
+  auto config_backend = controller_config::persisted::make_nvs_config_store_backend();
+  if (config_backend == nullptr)
+    ESP_LOGW(kTag, "NVS configuration storage unavailable; using factory configuration");
+  if (!configure_engine_lighting(config_backend.get())) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "engine LED action setup failed; refusing to start CAN");
     return;
