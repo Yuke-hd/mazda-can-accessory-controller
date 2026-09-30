@@ -32,9 +32,15 @@ endif()
 # YAML fail the firmware configure immediately; the matching build rule keeps
 # the embedded artifact current when the source document changes.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-set(CONTROLLER_CONFIG_DEFAULT_YAML
-    "${CMAKE_CURRENT_LIST_DIR}/../../docs/examples/controller-config-v1.yaml"
-    CACHE FILEPATH "Factory controller configuration YAML")
+set(_controller_config_default_yaml
+    "${CMAKE_CURRENT_LIST_DIR}/../../docs/specs/configuration/examples/controller-config-v1.yaml")
+# Migrate the pre-#110 cache spelling while preserving an explicitly selected
+# authoring document for future configuration overrides.
+if(NOT DEFINED CONTROLLER_CONFIG_DEFAULT_YAML OR
+   CONTROLLER_CONFIG_DEFAULT_YAML MATCHES "/docs/examples/controller-config-v1\\.yaml$")
+  set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
+      CACHE FILEPATH "Factory controller configuration YAML" FORCE)
+endif()
 set(CONTROLLER_CONFIG_FACTORY_JSON
     "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
     CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
