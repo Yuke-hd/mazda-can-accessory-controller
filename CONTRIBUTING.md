@@ -21,7 +21,7 @@ new definition is copied or generated.
 Never commit or attach a raw vehicle capture, VIN, credential, precise
 location, absolute timestamp, or non-anonymized trip data. Real captures are
 for private analysis unless transformed into a reviewed, anonymized fixture.
-Follow [`docs/policies/license-and-vehicle-data.md`](docs/policies/license-and-vehicle-data.md)
+Follow [`docs/development/license-and-vehicle-data.md`](docs/development/license-and-vehicle-data.md)
 before submitting any fixture or third-party-derived artifact.
 
 For every submitted reviewed fixture or derived artifact, include this

@@ -13,8 +13,8 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 COMPILER = REPOSITORY / "tools" / "compile_controller_config.py"
-PRODUCTION_YAML = REPOSITORY / "docs" / "examples" / "controller-config-v1.yaml"
-PRODUCTION_JSON = REPOSITORY / "docs" / "examples" / "controller-config-v1.json"
+PRODUCTION_YAML = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "controller-config-v1.yaml"
+PRODUCTION_JSON = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "controller-config-v1.json"
 SIGNAL_CATALOG = REPOSITORY / "tools" / "controller_signal_catalog.json"
 SIGNAL_CATALOG_HEADER = (
     REPOSITORY / "components" / "mazda_telemetry" / "private_include" / "mazda" / "signal_catalog.hpp"

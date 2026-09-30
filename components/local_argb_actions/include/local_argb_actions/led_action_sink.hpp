@@ -24,7 +24,7 @@ namespace local_argb_actions {
 // it is stalled. Stopping the provider or detaching the engine sends no
 // Deactivate: the composition root must fail the renderer off
 // (local_argb::fail_off()) when it does either. See
-// docs/development/local-led-actions.md.
+// docs/specs/lighting/local-led-actions.md.
 //
 // Every command for a bound action publishes the full effect state, so the
 // engine's explicit initial Deactivate sets a black baseline. On/off effects

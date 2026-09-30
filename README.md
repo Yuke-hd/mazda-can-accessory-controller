@@ -122,11 +122,11 @@ the controller-config runtime/tooling:
 ```sh
 python3 -m pip install --user -r tools/requirements.txt
 python3 tools/compile_controller_config.py \
-  docs/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
+  docs/specs/configuration/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
 ```
 
 The ESP32 does not include a YAML parser; compilation is host-only. See the
-[persisted configuration schema](docs/development/controller-config.md) for
+[persisted configuration schema](docs/specs/configuration/controller-config.md) for
 the accepted fields and validation rules.
 
 Run the host formatter used by CI when available:
@@ -163,7 +163,7 @@ must not contain raw captures, VINs, credentials, precise location, or
 reconstructable trip data.
 
 Host replay output is available through
-[`can-replay render`](docs/development/mcan-67-pixel-frame-output.md). It
+[`can-replay render`](docs/specs/replay/pixel-frame-output.md). It
 emits a versioned header followed by typed JSONL records carrying relative
 timestamps and 100 RGB pixel values; supply an explicit replay horizon with
 `--end-us`. The rendered RGB is derived vehicle telemetry: output from a real
@@ -171,14 +171,14 @@ capture can reconstruct RPM bands and turn or hazard timing, so it follows the
 same privacy and publication restrictions as the capture. Publish only output
 generated from synthetic fixtures.
 `--signals` adds decoded
-[signal records](docs/development/mcan-94-signal-observers.md) to the same
+[signal records](docs/specs/replay/signal-observers.md) to the same
 stream under the same restrictions.
 
 The local browser protocol adapter is available as
-[`gvret-led-emulator`](docs/development/mcan-69-web-emulator.md). It binds to
+[`gvret-led-emulator`](docs/specs/replay/web-emulator.md). It binds to
 `127.0.0.1` by default, optionally `::1`, serves its HTML/CSS/JS assets from
 the executable, and streams the same D1 JSONL records over a WebSocket. The
-page [draws each streamed frame](docs/development/mcan-70-led-strip-renderer.md)
+page [draws each streamed frame](docs/specs/replay/browser-renderer.md)
 as-is. It does not accept capture uploads or make outbound network requests.
 
 ## Architecture and Data Flow
@@ -198,7 +198,7 @@ The vehicle target selects `vehicle_can_rx`; no bench ACK target is part of
 this repository. Decoder and policy libraries are hardware independent. The
 engine turns a stale or unavailable turn state into black, and driver failure
 attempts an immediate black frame before retrying under the worker watchdog.
-See [`docs/development/local-led-actions.md`](docs/development/local-led-actions.md).
+See [`docs/specs/lighting/local-led-actions.md`](docs/specs/lighting/local-led-actions.md).
 
 ## Actions and Animations
 
@@ -214,7 +214,7 @@ See [`docs/development/local-led-actions.md`](docs/development/local-led-actions
   timeout and no generic catalog signal yet); instead the region is the RPM
   red-zone warning, lit while engine speed is above a configurable threshold
   (6000 rpm by default). See
-  [local-led-actions.md](docs/development/local-led-actions.md#rpm-threshold-red-zone).
+  [lighting profile](docs/specs/configuration/lighting-profile.md#rpm-threshold-red-zone).
 - **Overlap:** turn animation and the brake region may coexist; the single
   GPIO4 status pixel prioritizes red brake status, otherwise amber turn status,
   otherwise black.
@@ -241,7 +241,9 @@ facts.
 - `vehicle-can-core` (FetchContent/ESP-IDF dependency) — portable frames,
   signals, receive-only CAN, runtime, and notification contracts
 - `tests/host/` and component tests — deterministic host coverage
-- `docs/` — development, hardware, protocol, and policy notes
+- [`docs/`](docs/README.md) — architecture, current specs, protocol evidence,
+  development procedures, and historical work items; use its task index to
+  find relevant context
 - `tools/` — architecture, receive-only, boundary, and artifact validators
 
 ## Roadmap
@@ -270,7 +272,7 @@ be reported separately from deterministic host evidence.
 Project-authored source, documentation, tests, and tooling are licensed under
 Apache-2.0; see [`LICENSE`](LICENSE). Third-party material retains its own
 license and attribution in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-Vehicle data follows [`docs/policies/license-and-vehicle-data.md`](docs/policies/license-and-vehicle-data.md):
+Vehicle data follows [`docs/development/license-and-vehicle-data.md`](docs/development/license-and-vehicle-data.md):
 use synthetic, reviewed, anonymized fixtures only, and never commit raw
 captures, VINs, credentials, precise locations, or absolute trip timestamps.
 

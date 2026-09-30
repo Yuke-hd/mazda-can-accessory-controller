@@ -18,7 +18,7 @@ not relicense third-party material.
   `opendbc/dbc/mazda_2017.dbc`, `opendbc/car/mazda/carstate.py`,
   `opendbc/car/mazda/values.py`, and `docs/CARS.md` at that commit.
 - **Role:** candidate Mazda signal definitions and decoder-reference material;
-  see [the MCAN-10 evidence matrix](docs/development/mcan-10-opendbc-signal-evidence.md).
+  see [the opendbc provenance and candidate matrix](docs/protocol/opendbc-provenance.md).
 - **Current status:** the evidence matrix is an opendbc-derived field
   extraction distributed as project documentation. No full opendbc source tree
   or upstream DBC file is vendored. A separate contributor-supplied,
