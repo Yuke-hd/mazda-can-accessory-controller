@@ -1,7 +1,8 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
-#include "controller_config/lighting_profile.hpp"
-#include "controller_config/lighting_profile_application.hpp"
+#include "controller_config/factory_default.hpp"
+#include "controller_config/persisted/application.hpp"
+#include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/timing.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -13,20 +14,10 @@
 #include "mazda/vehicle_telemetry.hpp"
 
 #include <cstdint>
+#include <utility>
 
 namespace {
 constexpr char kTag[] = "weact_can485_v11";
-
-// Local strip lighting runs on the generic engine path:
-// MazdaSignalProvider -> ActionEngine -> LedActionSink -> renderer queue.
-// The portable production profile owns the mirrored turn bindings, strict
-// freshness rules, RPM fill and red-zone configuration. Firmware retains the
-// lifecycle and board-specific responsibilities around that profile. See
-// docs/architecture/firmware-composition.md.
-static_assert(controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.start == 0 &&
-                  controller_config::kDefaultLightingProfile.rpm_level_fill.fill.zone.length ==
-                      board::kWeActCan485V11.vehicle_light_strip.pixel_count,
-              "default lighting profile must cover the WeAct vehicle strip");
 
 struct ApplicationState {
   std::uint32_t turn_notifications{0};
@@ -90,20 +81,36 @@ static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(
 static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
+static controller_config::persisted::ControllerConfig factory_configuration{};
 
-// Applies the portable profile while the engine is detached. The strict Fresh
-// turn requirement fails off once the turn state goes Stale after its 250 ms
-// freshness timeout. Lifecycle and runtime work remain in app_main below.
+// Loads and applies the embedded canonical JSON while the engine is detached.
+// The persisted model owns every string referenced by the engine and remains
+// alive for the lifetime of the firmware process.
 bool configure_engine_lighting() noexcept {
-  const auto status = controller_config::apply_lighting_profile(
-      controller_config::kDefaultLightingProfile, led_actions, engine);
+  const auto loaded = controller_config::persisted::parse_controller_config(
+      controller_config::factory_default_config_json());
+  if (!loaded.ok()) {
+    if (loaded.diagnostic.has_value()) {
+      const auto &diagnostic = *loaded.diagnostic;
+      ESP_LOGE(kTag, "factory configuration rejected: code=%u path=%s message=%s",
+               static_cast<unsigned>(diagnostic.code), diagnostic.path.c_str(),
+               diagnostic.message.c_str());
+    } else {
+      ESP_LOGE(kTag, "factory configuration rejected without a diagnostic");
+    }
+    return false;
+  }
+  factory_configuration = std::move(*loaded.configuration);
+  const auto status = controller_config::persisted::apply_controller_config(factory_configuration,
+                                                                            led_actions, engine);
   if (!status.ok()) {
     ESP_LOGE(kTag,
-             "lighting profile setup failed: stage=%u validation=%u index=%u binding=%u "
-             "engine=%u",
-             static_cast<unsigned>(status.stage), static_cast<unsigned>(status.validation_error),
-             static_cast<unsigned>(status.index), static_cast<unsigned>(status.binding),
-             static_cast<unsigned>(status.engine));
+             "factory configuration setup failed: stage=%u index=%u binding=%u engine=%u "
+             "validation=%u validation_index=%u",
+             static_cast<unsigned>(status.stage), static_cast<unsigned>(status.index),
+             static_cast<unsigned>(status.binding), static_cast<unsigned>(status.engine),
+             static_cast<unsigned>(status.validation.error),
+             static_cast<unsigned>(status.validation.index));
     return false;
   }
   return true;

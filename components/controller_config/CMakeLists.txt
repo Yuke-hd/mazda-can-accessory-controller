@@ -4,13 +4,26 @@
 # neither the action engine nor the LED components learn about a signal. Only
 # the firmware composition root applies it.
 if(COMMAND idf_component_register)
+  # IDF's dependency-only script has no project cache variables. Validate on
+  # the normal component pass, where the image is registered and embedded.
+  if(NOT CMAKE_BUILD_EARLY_EXPANSION AND
+     (NOT CONTROLLER_CONFIG_FACTORY_JSON OR NOT EXISTS "${CONTROLLER_CONFIG_FACTORY_JSON}"))
+    message(FATAL_ERROR
+      "CONTROLLER_CONFIG_FACTORY_JSON must name an existing factory JSON document for ESP-IDF")
+  endif()
   idf_component_register(SRCS "src/lighting_profile_application.cpp" "src/rpm_level_fill.cpp"
                               "src/rpm_threshold.cpp" "src/persisted/names.cpp"
                               "src/persisted/production_profile.cpp"
                               "src/persisted/validation.cpp" "src/persisted/json_loader.cpp"
+                              "src/persisted/application.cpp" "src/factory_default.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES action_engine local_argb_actions vehicle_core
-                         PRIV_REQUIRES json)
+                         PRIV_REQUIRES json
+                         EMBED_TXTFILES "${CONTROLLER_CONFIG_FACTORY_JSON}")
+  target_compile_definitions(${COMPONENT_LIB} PRIVATE CONTROLLER_CONFIG_FACTORY_DEFAULT_EMBEDDED=1)
+  if(TARGET controller_config_factory_json)
+    add_dependencies(${COMPONENT_LIB} controller_config_factory_json)
+  endif()
   return()
 endif()
 
@@ -56,6 +69,8 @@ add_library(controller_config STATIC
   src/persisted/production_profile.cpp
   src/persisted/validation.cpp
   src/persisted/json_loader.cpp
+  src/persisted/application.cpp
+  src/factory_default.cpp
 )
 target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(controller_config PRIVATE "${_controller_config_cjson_source_dir}")

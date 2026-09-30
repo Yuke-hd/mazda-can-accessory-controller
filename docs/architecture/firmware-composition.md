@@ -5,7 +5,7 @@ The WeAct application is the ordinary public-facade consumer. Startup order is:
 ```text
 board::initialize_safe_defaults()
     -> local_argb::start()          # physical black frame and supervised worker
-    -> apply the shared lighting profile
+    -> load and apply embedded factory JSON
     -> typed turn subscription, ActionEngine::attach()
     -> VehicleTelemetry::start()    # facade starts strict vehicle CAN
     -> application polling cadence
@@ -19,11 +19,15 @@ builds `mazda::MazdaSignalProvider` over the telemetry facade, an
 
 ## Lighting profile and setup
 
-Before vehicle CAN starts, the WeAct composition root invokes
-`controller_config::apply_lighting_profile()` with
-`kDefaultLightingProfile`. The shared helper owns profile bindings and rules;
-the composition root has a compile-time assertion tying the profile's
-full-strip RPM zone to the board's pixel count.
+Before vehicle CAN starts, the WeAct composition root obtains the generated
+factory JSON through `controller_config::factory_default_config_json()`, parses
+it with the canonical persisted loader, and invokes
+`controller_config::persisted::apply_controller_config()`. The persisted
+validator checks the profile bindings and rules, including that each LED zone
+fits within the logical strip capacity. The generated factory profile's RPM
+fill covers the board's full vehicle strip; a host test checks its start and
+length against the board capability record. The typed `apply_lighting_profile()`
+helper remains a host parity path.
 The persisted version 1 profile representation is specified in
 [`controller-config.md`](../specs/configuration/controller-config.md#production-lighting-profile).
 Profile application and RPM feature contracts are specified in

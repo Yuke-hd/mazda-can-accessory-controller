@@ -21,6 +21,14 @@ idf.py set-target esp32
 idf.py build
 ```
 
+Configuration prints the selected `CONTROLLER_CONFIG_DEFAULT_YAML` path and
+the SHA256 of its generated factory JSON. The YAML selection is a CMake cache
+entry: an explicit `-D` override persists in that build directory until changed
+or cleared. Check both provenance lines before using an image. Changes to the
+YAML, compiler, or signal catalog trigger reconfiguration and a new hash.
+The controller-config component rejects an unset or missing generated JSON;
+ESP-IDF compilation also requires the embedding definition.
+
 On macOS and Linux, source the SDK's `export.sh`; on other supported hosts,
 activate ESP-IDF `v5.5.4` using Espressif's setup procedure before running the
 same toolchain check and build commands. The checker reports missing tools

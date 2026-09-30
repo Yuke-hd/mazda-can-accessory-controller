@@ -235,18 +235,18 @@ def _loop_body(structure: str, pattern: str) -> Optional[str]:
 
 
 def _binding_failures(structure: str) -> List[str]:
-    """Require the firmware to consume the shared profile application API."""
+    """Require the firmware to consume the embedded persisted-config API."""
 
     failures: List[str] = []
     squashed = _squash(structure)
-    profile_apply = (
-        "controller_config::apply_lighting_profile("
-        "controller_config::kDefaultLightingProfile,led_actions,engine)"
+    persisted_apply = (
+        "controller_config::persisted::apply_controller_config("
+        "factory_configuration,led_actions,engine)"
     )
-    if squashed.count(profile_apply) != 1:
+    if squashed.count(persisted_apply) != 1:
         failures.append(
-            "vehicle integration must call controller_config::apply_lighting_profile() "
-            "with kDefaultLightingProfile exactly 1 time(s)"
+            "vehicle integration must call controller_config::persisted::"
+            "apply_controller_config() with factory_configuration exactly 1 time(s)"
         )
     for forbidden, label in (
         ("kTurnRules", "duplicated turn rules"),
@@ -370,9 +370,10 @@ def main() -> int:
         ("mazda/signal_provider.hpp", "generic signal provider include"),
         ("action_engine/engine.hpp", "generic action engine include"),
         ("local_argb_actions/led_action_sink.hpp", "local LED action sink include"),
-        ("controller_config/lighting_profile.hpp", "shared lighting profile include"),
-        ("controller_config/lighting_profile_application.hpp",
-         "shared lighting profile application include"),
+        ("controller_config/factory_default.hpp", "factory configuration API include"),
+        ("controller_config/persisted/application.hpp",
+         "persisted configuration application include"),
+        ("controller_config/persisted/json_loader.hpp", "persisted JSON loader include"),
     ):
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
             failures.append(f'{label} is missing from vehicle integration: #include "{header}"')
@@ -383,10 +384,13 @@ def main() -> int:
         ("static action_engine::ActionEngine engine{signal_provider}", "static action engine"),
         ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()}",
          "static LED action sink bound to the renderer queue"),
-        ("controller_config::kDefaultLightingProfile", "shared default lighting profile"),
-        ("controller_config::apply_lighting_profile(", "shared lighting profile application"),
-        ("kDefaultLightingProfile.rpm_level_fill.fill.zone.length",
-         "profile-to-board strip capability assertion"),
+        ("static controller_config::persisted::ControllerConfig factory_configuration{}",
+         "static owning factory configuration"),
+        ("controller_config::factory_default_config_json()", "embedded factory configuration API"),
+        ("controller_config::persisted::parse_controller_config(",
+         "canonical JSON configuration loader"),
+        ("controller_config::persisted::apply_controller_config(",
+         "persisted configuration application"),
         ("engine.attach()", "engine attachment"),
         ("telemetry.on_turn_state_changed", "typed turn notification registration"),
         ("telemetry.speed_kph()", "speed polling"),
