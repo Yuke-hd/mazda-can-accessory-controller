@@ -30,10 +30,13 @@ enum class ConfigErrorCode : std::uint8_t {
   TypeMismatch,
   InvalidValue,
   SchemaValidation,
+  ResourceExhausted,
 };
 
 inline constexpr std::size_t kMaxControllerConfigJsonBytes = 16U * 1024U;
 inline constexpr std::size_t kMaxControllerConfigJsonNesting = 16U;
+// Conservative syntax budget used to bound cJSON parse-tree growth.
+inline constexpr std::size_t kMaxControllerConfigJsonNodes = 512U;
 
 struct ConfigDiagnostic final {
   ConfigErrorCategory category{ConfigErrorCategory::Parse};

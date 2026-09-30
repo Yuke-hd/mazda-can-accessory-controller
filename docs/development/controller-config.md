@@ -299,9 +299,12 @@ The loader rejects duplicate or unknown fields, invalid enum names, non-integer
 integer fields, invalid operand unions and schema constraints. Omitted lists,
 freshness and priority use the defaults documented above. Numeric operands
 and range bounds use the model's float precision; integers retain their
-precision through validation. Input is bounded to 16 KiB and 16 container
-levels. One terminal C-string NUL is accepted; embedded NUL bytes and escaped
-NUL strings are rejected.
+precision through validation. Input is bounded to 16 KiB, 16 container levels
+and 512 structural elements during parser preflight. One terminal C-string NUL
+is accepted; embedded NUL bytes and escaped NUL strings are rejected.
+Documents that exceed the parser resource budget return a `ResourceExhausted`
+diagnostic before cJSON allocates its parse tree; a cJSON allocation failure
+during parsing uses the same diagnostic code.
 
 Host builds import cJSON v1.7.19 at its pinned immutable commit. Offline builds
 can set `CONTROLLER_CONFIG_CJSON_SOURCE_DIR` to a source checkout containing

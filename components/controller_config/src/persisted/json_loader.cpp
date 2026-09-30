@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <limits>
 #include <string>
@@ -17,6 +18,33 @@ namespace {
 
 using Category = ConfigErrorCategory;
 using Code = ConfigErrorCode;
+
+// cJSON reports allocation failure through the same null result as malformed input.
+thread_local bool *cjson_allocation_failure = nullptr;
+
+void *tracking_malloc(const std::size_t size) {
+  void *allocation = std::malloc(size);
+  if (allocation == nullptr && cjson_allocation_failure != nullptr)
+    *cjson_allocation_failure = true;
+  return allocation;
+}
+
+void tracking_free(void *const pointer) { std::free(pointer); }
+
+struct CJsonAllocationGuard final {
+  bool failed{false};
+
+  CJsonAllocationGuard() {
+    cJSON_Hooks hooks{tracking_malloc, tracking_free};
+    cJSON_InitHooks(&hooks);
+    cjson_allocation_failure = &failed;
+  }
+
+  ~CJsonAllocationGuard() {
+    cJSON_InitHooks(nullptr);
+    cjson_allocation_failure = nullptr;
+  }
+};
 
 [[nodiscard]] ConfigLoadResult failure(ConfigDiagnostic diagnostic) {
   ConfigLoadResult result{};
@@ -500,11 +528,12 @@ template <typename Entry, typename Parser>
   return "configuration validation failed";
 }
 
-enum class InputPreflight { Ok, EmbeddedNul, TooDeep };
+enum class InputPreflight { Ok, EmbeddedNul, TooDeep, ResourceExhausted };
 
 [[nodiscard]] InputPreflight preflight_input(const std::string_view json,
                                              const std::size_t parse_length) {
   std::size_t depth = 0U;
+  std::size_t structural_elements = 0U;
   bool in_string = false;
   bool escaped = false;
   for (std::size_t index = 0U; index < parse_length; ++index) {
@@ -530,6 +559,11 @@ enum class InputPreflight { Ok, EmbeddedNul, TooDeep };
       ++depth;
       if (depth > kMaxControllerConfigJsonNesting)
         return InputPreflight::TooDeep;
+      if (++structural_elements > kMaxControllerConfigJsonNodes)
+        return InputPreflight::ResourceExhausted;
+    } else if (character == ',') {
+      if (++structural_elements > kMaxControllerConfigJsonNodes)
+        return InputPreflight::ResourceExhausted;
     } else if ((character == '}' || character == ']') && depth > 0U) {
       --depth;
     }
@@ -549,15 +583,26 @@ ConfigLoadResult parse_controller_config(const std::string_view json) {
   }
   const InputPreflight preflight = preflight_input(json, length);
   if (preflight != InputPreflight::Ok) {
-    set_error(error, Category::Parse,
-              preflight == InputPreflight::TooDeep ? Code::NestingLimitExceeded : Code::EmbeddedNul,
-              "$", "configuration JSON contains NUL characters or exceeds maximum nesting depth");
+    auto code = Code::ResourceExhausted;
+    const char *message = "configuration JSON exceeds parser resource limits";
+    if (preflight == InputPreflight::EmbeddedNul) {
+      code = Code::EmbeddedNul;
+      message = "configuration JSON contains an embedded NUL character";
+    } else if (preflight == InputPreflight::TooDeep) {
+      code = Code::NestingLimitExceeded;
+      message = "configuration JSON exceeds maximum nesting depth";
+    }
+    set_error(error, Category::Parse, code, "$", message);
     return failure(std::move(error));
   }
   const char *end = nullptr;
+  CJsonAllocationGuard allocation_guard;
   cJSON *root = cJSON_ParseWithLengthOpts(json.data(), length, &end, 0);
   if (root == nullptr) {
-    set_error(error, Category::Parse, Code::MalformedJson, "$", "malformed JSON input");
+    set_error(error, Category::Parse,
+              allocation_guard.failed ? Code::ResourceExhausted : Code::MalformedJson, "$",
+              allocation_guard.failed ? "configuration JSON exhausted available memory"
+                                      : "malformed JSON input");
     return failure(std::move(error));
   }
   struct RootGuard {

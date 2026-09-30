@@ -67,6 +67,23 @@ TEST_CASE("JSON loader rejects malformed and structurally invalid input without 
         ConfigErrorCode::InputTooLarge);
 }
 
+TEST_CASE("JSON loader reports parser resource exhaustion separately from malformed JSON") {
+  std::string input = R"({"version":1,"actions":[)";
+  for (std::size_t index = 0; index <= kMaxControllerConfigJsonNodes; ++index) {
+    if (index != 0U)
+      input.push_back(',');
+    input.push_back('0');
+  }
+  input += "]}";
+
+  const auto exhausted = parse_controller_config(input);
+  REQUIRE(exhausted.diagnostic.has_value());
+  CHECK_FALSE(exhausted.configuration.has_value());
+  CHECK(exhausted.diagnostic->category == ConfigErrorCategory::Parse);
+  CHECK(exhausted.diagnostic->code == ConfigErrorCode::ResourceExhausted);
+  CHECK(parse_controller_config("{").diagnostic->code == ConfigErrorCode::MalformedJson);
+}
+
 TEST_CASE("JSON loader reuses current semantic validation") {
   const auto result =
       parse_controller_config(R"({"version":1,"actions":[{"name":"a"},{"name":"a"}]})");
