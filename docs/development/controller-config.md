@@ -3,8 +3,8 @@
 This document defines the version 1 persisted controller configuration (#107).
 It is the shared contract for build-time YAML, canonical JSON, host tooling,
 the ESP32 configuration loader and a future WebUI. This issue defines the
-model and its validation only. Parsing, NVS storage, firmware embedding and
-the WebUI come later (#106).
+model, validation and canonical JSON loader. NVS storage, firmware embedding
+and the WebUI come later (#106).
 
 A configuration describes controller behaviour as:
 
@@ -24,6 +24,7 @@ The C++ model is in `components/controller_config/include/controller_config/pers
 | --- | --- |
 | `model.hpp` | `ControllerConfig` and its value types. |
 | `names.hpp` | Persisted spellings: `name_of()` and `parse_name<Enum>()`. |
+| `json_loader.hpp` | `parse_controller_config(std::string_view)`, the canonical JSON boundary. |
 | `validation.hpp` | `validate(const ControllerConfig &)`. |
 | `production_profile.hpp` | `production_lighting_config()`, the example below in C++. |
 
@@ -285,3 +286,26 @@ outputs:
 The same document as canonical JSON uses the same field names and values.
 For example, a rule is
 `{"type": "range", "action": "rpm_fill", "signal_key": "vehicle.engine_rpm", ...}`.
+
+## Canonical JSON loading
+
+`controller_config::persisted::parse_controller_config()` parses version-one
+JSON directly into the owning `ControllerConfig` above and calls its existing
+`validate()` function. A successful result contains the model; a failed result
+contains a categorized diagnostic with a path, array index and message, and
+never a partial model. Parser types remain private to the implementation.
+
+The loader rejects duplicate or unknown fields, invalid enum names, non-integer
+integer fields, invalid operand unions and schema constraints. Omitted lists,
+freshness and priority use the defaults documented above. Numeric operands
+and range bounds use the model's float precision; integers retain their
+precision through validation. Input is bounded to 16 KiB and 16 container
+levels. One terminal C-string NUL is accepted; embedded NUL bytes and escaped
+NUL strings are rejected.
+
+Host builds import cJSON v1.7.19 at its pinned immutable commit. Offline builds
+can set `CONTROLLER_CONFIG_CJSON_SOURCE_DIR` to a source checkout containing
+`cJSON.c` and `cJSON.h`. ESP-IDF uses its built-in `json` component. Signal
+catalog compatibility, runtime capacities and numeric action ID assignment
+remain the application step's responsibility, as specified by the persisted
+model. The loader does not apply a profile to firmware or perform driver work.

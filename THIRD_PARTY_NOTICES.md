@@ -48,6 +48,18 @@ source, exact version or commit, license, and required notices.
 - **License:** MIT, upstream [LICENSE.txt](https://github.com/doctest/doctest/blob/v2.5.0/LICENSE.txt)
 - **Role/status:** CMake FetchContent host-test dependency. v2.5.0 is pinned because the prior v2.4.11 CMake metadata used a pre-3.5 minimum rejected by CMake 4; the exact commit is pinned in `tests/host/CMakeLists.txt`.
 
+## Dave Gamble cJSON
+
+- **Source:** <https://github.com/DaveGamble/cJSON>
+- **Exact version:** `v1.7.19` (the same release bundled by ESP-IDF v5.5.4)
+- **License:** MIT, upstream [LICENSE](https://github.com/DaveGamble/cJSON/blob/v1.7.19/LICENSE)
+- **Role/status:** JSON parsing implementation for the controller-configuration
+  boundary. Firmware consumes the matching cJSON component supplied by
+  ESP-IDF; host builds import the pinned release through CMake FetchContent or
+  an explicitly configured ESP-IDF/source checkout. cJSON types remain private
+  to `components/controller_config/src/persisted/json_loader.cpp`; no cJSON source is
+  copied into this repository.
+
 ## ESP-IDF
 
 - **Source:** <https://github.com/espressif/esp-idf/tree/v5.5.4>
