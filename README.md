@@ -92,7 +92,7 @@ physical direction must be confirmed during hardware validation.
 
 - CMake 3.20 or newer and a C++17 compiler
 - Ninja (recommended)
-- Python 3 for validators
+- Python 3 for validators and the host-only YAML compiler
 - ESP-IDF 5.5.4 and `idf.py` for firmware work
 - A correctly fused, current-limited bench supply for hardware work
 
@@ -115,6 +115,19 @@ ctest --test-dir /tmp/mazda-accessory-controller-host --output-on-failure
 python3 tools/check_architecture.py --root . \
   --core-root /path/to/esp32-vehicle-can-core
 ```
+
+To author controller configuration in YAML and generate canonical JSON for
+the controller-config runtime/tooling:
+
+```sh
+python3 -m pip install --user -r tools/requirements.txt
+python3 tools/compile_controller_config.py \
+  docs/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
+```
+
+The ESP32 does not include a YAML parser; compilation is host-only. See the
+[persisted configuration schema](docs/development/controller-config.md) for
+the accepted fields and validation rules.
 
 Run the host formatter used by CI when available:
 

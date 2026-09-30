@@ -186,6 +186,41 @@ so they remain with the runtime apply step and keep their existing
 - A future loader may accept older versions by migrating them into the
   current model before validation. Version 1 needs no migrations.
 
+## YAML compiler
+
+YAML is an authoring format only. The host-side compiler parses it with the
+PyYAML library, applies the schema checks above, and emits deterministic,
+compact JSON using the persisted field names. The ESP32 has no YAML parser.
+Before emitting JSON, it also checks each rule against the checked-in host
+signal catalog manifest at `tools/controller_signal_catalog.json`: signal
+existence, delivery capability, operand type, and enum choice keys must match
+the catalog exposed by the Mazda telemetry provider.
+
+Install the host-only dependency and compile a profile with:
+
+```sh
+python3 -m pip install --user -r tools/requirements.txt
+python3 tools/compile_controller_config.py \
+  docs/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
+```
+
+The generated JSON can be inspected or passed to host tooling. It remains
+subject to the normal runtime loader validation when applied to firmware.
+
+Omitted `actions`, `rules` and `outputs` become empty lists. Integer fields
+are checked before float normalization: exactly integral forms such as `1.0`
+are accepted, while fractional versions, priorities, zone coordinates and
+RGB channels are rejected. Numeric rule fields are rounded to the model's
+float precision before validating range and hysteresis constraints. YAML
+constructor failures, including invalid unquoted dates, use the compiler's
+`ERROR` diagnostic and exit code 2; quote date-like strings when used as names.
+
+The host CTest `controller_config_yaml_loader` compiles the production example
+and valid regression profiles, loads the emitted bytes through the canonical
+C++ loader, and resolves each rule against the real Mazda catalog. It also
+compares the complete catalog metadata with the host manifest. Compiler enum
+spellings are checked against the C++ persisted name tables.
+
 ## Not configurable
 
 The schema describes controller behaviour only. Board and platform safety

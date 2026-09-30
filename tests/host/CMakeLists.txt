@@ -428,3 +428,16 @@ add_executable(controller_config_json_tests controller_config_json_tests.cpp)
 target_link_libraries(controller_config_json_tests PRIVATE controller_config doctest::doctest)
 target_compile_features(controller_config_json_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_json_tests)
+
+# Every successful compiler fixture is accepted by the production JSON loader
+# and the action engine's resolvers against the real Mazda catalog.
+add_executable(controller_config_json_check controller_config_json_check.cpp)
+target_include_directories(controller_config_json_check PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(controller_config_json_check PRIVATE controller_config mazda)
+target_compile_features(controller_config_json_check PRIVATE cxx_std_17)
+add_test(NAME controller_config_yaml_loader
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/controller_config_yaml_tests.py
+          --loader $<TARGET_FILE:controller_config_json_check>)

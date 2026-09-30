@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "source": "components/mazda_telemetry/private_include/mazda/signal_catalog.hpp",
+  "signals": {
+    "vehicle.engine_rpm": {"type": "number", "capabilities": ["read"]},
+    "vehicle.speed_kph": {"type": "number", "capabilities": ["read"]},
+    "vehicle.turn_state": {
+      "type": "enum",
+      "capabilities": ["read", "notify"],
+      "choices": ["unknown", "off", "left", "right", "hazard"]
+    },
+    "vehicle.hazard_request": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.turn_request.left": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.turn_request.right": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.indicator_lamp.left": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.indicator_lamp.right": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.selector_position": {
+      "type": "enum",
+      "capabilities": ["read", "notify"],
+      "choices": ["unknown", "shifting", "park", "reverse", "neutral", "drive"]
+    },
+    "vehicle.actual_gear": {
+      "type": "enum",
+      "capabilities": ["read", "notify"],
+      "choices": [
+        "unknown",
+        "park_or_neutral",
+        "park",
+        "neutral",
+        "reverse",
+        "first",
+        "second",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "shifting"
+      ]
+    },
+    "vehicle.liftgate_open": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.door.rear_right": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.door.rear_left": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.door.front_left_rhd": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.door.front_right_rhd": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.doors_unlocked": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.wiper.low": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.wiper.front_position": {
+      "type": "enum",
+      "capabilities": ["read", "notify"],
+      "choices": ["unknown", "off", "on", "high", "intermittent"]
+    }
+  }
+}
