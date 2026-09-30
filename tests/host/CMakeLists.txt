@@ -430,11 +430,35 @@ target_compile_features(controller_config_json_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_json_tests)
 
 add_executable(controller_config_application_tests controller_config_application_tests.cpp)
+set(_factory_yaml "${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/controller-config-v1.yaml")
+set(_factory_compiler "${CMAKE_SOURCE_DIR}/tools/compile_controller_config.py")
+set(_factory_catalog "${CMAKE_SOURCE_DIR}/tools/controller_signal_catalog.json")
+set(_factory_json "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json")
+# Exercise the same YAML compiler and canonical loader as the firmware. A
+# source/compiler/catalog edit must regenerate this document before testing.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${_factory_yaml}" "${_factory_compiler}" "${_factory_catalog}")
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${_factory_compiler}" "${_factory_yaml}" "${_factory_json}"
+  RESULT_VARIABLE _factory_compile_result
+  OUTPUT_VARIABLE _factory_compile_output
+  ERROR_VARIABLE _factory_compile_error)
+if(NOT _factory_compile_result EQUAL 0)
+  message(FATAL_ERROR "Host factory configuration compilation failed:\n"
+    "${_factory_compile_output}${_factory_compile_error}")
+endif()
+target_include_directories(controller_config_application_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/board/include)
+target_compile_definitions(controller_config_application_tests PRIVATE
+  CONTROLLER_CONFIG_FACTORY_JSON_PATH="${_factory_json}")
 target_link_libraries(controller_config_application_tests PRIVATE controller_config
                                                                   vehicle_signals_test_support
                                                                   doctest::doctest)
 target_compile_features(controller_config_application_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_application_tests)
+add_test(NAME controller_config_factory_build
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/tools/controller_config_factory_build_test.py
+          --cmake ${CMAKE_COMMAND} --compiler ${CMAKE_CXX_COMPILER})
 
 # Every successful compiler fixture is accepted by the production JSON loader
 # and the action engine's resolvers against the real Mazda catalog.

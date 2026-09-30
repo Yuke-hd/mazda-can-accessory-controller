@@ -112,7 +112,8 @@ ApplyStatus apply_controller_config(const ControllerConfig &config,
   }
   if (config.actions.size() > std::numeric_limits<std::uint16_t>::max()) {
     status.stage = ApplyStage::ActionId;
-    status.index = std::numeric_limits<std::uint16_t>::max() - 1U;
+    // Zero is reserved, so this is the first action whose 1-based ID cannot fit.
+    status.index = std::numeric_limits<std::uint16_t>::max();
     return status;
   }
 

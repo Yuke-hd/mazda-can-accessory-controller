@@ -2,6 +2,10 @@
 
 #include <cstddef>
 
+#if defined(ESP_PLATFORM) && !defined(CONTROLLER_CONFIG_FACTORY_DEFAULT_EMBEDDED)
+#error "ESP-IDF requires the embedded factory configuration"
+#endif
+
 namespace controller_config {
 
 #if defined(CONTROLLER_CONFIG_FACTORY_DEFAULT_EMBEDDED)

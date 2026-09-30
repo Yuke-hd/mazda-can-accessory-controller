@@ -2,7 +2,9 @@
 #include <doctest/doctest.h>
 
 #include "action_engine/engine.hpp"
+#include "board/board_config.h"
 #include "controller_config/persisted/application.hpp"
+#include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/persisted/production_profile.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
@@ -10,9 +12,100 @@
 #include "vehicle_signals/signal_catalog.hpp"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace {
+
+namespace persisted = controller_config::persisted;
+
+persisted::ControllerConfig loaded_factory_config() {
+  std::ifstream file{CONTROLLER_CONFIG_FACTORY_JSON_PATH, std::ios::binary};
+  REQUIRE(file.is_open());
+  const std::string json{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+  const auto loaded = persisted::parse_controller_config(json);
+  REQUIRE(loaded.ok());
+  return *loaded.configuration;
+}
+
+void check_condition(const persisted::Condition &actual, const persisted::Condition &expected) {
+  CHECK(actual.signal_key == expected.signal_key);
+  CHECK(actual.comparison == expected.comparison);
+  REQUIRE(actual.operand.index() == expected.operand.index());
+  std::visit(
+      [&](const auto &operand) {
+        using Operand = std::decay_t<decltype(operand)>;
+        const auto &reference = std::get<Operand>(expected.operand);
+        if constexpr (std::is_same_v<Operand, persisted::ChoiceOperand>)
+          CHECK(operand.key == reference.key);
+        else
+          CHECK(operand.value == reference.value);
+      },
+      actual.operand);
+}
+
+void check_config(const persisted::ControllerConfig &actual,
+                  const persisted::ControllerConfig &expected) {
+  CHECK(actual.version == expected.version);
+  REQUIRE(actual.actions.size() == expected.actions.size());
+  for (std::size_t index = 0; index < actual.actions.size(); ++index) {
+    CAPTURE(index);
+    CHECK(actual.actions[index].name == expected.actions[index].name);
+  }
+  REQUIRE(actual.rules.size() == expected.rules.size());
+  for (std::size_t index = 0; index < actual.rules.size(); ++index) {
+    CAPTURE(index);
+    REQUIRE(actual.rules[index].index() == expected.rules[index].index());
+    std::visit(
+        [&](const auto &rule) {
+          using Rule = std::decay_t<decltype(rule)>;
+          const auto &reference = std::get<Rule>(expected.rules[index]);
+          CHECK(rule.action == reference.action);
+          CHECK(rule.freshness == reference.freshness);
+          if constexpr (std::is_same_v<Rule, persisted::RangeRule>) {
+            CHECK(rule.signal_key == reference.signal_key);
+            CHECK(rule.input.from == reference.input.from);
+            CHECK(rule.input.to == reference.input.to);
+            CHECK(rule.output.from == reference.output.from);
+            CHECK(rule.output.to == reference.output.to);
+          } else {
+            check_condition(rule.condition, reference.condition);
+            if constexpr (std::is_same_v<Rule, persisted::SampledStateRule>)
+              CHECK(rule.release_threshold == reference.release_threshold);
+            if constexpr (std::is_same_v<Rule, persisted::EventRule>)
+              CHECK(rule.edge == reference.edge);
+          }
+        },
+        actual.rules[index]);
+  }
+  REQUIRE(actual.outputs.size() == expected.outputs.size());
+  for (std::size_t index = 0; index < actual.outputs.size(); ++index) {
+    CAPTURE(index);
+    REQUIRE(actual.outputs[index].index() == expected.outputs[index].index());
+    std::visit(
+        [&](const auto &binding) {
+          using Binding = std::decay_t<decltype(binding)>;
+          const auto &reference = std::get<Binding>(expected.outputs[index]);
+          CHECK(binding.action == reference.action);
+          CHECK(binding.priority == reference.priority);
+          if constexpr (std::is_same_v<Binding, persisted::LedFillBinding>) {
+            CHECK(binding.zone.start == reference.zone.start);
+            CHECK(binding.zone.length == reference.zone.length);
+            CHECK(binding.zone.direction == reference.zone.direction);
+            CHECK(binding.color.red == reference.color.red);
+            CHECK(binding.color.green == reference.color.green);
+            CHECK(binding.color.blue == reference.color.blue);
+          } else {
+            CHECK(binding.effect == reference.effect);
+          }
+        },
+        actual.outputs[index]);
+  }
+}
 
 using action_engine::ActionEngine;
 using action_engine::ConfigStatus;
@@ -62,22 +155,41 @@ struct Controller final {
   ActionEngine engine;
 };
 
-SignalNotification turn(const std::uint16_t value) {
-  return SignalNotification{kTurnState,
-                            SignalReading{SignalValue::enumeration(value), Availability::Fresh,
-                                          ValidationStatus::Reference},
-                            false,
-                            false,
-                            false,
-                            false};
+SignalNotification turn(const std::uint16_t value,
+                        const Availability availability = Availability::Fresh) {
+  return SignalNotification{
+      kTurnState,
+      SignalReading{SignalValue::enumeration(value), availability, ValidationStatus::Reference},
+      false,
+      false,
+      false,
+      false};
 }
 
 } // namespace
 
-TEST_CASE("applying the persisted production configuration reproduces the controller setup") {
+TEST_CASE("generated factory YAML matches the production profile field by field") {
+  check_config(loaded_factory_config(), persisted::production_lighting_config());
+}
+
+TEST_CASE("generated factory RPM fill covers the board vehicle light strip") {
+  const auto config = loaded_factory_config();
+  std::size_t rpm_fills = 0;
+  for (const auto &output : config.outputs) {
+    const auto *fill = std::get_if<persisted::LedFillBinding>(&output);
+    if (fill != nullptr && fill->action == "rpm_fill") {
+      ++rpm_fills;
+      CHECK(fill->zone.start == 0);
+      CHECK(fill->zone.length == board::kWeActCan485V11.vehicle_light_strip.pixel_count);
+    }
+  }
+  CHECK(rpm_fills == 1);
+}
+
+TEST_CASE("applying generated factory YAML reproduces the controller setup") {
   Controller controller{};
 
-  const auto config = controller_config::persisted::production_lighting_config();
+  const auto config = loaded_factory_config();
   const auto status = controller_config::persisted::apply_controller_config(config, controller.leds,
                                                                             controller.engine);
 
@@ -89,9 +201,9 @@ TEST_CASE("applying the persisted production configuration reproduces the contro
   CHECK(status.engine == ConfigStatus::Ok);
 }
 
-TEST_CASE("the persisted production configuration keeps mirrored turn and fail-off behavior") {
+TEST_CASE("generated factory YAML keeps mirrored turn and RPM behavior with fail-off") {
   Controller controller{};
-  const auto config = controller_config::persisted::production_lighting_config();
+  const auto config = loaded_factory_config();
   REQUIRE(controller_config::persisted::apply_controller_config(config, controller.leds,
                                                                 controller.engine)
               .ok());
@@ -103,12 +215,48 @@ TEST_CASE("the persisted production configuration keeps mirrored turn and fail-o
   CHECK(controller.lighting.commands.back().right_turn);
   CHECK_FALSE(controller.lighting.commands.back().left_turn);
 
-  REQUIRE(controller.provider.publish(
-              SignalNotification{kTurnState,
-                                 SignalReading{SignalValue::enumeration(1), Availability::Stale,
-                                               ValidationStatus::Reference},
-                                 false, false, false, false}) == 1);
+  REQUIRE(controller.provider.publish(turn(1, Availability::Stale)) == 1);
   CHECK_FALSE(controller.lighting.commands.back().actionable);
+
+  REQUIRE(controller.provider.publish(turn(2)) == 1);
+  CHECK(controller.lighting.commands.back().left_turn);
+  CHECK_FALSE(controller.lighting.commands.back().right_turn);
+
+  REQUIRE(controller.provider.publish(turn(3)) == 1);
+  CHECK(controller.lighting.commands.back().left_turn);
+  CHECK(controller.lighting.commands.back().right_turn);
+
+  REQUIRE(controller.provider.publish(turn(1, Availability::FreshnessUnverified)) == 1);
+  CHECK_FALSE(controller.lighting.commands.back().actionable);
+
+  const auto sample_rpm = [&](float value) {
+    controller.provider.set_reading(kEngineRpm, SignalReading{SignalValue::number(value),
+                                                              Availability::FreshnessUnverified,
+                                                              ValidationStatus::Reference});
+    REQUIRE(controller.engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
+  };
+  sample_rpm(0.0F);
+  CHECK(controller.lighting.commands.back().fills.empty());
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+  sample_rpm(3250.0F);
+  REQUIRE(controller.lighting.commands.back().fills.size() == 1);
+  CHECK(controller.lighting.commands.back().fills.begin()->level ==
+        local_argb::internal::FillFraction::of(32768, 65536));
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+  sample_rpm(6000.0F);
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+  sample_rpm(6001.0F);
+  CHECK(controller.lighting.commands.back().brake);
+  sample_rpm(6500.0F);
+  REQUIRE(controller.lighting.commands.back().fills.size() == 1);
+  CHECK(controller.lighting.commands.back().fills.begin()->level ==
+        local_argb::internal::FillFraction::full());
+  CHECK(controller.lighting.commands.back().brake);
+
+  controller.provider.set_reading(kEngineRpm, SignalReading{});
+  REQUIRE(controller.engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
+  CHECK(controller.lighting.commands.back().fills.empty());
+  CHECK_FALSE(controller.lighting.commands.back().brake);
 
   controller.provider.stop();
   CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);

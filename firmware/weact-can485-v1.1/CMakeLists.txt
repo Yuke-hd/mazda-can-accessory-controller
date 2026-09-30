@@ -34,16 +34,16 @@ endif()
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(_controller_config_default_yaml
     "${CMAKE_CURRENT_LIST_DIR}/../../docs/specs/configuration/examples/controller-config-v1.yaml")
-# Migrate the pre-#110 cache spelling while preserving an explicitly selected
-# authoring document for future configuration overrides.
-if(NOT DEFINED CONTROLLER_CONFIG_DEFAULT_YAML OR
-   CONTROLLER_CONFIG_DEFAULT_YAML MATCHES "/docs/examples/controller-config-v1\\.yaml$")
-  set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
-      CACHE FILEPATH "Factory controller configuration YAML" FORCE)
-endif()
+set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
+    CACHE FILEPATH "Factory controller configuration YAML")
 set(CONTROLLER_CONFIG_FACTORY_JSON
     "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
     CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CONTROLLER_CONFIG_DEFAULT_YAML}"
+    "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
+    "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json")
+message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 execute_process(
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
@@ -56,6 +56,8 @@ if(NOT _controller_config_compile_result EQUAL 0)
     "Factory controller configuration compilation failed:\n"
     "${_controller_config_compile_output}${_controller_config_compile_error}")
 endif()
+file(SHA256 "${CONTROLLER_CONFIG_FACTORY_JSON}" _controller_config_factory_sha256)
+message(STATUS "Factory controller configuration JSON SHA256: ${_controller_config_factory_sha256}")
 
 add_custom_command(
   OUTPUT "${CONTROLLER_CONFIG_FACTORY_JSON}"

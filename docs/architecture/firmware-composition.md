@@ -23,9 +23,11 @@ Before vehicle CAN starts, the WeAct composition root obtains the generated
 factory JSON through `controller_config::factory_default_config_json()`, parses
 it with the canonical persisted loader, and invokes
 `controller_config::persisted::apply_controller_config()`. The persisted
-validator owns the profile bindings and rules, including the full-strip RPM
-zone capacity check; the typed `apply_lighting_profile()` helper remains a
-host parity path.
+validator checks the profile bindings and rules, including that each LED zone
+fits within the logical strip capacity. The generated factory profile's RPM
+fill covers the board's full vehicle strip; a host test checks its start and
+length against the board capability record. The typed `apply_lighting_profile()`
+helper remains a host parity path.
 The persisted version 1 profile representation is specified in
 [`controller-config.md`](../specs/configuration/controller-config.md#production-lighting-profile).
 Profile application and RPM feature contracts are specified in

@@ -104,9 +104,13 @@ bool configure_engine_lighting() noexcept {
   const auto status = controller_config::persisted::apply_controller_config(factory_configuration,
                                                                             led_actions, engine);
   if (!status.ok()) {
-    ESP_LOGE(kTag, "factory configuration setup failed: stage=%u index=%u binding=%u engine=%u",
+    ESP_LOGE(kTag,
+             "factory configuration setup failed: stage=%u index=%u binding=%u engine=%u "
+             "validation=%u validation_index=%u",
              static_cast<unsigned>(status.stage), static_cast<unsigned>(status.index),
-             static_cast<unsigned>(status.binding), static_cast<unsigned>(status.engine));
+             static_cast<unsigned>(status.binding), static_cast<unsigned>(status.engine),
+             static_cast<unsigned>(status.validation.error),
+             static_cast<unsigned>(status.validation.index));
     return false;
   }
   return true;
