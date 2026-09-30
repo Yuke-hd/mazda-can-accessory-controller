@@ -119,6 +119,99 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIn("YAML", result.stderr)
         self.assertIsNone(output_path)
 
+    def test_fractional_integer_fields_fail_before_float_rounding(self) -> None:
+        template = """
+        version: VERSION
+        actions: [{name: action}]
+        rules: []
+        outputs:
+          - type: led_fill
+            action: action
+            zone: {start: START, length: LENGTH, direction: start_to_end}
+            color: {red: RED, green: 0, blue: 0}
+            priority: PRIORITY
+        """
+        defaults = {"VERSION": "1", "START": "0", "LENGTH": "1", "RED": "255", "PRIORITY": "255"}
+        for field, value, path in (
+            ("VERSION", "1.00000001", "version"),
+            ("PRIORITY", "255.000001", "outputs[0].priority"),
+            ("START", "1.00000001", "outputs[0].zone.start"),
+            ("LENGTH", "1.00000001", "outputs[0].zone.length"),
+            ("RED", "255.000001", "outputs[0].color.red"),
+            ("VERSION", ".nan", "version"),
+            ("VERSION", ".inf", "version"),
+            ("VERSION", "true", "version"),
+        ):
+            with self.subTest(field=field, value=value):
+                source = template
+                for key, replacement in {**defaults, field: value}.items():
+                    source = source.replace(key, replacement)
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(path, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIsNone(output)
+
+    def test_omitted_lists_default_to_empty(self) -> None:
+        for fields in (
+            "",
+            "actions: [{name: action}]\n",
+            "rules: []\n",
+            "outputs: []\n",
+            "actions: []\nrules: []\n",
+            "actions: []\noutputs: []\n",
+            "rules: []\noutputs: []\n",
+        ):
+            with self.subTest(fields=fields):
+                result, output = self.run_compiler("version: 1\n" + fields)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                document = json.loads(output)
+                self.assertEqual(document["rules"], [])
+                self.assertEqual(document["outputs"], [])
+                self.assertEqual(document["actions"], [{"name": "action"}] if "name:" in fields else [])
+
+    def test_exactly_integral_float_fields_compile(self) -> None:
+        source = """
+        version: 1.0
+        actions: [{name: action}]
+        outputs:
+          - type: led_fill
+            action: action
+            zone: {start: 0.0, length: 1.0, direction: start_to_end}
+            color: {red: 255.0, green: 0.0, blue: 0.0}
+            priority: 255.0
+        """
+        result, output = self.run_compiler(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(output)
+        self.assertEqual(document["outputs"][0]["priority"], 255)
+        self.assertEqual(document["outputs"][0]["zone"]["length"], 1)
+
+    def test_explicit_null_lists_are_rejected(self) -> None:
+        for field in ("actions", "rules", "outputs"):
+            with self.subTest(field=field):
+                result, output = self.run_compiler(f"version: 1\n{field}: null\n")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(field, result.stderr)
+                self.assertIsNone(output)
+
+    def test_nul_in_strings_is_rejected_without_writing_json(self) -> None:
+        source = 'version: 1\nactions: [{name: "a\\0b"}]\n'
+        result, output = self.run_compiler(source)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("actions[0].name", result.stderr)
+        self.assertIn("NUL", result.stderr)
+        self.assertIsNone(output)
+
+    def test_invalid_timestamp_constructor_has_a_compile_diagnostic(self) -> None:
+        source = "version: 1\nactions: [{name: 2026-02-31}]\nrules: []\noutputs: []\n"
+        result, output = self.run_compiler(source)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("ERROR:", result.stderr)
+        self.assertIn("YAML", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIsNone(output)
+
     def test_unsupported_schema_version_fails(self) -> None:
         source = """
         version: 2
@@ -368,11 +461,24 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         from tools.compile_controller_config import ENUMS
 
         names_source = PERSISTED_NAMES.read_text(encoding="utf-8")
-        persisted_names = set(re.findall(r'"([a-z][a-z0-9_]*)"', names_source))
-        compiler_names = {name for enum in ENUMS.values() for name in enum.values()}
-
-        self.assertTrue(persisted_names)
-        self.assertTrue(persisted_names <= compiler_names)
+        tables = {
+            enum: set(re.findall(r'"([a-z][a-z0-9_]*)"', body))
+            for enum, body in re.findall(
+                r"template <> struct Names<(\w+)> \{(.*?)\n\};", names_source, re.DOTALL
+            )
+        }
+        expected = {
+            "type": tables["RuleType"] | tables["OutputType"],
+            "comparison": tables["Comparison"],
+            "freshness": tables["FreshnessRequirement"],
+            "edge": tables["EventEdge"],
+            "effect": tables["LedEffect"],
+            "direction": tables["FillDirection"],
+        }
+        self.assertEqual(set(ENUMS), set(expected))
+        for kind, names in expected.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(set(ENUMS[kind].values()), names)
 
     def test_deep_yaml_fails_with_a_compile_diagnostic(self) -> None:
         nested = "1"

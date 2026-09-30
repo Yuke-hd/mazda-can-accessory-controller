@@ -150,6 +150,8 @@ def _fields(
 def _string(value: Any, path: str) -> str:
     if not isinstance(value, str):
         raise CompileError(path, "expected a string")
+    if "\0" in value:
+        raise CompileError(path, "strings must not contain NUL characters")
     return value
 
 
@@ -183,10 +185,13 @@ def _finite_number(value: Any, path: str) -> int | float:
 
 
 def _integer(value: Any, path: str, description: str = "integer") -> int:
-    normalized = _finite_number(value, path)
-    if not isinstance(normalized, int):
+    # Integer fields retain the source precision; float32 normalization is only
+    # appropriate for fields stored as float in the persisted runtime model.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise CompileError(path, f"{description} must be an integer")
-    return normalized
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        raise CompileError(path, f"{description} must be an integer")
+    return int(value)
 
 
 def _enum(value: Any, path: str, kind: str) -> str:
@@ -502,16 +507,16 @@ def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[st
 def normalize_document(document: Any) -> dict[str, Any]:
     """Validate and normalize a loaded YAML document to persisted JSON data."""
     root = _mapping(document, "$")
-    _fields(root, "", ("version", "actions", "rules", "outputs"))
+    _fields(root, "", ("version",), ("actions", "rules", "outputs"))
     version = _integer(root["version"], "version", "version")
     if version != VERSION:
         raise CompileError("version", f"unsupported configuration version {version}; expected {VERSION}")
 
-    actions, action_names = _normalize_actions(root["actions"])
+    actions, action_names = _normalize_actions(root.get("actions", []))
     signal_catalog = _load_signal_catalog()
     rules: list[dict[str, Any]] = []
     level_actions: set[str] = set()
-    for index, raw_rule in enumerate(_sequence(root["rules"], "rules")):
+    for index, raw_rule in enumerate(_sequence(root.get("rules", []), "rules")):
         path = _index("rules", index)
         rule, is_level = _normalize_rule(raw_rule, path, action_names)
         _validate_rule_signal(rule, path, signal_catalog)
@@ -523,7 +528,7 @@ def normalize_document(document: Any) -> dict[str, Any]:
 
     outputs: list[dict[str, Any]] = []
     output_targets: set[tuple[Any, ...]] = set()
-    for index, raw_output in enumerate(_sequence(root["outputs"], "outputs")):
+    for index, raw_output in enumerate(_sequence(root.get("outputs", []), "outputs")):
         path = _index("outputs", index)
         output, target = _normalize_output(raw_output, path, action_names)
         if target in output_targets:
@@ -589,6 +594,8 @@ def load_yaml(path: Path) -> Any:
         return yaml.load(source, Loader=_yaml_loader())
     except RecursionError as error:
         raise CompileError("$", "YAML nesting exceeds the supported parser depth") from error
+    except ValueError as error:
+        raise CompileError("$", f"malformed YAML scalar: {error}") from error
     except yaml.YAMLError as error:  # type: ignore[union-attr]
         mark = getattr(error, "problem_mark", None)
         location = ""
