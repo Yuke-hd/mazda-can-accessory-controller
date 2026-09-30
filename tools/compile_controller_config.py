@@ -358,8 +358,10 @@ def _normalize_range(value: Any, path: str) -> dict[str, int | float]:
 
 def _validate_range_span(value: Mapping[str, int | float], path: str) -> None:
     span = float(value["to"]) - float(value["from"])
-    if not math.isfinite(span) or abs(span) > FLOAT_MAX:
-        raise CompileError(path, "range span must be finite")
+    try:
+        _runtime_float(span, path)
+    except CompileError as error:
+        raise CompileError(path, "range span must be finite") from error
 
 
 def _normalize_rule(value: Any, path: str, actions: set[str]) -> tuple[dict[str, Any], bool]:

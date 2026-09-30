@@ -371,6 +371,29 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIn("release_threshold", result.stderr)
         self.assertIsNone(output_path)
 
+    def test_range_bounds_and_spans_match_runtime_float_precision(self) -> None:
+        for lower, upper, accepted in (
+            (-1.0e30, 3.4028234663852886e38, True),
+            (-3.4028234663852886e38, 3.4028234663852886e38, False),
+            (6000.00001, 6000.0001, False),
+        ):
+            with self.subTest(lower=lower, upper=upper):
+                source = f"""
+                version: 1
+                actions: [{{name: fill}}]
+                rules:
+                  - type: range
+                    action: fill
+                    signal_key: vehicle.engine_rpm
+                    input: {{from: {lower:.17e}, to: {upper:.17e}}}
+                    output: {{from: 0, to: 1}}
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
+                if not accepted:
+                    self.assertIn("rules[0].input", result.stderr)
+                    self.assertIsNone(output)
+
     def test_event_and_sampled_rules_compile_against_catalog(self) -> None:
         source = """
         version: 1
