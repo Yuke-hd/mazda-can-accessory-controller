@@ -241,10 +241,11 @@ schema exposes them:
 
 ## Production lighting profile
 
-This version 1 document represents the current production profile,
-`controller_config::kDefaultLightingProfile`. It covers the mirrored turn
-signals, the hazard, the RPM level fill and the RPM red zone.
-`production_lighting_config()` builds the same document in C++.
+This version 1 document is the factory profile for the firmware. It covers
+the mirrored turn signals, the hazard, the RPM level fill and the RPM red
+zone. `production_lighting_config()` builds the same document in C++ for host
+parity tests; firmware loads this YAML's generated JSON through the canonical
+persisted configuration loader.
 `tests/host/controller_config_schema_tests.cpp` checks that it validates and
 that it matches the default profile field by field.
 

@@ -7,14 +7,16 @@ in [action engine](../action-engine.md) and output behavior in
 versioned production example are defined in
 [controller configuration](controller-config.md).
 
-## Shared lighting profile helper
+## Shared application helpers
 
 `controller_config::apply_lighting_profile()` applies a portable
 `LightingProfile` while the action engine is detached. It validates the turn
 configuration, binds its turn effects, registers the supplied `LedActionSink`,
 adds the three strict-Fresh turn-state rules, then applies the RPM level fill
-and red-zone features. The sink-before-rules order is part of this helper's
-contract.
+and red-zone features. This typed helper is used by host composition tests;
+the firmware applies the equivalent persisted document through
+`controller_config::persisted::apply_controller_config()`. Both helpers keep
+the sink-before-rules order as part of their contract.
 
 The result reports the failing stage and index, binding or engine status, and
 how many effects, rules and features were applied. The helper does not log,
@@ -24,7 +26,8 @@ off the renderer. The firmware composition and its lifecycle calls are
 specified in [firmware composition](../../architecture/firmware-composition.md).
 
 The version 1 persisted form of the default profile, with named actions in
-place of numeric `ActionId` values, is documented in
+place of numeric `ActionId` values, is compiled from YAML to embedded JSON for
+firmware and documented in
 [controller configuration](controller-config.md#production-lighting-profile).
 
 ### RPM level fill
@@ -83,6 +86,8 @@ LED binding next to the level fill, a shared action and a failed binding.
 
 `tests/host/lighting_profile_tests.cpp` checks the default production values.
 `tests/host/lighting_profile_application_tests.cpp` covers profile application,
-turn and RPM behavior, and partial-setup diagnostics. The feature-specific
-host suites are `tests/host/rpm_level_fill_tests.cpp` and
+turn and RPM behavior, and partial-setup diagnostics.
+`tests/host/controller_config_application_tests.cpp` covers persisted
+application and mirrored turn fail-off behavior. The feature-specific host
+suites are `tests/host/rpm_level_fill_tests.cpp` and
 `tests/host/rpm_threshold_tests.cpp`.

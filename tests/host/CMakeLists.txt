@@ -429,6 +429,13 @@ target_link_libraries(controller_config_json_tests PRIVATE controller_config doc
 target_compile_features(controller_config_json_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_json_tests)
 
+add_executable(controller_config_application_tests controller_config_application_tests.cpp)
+target_link_libraries(controller_config_application_tests PRIVATE controller_config
+                                                                  vehicle_signals_test_support
+                                                                  doctest::doctest)
+target_compile_features(controller_config_application_tests PRIVATE cxx_std_17)
+doctest_discover_tests(controller_config_application_tests)
+
 # Every successful compiler fixture is accepted by the production JSON loader
 # and the action engine's resolvers against the real Mazda catalog.
 add_executable(controller_config_json_check controller_config_json_check.cpp)

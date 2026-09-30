@@ -320,11 +320,11 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_missing_shared_profile_application_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "controller_config::apply_lighting_profile(\n"
-            "      controller_config::kDefaultLightingProfile, led_actions, engine);",
+            "controller_config::persisted::apply_controller_config(\n"
+            "      factory_configuration, led_actions, engine);",
             "(void)led_actions;",
         )
-        self.assert_rejected("must call controller_config::apply_lighting_profile()")
+        self.assert_rejected("must call controller_config::persisted::apply_controller_config()")
 
     def test_unreachable_shared_profile_application_is_rejected(self) -> None:
         self.edit(MAIN, "if (!configure_engine_lighting()) {", "if (false) {")
