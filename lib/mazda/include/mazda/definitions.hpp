@@ -251,10 +251,9 @@ MAZDA_BOOLEAN_DEFINITION(kTurnRightSwitchDefinition, "RightIndicatorSwitch", kTu
 MAZDA_BOOLEAN_DEFINITION(kTurnLeftSwitchDefinition, "LeftIndicatorSwitch", kTurnSwitchId, 13, 13,
                          Motorola, "0=Off; 1=On", vehicle_core::ValidationStatus::Reference,
                          kSourceOnlyEvidenceProvenance);
-MAZDA_BOOLEAN_DEFINITION(
-    kBrakePressedDefinition, "BrakePressed", kBrakePedalId, 4, 4, Motorola, "0=Released; 1=Pressed",
-    vehicle_core::ValidationStatus::Confirmed,
-    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L112");
+MAZDA_BOOLEAN_DEFINITION(kBrakePressedDefinition, "BrakePressed", kBrakePedalId, 4, 4, Motorola,
+                         "0=Released; 1=Pressed", vehicle_core::ValidationStatus::Confirmed,
+                         "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L112");
 
 #undef MAZDA_BOOLEAN_DEFINITION
 
