@@ -34,7 +34,14 @@ constexpr ActionId kGauge{5};
 constexpr ActionId kUnbound{9};
 constexpr auto kHeld = std::numeric_limits<vehicle_core::MonotonicTimestamp>::max();
 
-class RecordingLightingSink final : public local_argb::internal::LightingSink {
+class RecordingLightingSink final : public local_argb::internal::LightingSink,
+                                    public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return now_us; }
+  vehicle_core::MonotonicTimestamp now_us{0};
+  std::uint32_t epoch{0};
+  std::uint32_t transient_epoch() const noexcept override { return epoch; }
+
 public:
   bool publish(const LightingCommand &command) noexcept override {
     commands.push_back(command);
@@ -96,7 +103,7 @@ struct GaugeSink final {
   }
 
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
 };
 
 // Turn-signal wiring used by most cases: each turn action lights its own side
@@ -110,7 +117,7 @@ struct TurnSink final {
   }
 
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
 };
 
 } // namespace
@@ -197,7 +204,7 @@ TEST_CASE("an effect stays lit while any of its bound actions is active") {
 
 TEST_CASE("the brake effect is independent of the turn effects") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   constexpr ActionId kBraking{4};
   REQUIRE(sink.bind(kBraking, LedEffect::Brake) == BindingStatus::Ok);
   REQUIRE(sink.bind(kTurnLeft, LedEffect::LeftTurn) == BindingStatus::Ok);
@@ -223,14 +230,14 @@ TEST_CASE("a rejected publish is not retried; the next command carries the full 
 
 TEST_CASE("bind rejects the invalid action id zero") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
 
   CHECK(sink.bind(ActionId{}, LedEffect::LeftTurn) == BindingStatus::InvalidAction);
 }
 
 TEST_CASE("bind rejects the same action and effect twice") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kTurnLeft, LedEffect::LeftTurn) == BindingStatus::Ok);
 
   CHECK(sink.bind(kTurnLeft, LedEffect::LeftTurn) == BindingStatus::DuplicateBinding);
@@ -238,7 +245,7 @@ TEST_CASE("bind rejects the same action and effect twice") {
 
 TEST_CASE("bind rejects bindings beyond the fixed capacity") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   for (std::uint16_t action = 1; action <= LedActionSink::kMaxBindings; ++action) {
     REQUIRE(sink.bind(ActionId{action}, LedEffect::Brake) == BindingStatus::Ok);
   }
@@ -365,7 +372,7 @@ TEST_CASE("one action can drive a fill and an on/off effect") {
 
 TEST_CASE("fill bind rejects the invalid action id zero") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
 
   CHECK(sink.bind(ActionId{}, FillEffect{kGaugeZone, kGaugeColor}) == BindingStatus::InvalidAction);
 }
@@ -381,7 +388,7 @@ TEST_CASE("fill bind rejects the same action and zone twice but accepts another 
 
 TEST_CASE("fill bind rejects bindings beyond the fixed fill capacity") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   for (std::uint16_t action = 1; action <= LedActionSink::kMaxFillBindings; ++action) {
     REQUIRE(sink.bind(ActionId{action}, FillEffect{kGaugeZone, kGaugeColor}) == BindingStatus::Ok);
   }
@@ -407,7 +414,7 @@ TEST_CASE("an unset binding priority publishes the default priority") {
 
 TEST_CASE("a fill binding publishes its configured priority") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kGauge, FillEffect{kGaugeZone, kGaugeColor, EffectPriority{50}}) ==
           BindingStatus::Ok);
 
@@ -419,7 +426,7 @@ TEST_CASE("a fill binding publishes its configured priority") {
 
 TEST_CASE("an on/off binding publishes its configured priority for its effect") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kTurnRight, LedEffect::RightTurn, EffectPriority{150}) == BindingStatus::Ok);
   REQUIRE(sink.bind(kHazard, LedEffect::Brake, EffectPriority{20}) == BindingStatus::Ok);
 
@@ -434,7 +441,7 @@ TEST_CASE("an on/off binding publishes its configured priority for its effect") 
 
 TEST_CASE("an effect lit by several actions takes the highest active binding priority") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kTurnLeft, LedEffect::LeftTurn, EffectPriority{120}) == BindingStatus::Ok);
   REQUIRE(sink.bind(kHazard, LedEffect::LeftTurn, EffectPriority{80}) == BindingStatus::Ok);
 
@@ -479,7 +486,7 @@ constexpr local_argb::internal::LightingTransient kTransient{
 
 TEST_CASE("a Trigger restarts every transient of its action with stable identities") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kHazard, kTransient) == BindingStatus::Ok);
   auto second = kTransient;
   second.zone = LedZone{60, 8, FillDirection::EndToStart};
@@ -512,6 +519,9 @@ TEST_CASE("held updates retain latest starts without restarting or clearing a tr
   const auto &command = fixture.lighting.commands.back();
   check_held(command, Effects{});
   CHECK(command.fills.empty());
+  CHECK(command.color.red == 0);
+  CHECK(command.color.green == 0);
+  CHECK(command.color.blue == 0);
   REQUIRE(command.transients.size() == 1);
   CHECK(command.transients.begin()->id.value() == start.id.value());
   CHECK(command.transients.begin()->sequence == start.sequence);
@@ -519,7 +529,7 @@ TEST_CASE("held updates retain latest starts without restarting or clearing a tr
 
 TEST_CASE("a transient-only binding ignores levels and an unbound Trigger") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   REQUIRE(sink.bind(kHazard, kTransient) == BindingStatus::Ok);
 
   sink.execute(activate(kHazard));
@@ -536,7 +546,7 @@ TEST_CASE("a transient-only binding ignores levels and an unbound Trigger") {
 
 TEST_CASE("transient bindings reject invalid actions duplicates and excess capacity") {
   RecordingLightingSink lighting{};
-  LedActionSink sink{lighting};
+  LedActionSink sink{lighting, lighting};
   CHECK(sink.bind(ActionId{}, kTransient) == BindingStatus::InvalidAction);
   REQUIRE(sink.bind(kHazard, kTransient) == BindingStatus::Ok);
   auto duplicate = kTransient;
@@ -550,17 +560,80 @@ TEST_CASE("transient bindings reject invalid actions duplicates and excess capac
   CHECK(sink.bind(kUnbound, kTransient) == BindingStatus::CapacityExceeded);
 }
 
-TEST_CASE("a rejected start publish remains in the next complete state snapshot") {
+TEST_CASE("a rejected start is retired before the next complete state snapshot") {
   TurnSink fixture{};
   REQUIRE(fixture.sink.bind(kHazard, kTransient) == BindingStatus::Ok);
   fixture.lighting.accept = false;
   fixture.sink.execute(trigger(kHazard));
-  const auto sequence = fixture.lighting.commands.back().transients.begin()->sequence;
   fixture.lighting.accept = true;
 
   fixture.sink.execute(activate(kTurnLeft));
 
   REQUIRE(fixture.lighting.commands.size() == 2);
-  CHECK(fixture.lighting.commands.back().transients.begin()->sequence == sequence);
+  CHECK(fixture.lighting.commands.back().transients.empty());
   check_held(fixture.lighting.commands.back(), Effects{true, false, false});
+}
+
+TEST_CASE("transient solid zones reject direction-only duplicate bindings") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting, lighting};
+  REQUIRE(sink.bind(kHazard, kTransient) == BindingStatus::Ok);
+  auto reversed = kTransient;
+  reversed.zone.direction = FillDirection::EndToStart;
+  CHECK(sink.bind(kHazard, reversed) == BindingStatus::DuplicateBinding);
+}
+
+TEST_CASE("transient binding rejects invalid zones and duration without consuming a slot") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting, lighting};
+  auto invalid = kTransient;
+  for (const auto duration : {vehicle_core::Microseconds{0}, vehicle_core::Microseconds{5'000'001},
+                              std::numeric_limits<vehicle_core::Microseconds>::max()}) {
+    invalid.duration_us = duration;
+    CHECK(sink.bind(kHazard, invalid) == BindingStatus::InvalidEffect);
+  }
+  invalid = kTransient;
+  for (const auto zone : {LedZone{40, 0}, LedZone{100, 1}, LedZone{90, 11},
+                          LedZone{40, 8, static_cast<FillDirection>(255)}}) {
+    invalid.zone = zone;
+    CHECK(sink.bind(kHazard, invalid) == BindingStatus::InvalidEffect);
+  }
+  for (std::size_t index = 0; index < LedActionSink::kMaxTransientBindings; ++index) {
+    CHECK(sink.bind(ActionId{static_cast<std::uint16_t>(100 + index)}, kTransient) ==
+          BindingStatus::Ok);
+  }
+}
+
+TEST_CASE("transient binding accepts the shared maximum finite duration") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting, lighting};
+  auto longest = kTransient;
+  longest.duration_us = 5'000'000;
+  CHECK(sink.bind(kHazard, longest) == BindingStatus::Ok);
+}
+
+TEST_CASE("Trigger stamps clock and cancellation epoch once and a newer Trigger restarts") {
+  TurnSink fixture{};
+  REQUIRE(fixture.sink.bind(kHazard, kTransient) == BindingStatus::Ok);
+  fixture.lighting.now_us = 1'000;
+  fixture.lighting.epoch = 3;
+  fixture.sink.execute(trigger(kHazard));
+  const auto first = *fixture.lighting.commands.back().transients.begin();
+  CHECK(first.origin_us == 1'000);
+  CHECK(first.epoch == 3);
+
+  fixture.lighting.now_us = 2'000;
+  fixture.sink.execute(activate(kTurnLeft));
+  CHECK(fixture.lighting.commands.back().transients.begin()->origin_us == first.origin_us);
+  CHECK(fixture.lighting.commands.back().transients.begin()->epoch == first.epoch);
+  fixture.lighting.epoch = 4;
+  fixture.sink.execute(activate(kTurnRight));
+  CHECK(fixture.lighting.commands.back().transients.empty());
+
+  fixture.sink.execute(trigger(kHazard));
+  REQUIRE(fixture.lighting.commands.back().transients.size() == 1);
+  const auto restarted = *fixture.lighting.commands.back().transients.begin();
+  CHECK(restarted.origin_us == 2'000);
+  CHECK(restarted.epoch == 4);
+  CHECK(restarted.sequence != first.sequence);
 }

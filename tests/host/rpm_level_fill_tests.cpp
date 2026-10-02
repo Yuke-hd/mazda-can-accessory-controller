@@ -58,7 +58,12 @@ constexpr ActionId kRpmAction{4};
 constexpr LedZone kRpmZone{0, 100, FillDirection::CenterOut};
 constexpr LightingRgb kRpmColor{0, 16, 32};
 
-class RecordingLightingSink final : public local_argb::internal::LightingSink {
+class RecordingLightingSink final : public local_argb::internal::LightingSink,
+                                    public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return now_us; }
+  vehicle_core::MonotonicTimestamp now_us{0};
+
 public:
   bool publish(const LightingCommand &command) noexcept override {
     commands.push_back(command);
@@ -112,7 +117,7 @@ public:
 
   test_support::FakeSignalProvider provider{kView};
   RecordingLightingSink lighting{};
-  LedActionSink leds{lighting};
+  LedActionSink leds{lighting, lighting};
   ActionEngine engine{provider};
 };
 
@@ -176,7 +181,7 @@ TEST_CASE("unverified RPM freshness lights the fill; losing the reading turns it
 TEST_CASE("an empty or inverted RPM range is rejected before the engine attaches") {
   for (const RpmRange range : {RpmRange{3000.0F, 3000.0F}, RpmRange{6500.0F, 0.0F}}) {
     RecordingLightingSink lighting{};
-    LedActionSink leds{lighting};
+    LedActionSink leds{lighting, lighting};
     test_support::FakeSignalProvider provider{kView};
     ActionEngine engine{provider};
     const RpmLevelFillStatus status = controller_config::apply(config_with(range), leds, engine);
@@ -188,7 +193,7 @@ TEST_CASE("an empty or inverted RPM range is rejected before the engine attaches
 
 TEST_CASE("a failed fill binding adds no RPM rule") {
   RecordingLightingSink lighting{};
-  LedActionSink leds{lighting};
+  LedActionSink leds{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   REQUIRE(engine.add_sink(leds) == ConfigStatus::Ok);

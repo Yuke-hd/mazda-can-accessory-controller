@@ -6,6 +6,7 @@
 #include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/persisted/names.hpp"
 #include "local_argb/renderer.hpp"
+#include "support/fake_clock.hpp"
 #include "support/fake_signal_provider.hpp"
 
 #include <string>
@@ -177,7 +178,9 @@ TEST_CASE("loaded event transient expires through the production renderer and le
   local_argb::internal::RendererController renderer{pixels};
   REQUIRE(renderer.start());
   RendererSink lighting{renderer};
-  local_argb_actions::LedActionSink leds{lighting};
+  test_support::FakeClock clock;
+  clock.set(1000);
+  local_argb_actions::LedActionSink leds{lighting, clock};
   action_engine::ActionEngine engine{provider};
   auto model = transient_config();
   model.actions.push_back({"baseline"});
@@ -203,7 +206,9 @@ TEST_CASE("loaded event transient expires through the production renderer and le
   notification.current.value = vehicle_signals::SignalValue::boolean(true);
   REQUIRE(provider.publish(notification) == 1);
   REQUIRE(lighting.commands.back().transients.size() == 1);
-  const auto &effect = lighting.commands.back().transients.begin()->effect;
+  const auto &start = *lighting.commands.back().transients.begin();
+  CHECK(start.origin_us == clock.now());
+  const auto &effect = start.effect;
   CHECK(effect.duration_us == 800000);
   CHECK(effect.priority.rank() == 120);
   REQUIRE(renderer.tick(800999));

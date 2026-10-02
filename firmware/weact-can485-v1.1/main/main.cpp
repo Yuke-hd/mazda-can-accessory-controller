@@ -6,6 +6,7 @@
 #include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/timing.hpp"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "local_argb/lighting_sink.hpp"
@@ -80,7 +81,15 @@ std::uint32_t notification_dispatch_progress(const void *context) noexcept {
 // local_argb::fail_off(), because a stopped facade and a destroyed engine send
 // no Deactivate.
 static ApplicationState application_state{};
-static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()};
+class ApplicationClock final : public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override {
+    return static_cast<vehicle_core::MonotonicTimestamp>(esp_timer_get_time());
+  }
+};
+static ApplicationClock application_clock{};
+static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(),
+                                                     application_clock};
 static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};

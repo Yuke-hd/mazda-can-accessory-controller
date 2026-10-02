@@ -148,7 +148,7 @@ PacedRun run_paced(FakeWallClock &wall, replay::PlaybackPacer &pacer) {
   replay::ReplayClock clock;
   std::ostringstream jsonl;
   replay::JsonlPixelFrameSink sink{clock, jsonl};
-  replay::LocalArgbOutputStage stage{sink};
+  replay::LocalArgbOutputStage stage{sink, clock};
   WallStampedEvents events{wall};
   pacer.begin_replay();
   const auto result =
@@ -160,7 +160,7 @@ std::string run_unpaced() {
   replay::ReplayClock clock;
   std::ostringstream jsonl;
   replay::JsonlPixelFrameSink sink{clock, jsonl};
-  replay::LocalArgbOutputStage stage{sink};
+  replay::LocalArgbOutputStage stage{sink, clock};
   REQUIRE(replay::run_replay(turn_and_rpm_input(), clock, stage, {kHorizonUs}).ok());
   return jsonl.str();
 }

@@ -18,6 +18,7 @@ enum class BindingStatus : std::uint8_t {
   InvalidAction,    // ActionId zero.
   DuplicateBinding, // The same action already drives this effect.
   CapacityExceeded, // kCapacity bindings are already registered.
+  InvalidEffect,    // Invalid transient zone or unsupported duration.
 };
 
 // Which effects are lit.

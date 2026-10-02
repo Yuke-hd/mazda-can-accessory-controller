@@ -900,11 +900,11 @@ def _check_generic_consumer(root: Path) -> None:
 
 LED_ACTIONS_COMPONENT = Path("components/local_argb_actions")
 # The adapter sees the engine's output port, the renderer's private handoff,
-# core time values and its own headers; never a provider, a vehicle make, CAN,
+# value-only strip geometry, core time values and its own headers; never a provider, CAN,
 # an LED driver or the RTOS.
 _LED_ACTIONS_ALLOWED_INCLUDE = re.compile(
     r"action_engine/action\.hpp|local_argb/lighting_sink\.hpp|vehicle_core/time\.hpp"
-    r"|local_argb_actions/[\w/]+\.hpp"
+    r"|local_argb/pixel_frame\.hpp|local_argb_actions/[\w/]+\.hpp"
 )
 _LED_ACTIONS_CMAKE_KEYWORDS = frozenset(("PUBLIC", "PRIVATE", "INTERFACE"))
 _LED_ACTIONS_ALLOWED_LINKS = frozenset(
