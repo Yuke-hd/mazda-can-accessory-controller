@@ -38,6 +38,7 @@ inline constexpr vehicle_signals::SignalId kDoorFrontRightRhd{15};
 inline constexpr vehicle_signals::SignalId kDoorsUnlocked{16};
 inline constexpr vehicle_signals::SignalId kWiperLow{17};
 inline constexpr vehicle_signals::SignalId kWiperFrontPosition{18};
+inline constexpr vehicle_signals::SignalId kBrakePressed{19};
 } // namespace signal_ids
 
 // Enum choice values are the raw Mazda enumerator values; keys are the
@@ -176,9 +177,11 @@ inline constexpr vehicle_signals::SignalMetadata kSignalCatalog[] = {
     catalog_detail::notified_enum(signal_ids::kWiperFrontPosition, "vehicle.wiper.front_position",
                                   candidate::kFrontWiperDefinition.confidence,
                                   kFrontWiperPositionChoices),
+    catalog_detail::notified_boolean(signal_ids::kBrakePressed, "vehicle.brake_pressed",
+                                     candidate::kBrakePressedDefinition.confidence),
 };
 
-inline constexpr std::size_t kSignalCatalogSize = 18;
+inline constexpr std::size_t kSignalCatalogSize = 19;
 
 static_assert(std::size(kSignalCatalog) == kSignalCatalogSize);
 static_assert(vehicle_signals::SignalCatalogView{kSignalCatalog}.well_formed());

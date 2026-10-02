@@ -501,7 +501,7 @@ TEST_CASE("turn request and lamp stay distinct with enum and malformed-frame par
 }
 
 TEST_CASE("every catalog row works end to end through the public provider") {
-  constexpr std::size_t kRows = 18;
+  constexpr std::size_t kRows = 19;
   Harness harness{};
   auto &provider = harness.provider;
   const auto catalog = provider.catalog();
@@ -525,7 +525,7 @@ TEST_CASE("every catalog row works end to end through the public provider") {
       CHECK((row.key == "vehicle.engine_rpm" || row.key == "vehicle.speed_kph"));
     }
   }
-  CHECK(notify_rows == 16);
+  CHECK(notify_rows == 17);
 
   REQUIRE(harness.telemetry.start().ok());
   for (const auto &row : catalog) {
@@ -542,6 +542,7 @@ TEST_CASE("every catalog row works end to end through the public provider") {
   harness.inject(candidate::kTurnSwitchId, 1'000, kTurnLeft);
   harness.inject(candidate::kBlinkInfoId, 1'000, kBlinkRightLampWiperLow);
   harness.inject(candidate::kDoorsId, 1'000, kDoorsAllOpen);
+  harness.inject(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0});
 
   // Each row reads a typed value its metadata accepts, and each Notify row's
   // latest notice carries exactly that reading.

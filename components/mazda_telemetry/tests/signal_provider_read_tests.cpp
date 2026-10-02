@@ -229,6 +229,7 @@ constexpr SignalId kAllIds[] = {
     ids::kActualGear,        ids::kLiftgateOpen,       ids::kDoorRearRight,
     ids::kDoorRearLeft,      ids::kDoorFrontLeftRhd,   ids::kDoorFrontRightRhd,
     ids::kDoorsUnlocked,     ids::kWiperLow,           ids::kWiperFrontPosition,
+    ids::kBrakePressed,
 };
 static_assert(std::size(kAllIds) == internal::kSignalCatalogSize);
 
@@ -380,7 +381,7 @@ void test_invalid_and_unknown_ids_are_request_failures() {
   const auto unknown = harness.provider.read(SignalId{99});
   EXPECT(unknown.status == SignalStatus::InvalidSignal);
   EXPECT(!unknown.value.has_value());
-  const auto beyond = harness.provider.read(SignalId{19});
+  const auto beyond = harness.provider.read(SignalId{20});
   EXPECT(beyond.status == SignalStatus::InvalidSignal);
 }
 
@@ -460,6 +461,7 @@ void test_all_ids_read_no_data_then_typed_values() {
   harness.inject(turn_frame(1'000));
   harness.inject(blink_frame(1'000));
   harness.inject(doors_frame(1'000));
+  harness.inject(frame(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0}));
   EXPECT(wait_for([&harness] {
     for (const auto id : kAllIds) {
       const auto result = harness.provider.read(id);
@@ -711,9 +713,75 @@ void test_stop_and_restart_clear_old_samples() {
   EXPECT(harness.telemetry.stop().ok());
 }
 
+void test_brake_catalog_and_read_without_freshness_policy() {
+  Harness harness{};
+  NoticeRecorder<bool> brake{};
+  EXPECT(harness.telemetry.on_brake_pressed_changed(&record_notice<bool>, &brake).ok());
+  const auto *metadata = harness.provider.catalog().find("vehicle.brake_pressed");
+  EXPECT(metadata != nullptr);
+  if (metadata == nullptr)
+    return;
+  EXPECT(metadata->id == SignalId{19});
+  EXPECT(metadata->type == SignalType::Boolean);
+  EXPECT(metadata->capabilities == (SignalCapability::Read | SignalCapability::Notify));
+  EXPECT(metadata->validation == ValidationStatus::Confirmed);
+  EXPECT(internal::find_catalog_signal(harness.provider.catalog(), metadata->id,
+                                       SignalCapability::Notify)
+             .ok());
+  EXPECT(harness.telemetry.start().ok());
+  const auto initial = harness.provider.read(metadata->id);
+  EXPECT(initial.ok());
+  EXPECT(!initial.value->value.has_value());
+  EXPECT(initial.value->availability == Availability::NoData);
+  for (const bool pressed : {false, true}) {
+    const auto timestamp = pressed ? 200 : 100;
+    harness.clock.set(timestamp);
+    harness.inject(frame(candidate::kBrakePedalId, timestamp,
+                         {static_cast<std::uint8_t>(pressed ? 0x10 : 0), 0, 0, 0, 0, 0, 0, 0}));
+    EXPECT(wait_for([&] {
+      const auto result = harness.provider.read(metadata->id);
+      return result.ok() && result.value->value == SignalValue::boolean(pressed);
+    }));
+    EXPECT(wait_for_notice_value(brake, pressed));
+    const auto result = harness.provider.read(metadata->id);
+    EXPECT(same_reading(*result.value, latest_notice(brake).current));
+    EXPECT(result.value->availability == Availability::FreshnessUnverified);
+    EXPECT(result.value->validation == ValidationStatus::Confirmed);
+  }
+  harness.clock.set(500'000);
+  EXPECT(harness.provider.read(metadata->id).value->availability ==
+         Availability::FreshnessUnverified);
+  harness.clock.set(500'001);
+  harness.inject(frame(candidate::kBrakePedalId, 500'001, {0}));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
+  EXPECT(wait_for(
+      [&] { return latest_notice(brake).current.availability == Availability::Unavailable; }));
+  EXPECT(same_reading(*harness.provider.read(metadata->id).value, latest_notice(brake).current));
+  EXPECT(harness.telemetry.stop().ok());
+}
+
+void test_brake_uses_explicit_caller_freshness_policy() {
+  auto config = Harness::test_config();
+  config.freshness.brake_pressed_timeout_us = 100;
+  Harness harness{config};
+  EXPECT(harness.telemetry.start().ok());
+  harness.clock.set(1'000);
+  harness.inject(frame(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, ids::kBrakePressed, Availability::Fresh));
+  harness.clock.set(1'100);
+  EXPECT(harness.provider.read(ids::kBrakePressed).value->availability == Availability::Fresh);
+  harness.clock.set(1'101);
+  const auto stale = harness.provider.read(ids::kBrakePressed);
+  EXPECT(stale.value->availability == Availability::Stale);
+  EXPECT(stale.value->value == SignalValue::boolean(true));
+  EXPECT(harness.telemetry.stop().ok());
+}
+
 } // namespace
 
 int main() {
+  test_brake_catalog_and_read_without_freshness_policy();
+  test_brake_uses_explicit_caller_freshness_policy();
   test_value_and_type_conversion();
   test_reading_conversion_preserves_fields();
   test_notification_conversion_copies_exact_flags();

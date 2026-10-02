@@ -60,6 +60,7 @@ inline constexpr std::uint16_t kLeftLampNotificationChannel = 13;
 inline constexpr std::uint16_t kRightLampNotificationChannel = 14;
 inline constexpr std::uint16_t kWiperLowNotificationChannel = 15;
 inline constexpr std::uint16_t kFrontWiperNotificationChannel = 16;
+inline constexpr std::uint16_t kBrakeNotificationChannel = 17;
 
 using SelectorNotificationChannel =
     vehicle_core::NotificationChannel<SelectorPosition, kSelectorNotificationChannel>;
@@ -94,11 +95,13 @@ using WiperLowNotificationChannel =
 using FrontWiperNotificationChannel =
     vehicle_core::NotificationChannel<FrontWiperPosition, kFrontWiperNotificationChannel>;
 
+using BrakeNotificationChannel = vehicle_core::NotificationChannel<bool, kBrakeNotificationChannel>;
+
 #if !defined(ESP_PLATFORM)
 // Host-only extension seam. The channel is deliberately private and has no
 // corresponding public facade callback; it proves a new fixed channel can be
 // added by extending the descriptor tuple alone.
-inline constexpr std::uint16_t kTestFrontWiperNotificationChannel = 17;
+inline constexpr std::uint16_t kTestFrontWiperNotificationChannel = 18;
 using TestFrontWiperNotificationChannel =
     vehicle_core::NotificationChannel<FrontWiperPosition, kTestFrontWiperNotificationChannel>;
 #endif
@@ -171,7 +174,8 @@ using NotificationDescriptorTuple =
                NotificationDescriptor<bool, kLeftLampNotificationChannel>,
                NotificationDescriptor<bool, kRightLampNotificationChannel>,
                NotificationDescriptor<bool, kWiperLowNotificationChannel>,
-               NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>>;
+               NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
+               NotificationDescriptor<bool, kBrakeNotificationChannel>>;
 #else
 using NotificationDescriptorTuple =
     std::tuple<NotificationDescriptor<SelectorPosition, kSelectorNotificationChannel>,
@@ -190,6 +194,7 @@ using NotificationDescriptorTuple =
                NotificationDescriptor<bool, kRightLampNotificationChannel>,
                NotificationDescriptor<bool, kWiperLowNotificationChannel>,
                NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
+               NotificationDescriptor<bool, kBrakeNotificationChannel>,
                NotificationDescriptor<FrontWiperPosition, kTestFrontWiperNotificationChannel>>;
 #endif
 
@@ -349,6 +354,8 @@ public:
   [[nodiscard]] SubscriptionToken subscribe_front_wiper(Callback<FrontWiperPosition> callback,
                                                         void *context) noexcept;
 
+  [[nodiscard]] SubscriptionToken subscribe_brake(Callback<bool> callback, void *context) noexcept;
+
   // Typed unsubscribe. It removes only typed registrations; a token that
   // matches a generic registration is InvalidSubscription.
   [[nodiscard]] StatusResult unsubscribe(const SubscriptionToken &token) noexcept;
@@ -475,6 +482,7 @@ private:
   RightLampNotificationChannel right_lamp_channel_{};
   WiperLowNotificationChannel wiper_low_channel_{};
   FrontWiperNotificationChannel front_wiper_channel_{};
+  BrakeNotificationChannel brake_channel_{};
 #if !defined(ESP_PLATFORM)
   TestFrontWiperNotificationChannel test_front_wiper_channel_{};
 #endif

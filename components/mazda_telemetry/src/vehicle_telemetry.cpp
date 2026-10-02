@@ -370,20 +370,19 @@ const NotificationDescriptorTuple &VehicleTelemetryService::notification_descrip
          &VehicleState::wiper_low,
          candidate::kBlinkInfoId,
          candidate::kWiperLowDefinition.confidence},
-#if defined(ESP_PLATFORM)
-        {signal_ids::kWiperFrontPosition,
-         "front_wiper",
-         &VehicleTelemetryService::front_wiper_channel_,
-         &VehicleState::front_wiper,
-         candidate::kTurnSwitchId,
-         candidate::kFrontWiperDefinition.confidence}
-#else
         {signal_ids::kWiperFrontPosition,
          "front_wiper",
          &VehicleTelemetryService::front_wiper_channel_,
          &VehicleState::front_wiper,
          candidate::kTurnSwitchId,
          candidate::kFrontWiperDefinition.confidence},
+        {signal_ids::kBrakePressed,
+         "brake_pressed",
+         &VehicleTelemetryService::brake_channel_,
+         &VehicleState::brake_pressed,
+         candidate::kBrakePedalId,
+         candidate::kBrakePressedDefinition.confidence},
+#if !defined(ESP_PLATFORM)
     {
       vehicle_signals::SignalId{}, "test_front_wiper",
           &VehicleTelemetryService::test_front_wiper_channel_, &VehicleState::front_wiper,
@@ -1110,6 +1109,7 @@ MAZDA_SUBSCRIBE_METHOD(subscribe_left_lamp, 12, Callback<bool>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_right_lamp, 13, Callback<bool>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_wiper_low, 14, Callback<bool>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_front_wiper, 15, Callback<FrontWiperPosition>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_brake, 16, Callback<bool>)
 
 #undef MAZDA_SUBSCRIBE_METHOD
 
@@ -1302,6 +1302,8 @@ MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_right_indicator_lamp_changed, subscribe_righ
 MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_wiper_low_changed, subscribe_wiper_low, Callback<bool>)
 MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_front_wiper_changed, subscribe_front_wiper,
                                  Callback<FrontWiperPosition>)
+
+MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_brake_pressed_changed, subscribe_brake, Callback<bool>)
 
 #undef MAZDA_PUBLIC_SUBSCRIPTION_METHOD
 
