@@ -33,7 +33,8 @@ private:
     std::uint64_t sequence{0};
     vehicle_core::MonotonicTimestamp origin_us{0};
     std::uint32_t epoch{0};
-    bool pending{false};
+    // Retained for snapshots until retired; renderer application does not clear it.
+    bool retained{false};
   };
 
   [[nodiscard]] bool contains(action_engine::ActionId action,

@@ -96,25 +96,29 @@ explicit fail-off, driver failure, and progress gate close/open. Publishers
 capture that generation at trigger time and preserve it in retained starts.
 This also rejects unseen starts lost behind fail-off in the overwrite queue
 and starts published while the progress gate was closed. A publication racing
-a gate close and reopen is followed by black. Startup resets this record
-along with held state. A
-transient does not extend a command's overall actionable deadline, and generic
-compatibility color remains the background when no held effects are present.
+any cancellation-generation change (including gate close/open, explicit
+fail-off, or each faulted worker pass) is followed by black and reports
+publication failure, allowing the publisher to retry held state. Startup resets
+this record along with held state. A transient does not extend a command's
+overall actionable deadline, and generic compatibility color remains the
+background when no held effects are present.
 
 Host renderer tests cover start and zone bounds, brightness, active interval,
 expiry restoring held fills, priority overlap with fills and turns, equal
 priority, repeated starts, held updates through the overwrite mailbox, invalid
 requests, immutable accepted definitions, fault/explicit fail-off recovery,
 backwards time, stale/future origins, unseen cancellation, progress-gate
-rejection and close/reopen races, compatibility background restoration, and
-elapsed timing near the clock representation limit.
+rejection and epoch-invalidation races, shared worker apply/tick fault
+invalidation and explicit fail-off queue overwrites, compatibility background
+restoration, and elapsed timing near the clock representation limit.
 
 The worker receive snapshot is static storage owned solely by that task; a
 compile-time guard limits the queue payload to one quarter of its 4096-byte
 stack. Compiler frame measurements and this guard do not establish runtime
 stack headroom for renderer, driver, logging, or publisher call chains. No
 worker/publisher high-water marks have been measured on hardware; that
-limitation remains an explicit pre-merge risk.
+limitation remains an accepted, unverified risk pending bench high-water
+measurement.
 
 ## Watched dispatcher progress
 
