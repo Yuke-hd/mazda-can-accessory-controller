@@ -120,3 +120,68 @@ TEST_CASE("JSON loader rejects invalid rule and output fields with their paths")
     CHECK_FALSE(result.diagnostic->message.empty());
   }
 }
+
+TEST_CASE("JSON loader rejects unverified brake LED profiles without partial models") {
+  for (const std::string type : {"state", "event", "sampled_state", "range"}) {
+    INFO(type);
+    const std::string condition = type == "range"
+                                      ? R"("input":{"from":0,"to":1},"output":{"from":0,"to":1})"
+                                      : R"("comparison":"equal","operand":{"boolean":true})";
+    const std::string edge = type == "event" ? R"(,"edge":"becomes_true")" : "";
+    const auto input =
+        std::string(R"({"version":1,"actions":[{"name":"brake_light"}],"rules":[{"type":")") +
+        type +
+        R"(","action":"brake_light","signal_key":"vehicle.brake_pressed","freshness":"fresh_or_unverified",)" +
+        condition + edge +
+        R"(}],"outputs":[{"type":"led_effect","action":"brake_light","effect":"brake","priority":150}]})";
+    const auto result = parse_controller_config(input);
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.configuration.has_value());
+    REQUIRE(result.diagnostic.has_value());
+    CHECK(result.diagnostic->category == ConfigErrorCategory::Semantic);
+    CHECK(result.diagnostic->schema_error == ValidationError::UnsupportedFreshnessPolicy);
+    CHECK(result.diagnostic->path == "rules[0]");
+    CHECK(result.diagnostic->message.find("vehicle.brake_pressed requires fresh") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("JSON loader accepts default and explicit fresh brake Boolean rules") {
+  for (const std::string type : {"state", "event", "sampled_state"}) {
+    for (const std::string freshness : {"", R"(,"freshness":"fresh")"}) {
+      INFO(type);
+      INFO(freshness);
+      const std::string edge = type == "event" ? R"(,"edge":"becomes_true")" : "";
+      const auto input =
+          std::string(R"({"version":1,"actions":[{"name":"brake_light"}],"rules":[{"type":")") +
+          type +
+          R"(","action":"brake_light","signal_key":"vehicle.brake_pressed","comparison":"equal","operand":{"boolean":true})" +
+          edge + freshness + "}]}";
+      const auto result = parse_controller_config(input);
+      REQUIRE(result.ok());
+      std::visit(
+          [](const auto &item) {
+            CHECK(item.freshness == action_engine::FreshnessRequirement::Fresh);
+          },
+          result.configuration->rules[0]);
+    }
+  }
+}
+
+TEST_CASE("JSON loader keeps unverified freshness available to other signals") {
+  for (const std::string type : {"state", "event", "sampled_state"}) {
+    INFO(type);
+    const std::string edge = type == "event" ? R"(,"edge":"becomes_true")" : "";
+    const auto input =
+        std::string(R"({"version":1,"actions":[{"name":"hazard"}],"rules":[{"type":")") + type +
+        R"(","action":"hazard","signal_key":"vehicle.hazard_request","comparison":"equal","operand":{"boolean":true},"freshness":"fresh_or_unverified")" +
+        edge + "}]}";
+    const auto result = parse_controller_config(input);
+    REQUIRE(result.ok());
+    std::visit(
+        [](const auto &item) {
+          CHECK(item.freshness == action_engine::FreshnessRequirement::FreshOrUnverified);
+        },
+        result.configuration->rules[0]);
+  }
+}

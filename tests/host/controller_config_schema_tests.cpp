@@ -13,6 +13,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -324,6 +325,50 @@ TEST_CASE("a rule needs a signal key") {
   range.signal_key.clear();
   config.rules = {range};
   check_error(config, ValidationError::EmptySignalKey, ConfigSection::Rules, 0);
+}
+
+TEST_CASE("brake rules reject unverified freshness before applying LED outputs") {
+  const persisted::Condition condition{"vehicle.brake_pressed", Comparison::Equal,
+                                       persisted::BooleanOperand{true}};
+  const persisted::Rule rules[] = {
+      persisted::StateRule{"brake_light", condition, FreshnessRequirement::FreshOrUnverified},
+      persisted::EventRule{"brake_light", condition, EventEdge::BecomesTrue,
+                           FreshnessRequirement::FreshOrUnverified},
+      persisted::SampledStateRule{"brake_light", condition,
+                                  FreshnessRequirement::FreshOrUnverified},
+      persisted::RangeRule{"brake_light",
+                           "vehicle.brake_pressed",
+                           {0.0F, 1.0F},
+                           {0.0F, 1.0F},
+                           FreshnessRequirement::FreshOrUnverified}};
+  for (const auto &rule : rules) {
+    CAPTURE(persisted::type_of(rule));
+    auto config = with_actions({"brake_light"});
+    config.rules = {rule};
+    config.outputs = {persisted::LedEffectBinding{"brake_light", LedEffect::Brake, 150}};
+    const auto rejected = persisted::validate(config);
+    CHECK_FALSE(rejected.ok());
+    CHECK(rejected.error == ValidationError::UnsupportedFreshnessPolicy);
+    CHECK(rejected.section == ConfigSection::Rules);
+    CHECK(rejected.index == 0);
+    config.outputs.clear();
+    check_error(config, ValidationError::UnsupportedFreshnessPolicy, ConfigSection::Rules, 0);
+    std::visit([](auto &item) { item.freshness = FreshnessRequirement::Fresh; }, config.rules[0]);
+    CHECK(persisted::validate(config).ok());
+    std::visit([](auto &item) { item.freshness = enum_value<FreshnessRequirement>(99); },
+               config.rules[0]);
+    check_error(config, ValidationError::UnknownFreshness, ConfigSection::Rules, 0);
+    std::visit(
+        [](auto &item) {
+          item.freshness = FreshnessRequirement::FreshOrUnverified;
+          if constexpr (std::is_same_v<std::decay_t<decltype(item)>, persisted::RangeRule>)
+            item.signal_key = "vehicle.engine_rpm";
+          else
+            item.condition.signal_key = "vehicle.hazard_request";
+        },
+        config.rules[0]);
+    CHECK(persisted::validate(config).ok());
+  }
 }
 
 TEST_CASE("a rule rejects unrecognized comparison, freshness and edge values") {

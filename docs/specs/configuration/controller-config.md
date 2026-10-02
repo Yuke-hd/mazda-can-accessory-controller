@@ -157,6 +157,7 @@ same name and meaning.
 | `DuplicateAction` | A second level rule (`state`, `sampled_state` or `range`) drives the same action. Event rules may share. |
 | `EmptySignalKey` | A rule's signal key is empty. |
 | `UnknownComparison`, `UnknownFreshness`, `UnknownEventEdge` | The value is not a recognized enumerator. |
+| `UnsupportedFreshnessPolicy` | A known freshness requirement violates controller signal safety policy: `vehicle.brake_pressed` requires `fresh`. |
 | `EmptyChoice` | A choice operand is empty. |
 | `InvalidOperand` | A number operand is NaN or infinite. |
 | `UnsupportedComparison` | An ordered comparison (`less`, `greater`, ...) has a boolean or choice operand. |
@@ -202,9 +203,13 @@ the catalog exposed by the Mazda telemetry provider.
 `vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
 with Boolean equality or inequality conditions in `state`, `event` and
 `sampled_state` rules; numeric ranges and enum choices are invalid. Compiling
-or loading such a rule does not make its observation fresh. The default
-`fresh` requirement excludes a `FreshnessUnverified` brake observation, and
-the schema does not configure telemetry freshness timeouts. The production
+or loading such a rule does not make its observation fresh. The YAML compiler
+and persisted C++ validator reject `fresh_or_unverified` for this exact
+canonical key on every rule variant, with or without an output binding.
+The default and only supported brake requirement is `fresh`, which excludes
+a `FreshnessUnverified` observation. There is no owner-approved opt-in for
+unverified brake data, and the schema does not configure telemetry freshness
+timeouts. Other signals may still use `fresh_or_unverified`. The production
 profile has no brake-pedal rule or brake-to-LED binding.
 
 Install the host-only dependency and compile a profile with:
@@ -232,8 +237,11 @@ and valid regression profiles, loads the emitted bytes through the canonical
 C++ loader, and resolves each rule against the real Mazda catalog. It also
 compares the complete catalog metadata with the host manifest. Compiler enum
 spellings are checked against the C++ persisted name tables. Brake regression
-profiles cover Boolean notify and read rules without output bindings, while
-type-mismatch and numeric-range cases must fail before JSON is emitted.
+profiles cover Boolean equality and inequality notify and read rules without
+output bindings. Type-mismatch, numeric-range and unverified-brake LED
+profiles must fail before JSON is emitted. Direct C++ validator and JSON
+loader regressions also reject unverified brake rules before any configuration
+can be applied; this protects the canonical JSON path independently of YAML.
 
 ## Not configurable
 

@@ -500,6 +500,8 @@ template <typename Entry, typename Parser>
     return "comparison is unsupported";
   case ValidationError::UnknownFreshness:
     return "freshness requirement is unsupported";
+  case ValidationError::UnsupportedFreshnessPolicy:
+    return "vehicle.brake_pressed requires fresh; unverified brake freshness is not supported";
   case ValidationError::UnknownEventEdge:
     return "event edge is unsupported";
   case ValidationError::EmptyChoice:

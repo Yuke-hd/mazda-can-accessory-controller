@@ -18,7 +18,8 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
   one build and must not be persisted.
 - `MazdaSignalProvider` exposes the Mazda-owned signal catalog. Reads use the
   same coherent publication as the typed polling API. Subscriptions share the
-  typed notification channels and their two-slot capacity. Subscriptions are
+  typed notification channels and their capacity, defined by
+  `vehicle_core::kNotificationSubscribersPerChannel`. Subscriptions are
   stopped-only mutations on the facade's lifecycle owner. The facade owns
   every registration, typed or generic, so the provider is a stateless view
   that is safe to destroy at any time, including while the facade runs.
@@ -34,16 +35,23 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 The Mazda generic catalog contains nineteen signals. `vehicle.brake_pressed`
 is a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
-publication; generic subscribers share the two slots of the public
-`on_brake_pressed_changed` notification channel.
+publication; generic subscribers share the public
+`on_brake_pressed_changed` notification channel. Its capacity is
+`vehicle_core::kNotificationSubscribersPerChannel`, shared across typed and
+generic registrations. Typed subscribers can exhaust the capacity needed by
+generic `subscribe()` calls, and generic subscribers can exhaust the capacity
+needed by typed subscriptions.
 
 Default brake freshness remains unset. A valid decoded observation is
 `FreshnessUnverified` until a caller explicitly supplies a freshness policy;
 Confirmed evidence does not imply `Fresh` availability. Unknown, malformed,
 stopped and faulted brake observations remain unavailable through the public
-contracts. The default controller profile binds no brake-pedal action to an
-LED output. See [signal evidence](../protocol/signal-evidence.md) for the
-field mapping and its evidence boundary.
+contracts. Controller configurations require `fresh` for the canonical brake
+key: both the YAML compiler and persisted C++ validation reject
+`fresh_or_unverified` before applying any output. There is no owner-approved
+opt-in for unverified brake observations. The default controller profile
+binds no brake-pedal action to an LED output. See
+[signal evidence](../protocol/signal-evidence.md) for the field mapping and its evidence boundary.
 
 ## Boundary contracts
 
