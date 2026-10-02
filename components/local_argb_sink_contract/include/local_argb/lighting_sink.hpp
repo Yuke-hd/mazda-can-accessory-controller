@@ -19,7 +19,8 @@ struct LightingRgb {
 // Resolves effects that overlap on the strip. Each lit effect owns the pixels
 // of its region, dark pixels included, wherever no effect of higher priority
 // overlaps it. At equal priority the later effect in drawing order wins: fills
-// in list order, then brake, then the left turn, then the right turn.
+// in list order, then brake, then the left turn, then the right turn, then
+// transients in snapshot order.
 // Priority is a binding choice; it does not depend on the signal behind it.
 class EffectPriority {
 public:
@@ -85,6 +86,83 @@ private:
   std::size_t count_{0};
 };
 
+// Stable renderer-local slot identity, unrelated to action or vehicle IDs.
+// Each publisher owns slots 1..8 for its lifetime; zero is unset.
+class TransientId {
+public:
+  static constexpr std::uint8_t kCapacity = 8;
+  constexpr TransientId() noexcept = default;
+  constexpr explicit TransientId(std::uint8_t value) noexcept : value_(value) {}
+  [[nodiscard]] constexpr std::uint8_t value() const noexcept { return value_; }
+  [[nodiscard]] constexpr bool valid() const noexcept { return value_ > 0 && value_ <= kCapacity; }
+
+private:
+  std::uint8_t value_{0};
+};
+
+// One-shot effects are bounded to five seconds; longer behavior is held state.
+inline constexpr vehicle_core::Microseconds kMaxTransientDurationUs = 5'000'000;
+
+// A solid-zone layer with duration in 1..kMaxTransientDurationUs.
+// Expiry compares elapsed time instead of adding a deadline, avoiding overflow.
+struct LightingTransient {
+  LedZone zone{};
+  LightingRgb color{};
+  EffectPriority priority{};
+  vehicle_core::Microseconds duration_us{0};
+};
+
+// A changed nonzero sequence starts/restarts this identity at apply time.
+// Repeating a sequence does not replay it, even after expiry or fail-off.
+// Publishers must explicitly supply trigger origin and cancellation generation.
+struct LightingTransientStart {
+  constexpr LightingTransientStart() noexcept = default;
+  constexpr LightingTransientStart(TransientId identity, std::uint64_t start_sequence,
+                                   LightingTransient definition,
+                                   vehicle_core::MonotonicTimestamp origin,
+                                   std::uint32_t generation) noexcept
+      : id(identity), epoch(generation), sequence(start_sequence), effect(definition),
+        origin_us(origin) {}
+
+  // Group the small fields so generation does not add a second padding gap.
+  TransientId id{};
+  // Captured from the sink at trigger time, never refreshed on held updates.
+  std::uint32_t epoch{0};
+  std::uint64_t sequence{0};
+  LightingTransient effect{};
+  // Monotonic trigger time, preserved across subsequent held-state snapshots.
+  vehicle_core::MonotonicTimestamp origin_us{0};
+};
+
+// Latest-start snapshots survive a one-item overwrite queue: publishers retain
+// each start in later held-state updates and change its sequence only to restart.
+class LightingTransientStarts {
+public:
+  static constexpr std::size_t kCapacity = TransientId::kCapacity;
+
+  [[nodiscard]] bool add(const LightingTransientStart &start) noexcept {
+    if (!start.id.valid() || start.sequence == 0 || start.effect.duration_us == 0 ||
+        start.effect.duration_us > kMaxTransientDurationUs || count_ == kCapacity)
+      return false;
+    for (const auto &existing : *this)
+      if (existing.id.value() == start.id.value())
+        return false;
+    starts_[count_++] = start;
+    return true;
+  }
+
+  [[nodiscard]] const LightingTransientStart *begin() const noexcept { return starts_.data(); }
+  [[nodiscard]] const LightingTransientStart *end() const noexcept {
+    return starts_.data() + count_;
+  }
+  [[nodiscard]] std::size_t size() const noexcept { return count_; }
+  [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
+
+private:
+  std::array<LightingTransientStart, kCapacity> starts_{};
+  std::size_t count_{0};
+};
+
 struct LightingCommand {
   // color is retained for the generic solid-colour compatibility handoff.
   LightingRgb color{};
@@ -99,6 +177,10 @@ struct LightingCommand {
   LightingFills fills{};
   // Overlap resolution for the fixed effects; see EffectPriority.
   EffectPriorities priorities{};
+  // One authoritative publisher owns this complete snapshot; independent
+  // publishers must compose their state before publishing. Missing identities
+  // cancel; expired/faulted sequences never replay.
+  LightingTransientStarts transients{};
 };
 
 // The renderer queue copies commands byte-wise.
@@ -110,6 +192,9 @@ class LightingSink {
 public:
   virtual ~LightingSink() = default;
   virtual bool publish(const LightingCommand &command) noexcept = 0;
+  // Capture at trigger time. Runtime sinks invalidate this generation on
+  // fail-off and gate transitions, including starts the renderer never saw.
+  [[nodiscard]] virtual std::uint32_t transient_epoch() const noexcept { return 0; }
 };
 
 // Adapt an implementation-owned generic solid-colour command without exposing

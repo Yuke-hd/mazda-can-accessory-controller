@@ -3,6 +3,7 @@
 #include "local_argb/progress_fail_off.hpp"
 #include "local_argb/progress_watchdog.hpp"
 #include "local_argb/renderer.hpp"
+#include "local_argb/renderer_runtime.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 
 #include "board/board_config.h"
@@ -35,6 +36,9 @@ constexpr UBaseType_t kWorkerPriority = tskIDLE_PRIORITY + 2;
 // so it only counts progress transitions and the worker logs them.
 constexpr UBaseType_t kSupervisorPriority = configMAX_PRIORITIES - 1;
 constexpr std::uint32_t kWorkerStackDepth = 4096;
+// Keep the queue payload below one quarter of the worker stack. This is a
+// growth guard, not evidence of runtime driver/logging stack headroom.
+static_assert(sizeof(internal::LightingCommand) <= kWorkerStackDepth / 4);
 constexpr std::uint32_t kSupervisorStackDepth = 2048;
 constexpr TickType_t kWorkerPollTicks =
     pdMS_TO_TICKS(kSupervisorPollUs / 1'000) == 0 ? 1 : pdMS_TO_TICKS(kSupervisorPollUs / 1'000);
@@ -133,8 +137,11 @@ QueueSink g_queue_sink;
 // it to the queue, so the supervisor itself makes no LED driver call.
 internal::StallGatedSink g_gated_sink{g_queue_sink};
 internal::ProgressFailOff g_progress_fail_off{g_gated_sink, g_queue_sink};
+internal::RendererRuntime g_runtime{g_controller, g_gated_sink};
 led_strip_handle_t g_onboard_strip{nullptr};
 led_strip_handle_t g_vehicle_strip{nullptr};
+// Only worker() owns this receive buffer; keep the enlarged snapshot off its stack.
+internal::LightingCommand g_worker_command{};
 StaticQueue_t g_queue_storage{};
 std::uint8_t g_queue_buffer[sizeof(internal::LightingCommand)]{};
 QueueHandle_t g_queue{nullptr};
@@ -159,12 +166,11 @@ void report_progress() noexcept {
 void worker(void *) noexcept {
   for (;;) {
     heartbeat_worker();
-    internal::LightingCommand command{};
-    if (xQueueReceive(g_queue, &command, kWorkerPollTicks) == pdTRUE) {
-      if (!g_controller.apply(command, now_us())) {
+    if (xQueueReceive(g_queue, &g_worker_command, kWorkerPollTicks) == pdTRUE) {
+      if (!g_runtime.apply(g_worker_command, now_us())) {
         ESP_LOGE(kTag, "pixel write failed; fail-off clear scheduled for retry");
       }
-    } else if (!g_controller.tick(now_us())) {
+    } else if (!g_runtime.tick(now_us())) {
       ESP_LOGE(kTag, "pixel fail-off clear retry failed");
     }
     report_progress();
@@ -329,8 +335,9 @@ bool start() noexcept {
 }
 
 void fail_off() noexcept {
-  const internal::LightingCommand command{};
-  if (!g_started || g_queue == nullptr || xQueueOverwrite(g_queue, &command) != pdPASS) {
+  // Invalidate starts overwritten before the worker saw them, while preserving
+  // a progress stall's closed gate. Racing publishers detect the epoch change.
+  if (!g_runtime.fail_off(g_queue_sink)) {
     (void)g_sink.write(kBlack);
   }
 }

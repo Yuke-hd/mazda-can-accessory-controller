@@ -169,6 +169,52 @@ void test_a_close_during_a_publish_is_followed_by_black() {
   assert(!downstream.last.left_turn);
 }
 
+void test_a_close_and_resume_during_publish_is_still_followed_by_black() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  downstream.gate = &gate;
+  const auto before = gate.transient_epoch();
+  downstream.on_publish = [](RecordingLightingSink &sink) {
+    sink.on_publish = nullptr;
+    sink.gate->close();
+    sink.gate->open();
+  };
+  assert(!gate.publish(lit()));
+  assert(gate.transient_epoch() != before);
+  assert(downstream.published == 2);
+  assert(!downstream.last.actionable);
+}
+
+void test_an_epoch_invalidation_during_publish_is_followed_by_black() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  downstream.gate = &gate;
+  downstream.on_publish = [](RecordingLightingSink &sink) {
+    sink.on_publish = nullptr;
+    sink.gate->invalidate_transients(); // driver fault or explicit fail-off, gate stays open
+  };
+  assert(!gate.publish(lit()));
+  assert(downstream.published == 2);
+  assert(!downstream.last.actionable);
+  assert(gate.publish(lit())); // invalidation did not close the progress gate
+}
+
+void test_explicit_cancellation_preserves_a_closed_progress_gate() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  const auto first = gate.transient_epoch();
+  gate.close();
+  const auto stalled = gate.transient_epoch();
+  assert(stalled != first);
+  gate.invalidate_transients();
+  assert(gate.transient_epoch() != stalled);
+  assert(!gate.publish(lit()));
+  const auto rejected = gate.transient_epoch();
+  gate.open();
+  assert(gate.transient_epoch() != rejected);
+  assert(gate.publish(lit()));
+}
+
 // Records whether the gate already rejected a lit command when black arrived.
 struct UngatedRecorder final : public LightingSink {
   bool publish(const LightingCommand &command) noexcept override {
@@ -246,6 +292,9 @@ int main() {
   test_recovery_is_reported_once_and_does_not_latch();
   test_a_clock_that_runs_backwards_is_treated_as_a_stall();
   test_rearming_clears_a_stall();
+  test_a_close_and_resume_during_publish_is_still_followed_by_black();
+  test_an_epoch_invalidation_during_publish_is_followed_by_black();
+  test_explicit_cancellation_preserves_a_closed_progress_gate();
   test_an_open_gate_forwards_commands_and_their_result();
   test_a_closed_gate_rejects_commands_without_forwarding();
   test_a_reopened_gate_forwards_the_next_command();
