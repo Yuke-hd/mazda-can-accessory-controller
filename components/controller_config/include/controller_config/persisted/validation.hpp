@@ -7,7 +7,7 @@
 
 // Schema-level validation of a persisted controller configuration. It needs no
 // parser, signal catalog or runtime: it checks structure, cross-references and
-// the brake freshness safety policy and value constraints enforced when a
+// the value constraints the action engine and local LED adapter enforce when a
 // configuration is applied. Checks that need the provider catalog (an unknown
 // signal key, a signal/operand type mismatch, an unknown choice key, a signal
 // capability) and fixed runtime capacities remain with the runtime apply step.
@@ -42,8 +42,6 @@ enum class ValidationError : std::uint8_t {
   InvalidColor,          // A colour channel is outside 0..255.
   InvalidPriority,       // The priority is outside 0..255.
   DuplicateBinding,      // The same action already drives this effect or zone.
-  // A known freshness requirement violates signal safety policy.
-  UnsupportedFreshnessPolicy,
 };
 
 // The first error found, checking the version, then actions, rules and

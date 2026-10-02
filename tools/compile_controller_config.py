@@ -273,11 +273,6 @@ def _validate_rule_signal(rule: Mapping[str, Any], path: str,
     metadata = catalog.get(signal_key)
     if metadata is None:
         raise CompileError(_path(path, "signal_key"), f"unknown signal '{signal_key}'")
-    if signal_key == "vehicle.brake_pressed" and rule["freshness"] == "fresh_or_unverified":
-        raise CompileError(
-            _path(path, "freshness"),
-            "vehicle.brake_pressed requires fresh; unverified brake freshness is not supported",
-        )
     required_capability = RULE_CAPABILITIES[rule["type"]]
     if required_capability not in metadata["capabilities"]:
         raise CompileError(

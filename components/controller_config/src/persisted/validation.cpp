@@ -10,7 +10,6 @@
 // Mirrors the constraints action_engine::ActionEngine and
 // local_argb_actions::LedActionSink enforce at apply time, so a document that
 // validates here fails at runtime only for catalog or capacity reasons. The
-// controller-owned brake freshness policy is also checked before apply. The
 // checks scan earlier entries instead of building sets: documents are small and
 // validation stays allocation-free.
 
@@ -102,29 +101,20 @@ constexpr Integer kMaxByte = 255;
 }
 
 [[nodiscard]] ValidationError
-freshness_error(const std::string_view signal_key,
-                const action_engine::FreshnessRequirement freshness) noexcept {
-  if (!name_of(freshness).has_value())
-    return ValidationError::UnknownFreshness;
-  // Brake timing is unverified. Persisted rules must not opt decoded brake
-  // data into output eligibility without a reviewed freshness policy.
-  if (signal_key == "vehicle.brake_pressed" &&
-      freshness == action_engine::FreshnessRequirement::FreshOrUnverified)
-    return ValidationError::UnsupportedFreshnessPolicy;
-  return ValidationError::None;
+freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
+  return name_of(freshness).has_value() ? ValidationError::None : ValidationError::UnknownFreshness;
 }
 
 [[nodiscard]] ValidationError body_error(const StateRule &rule) noexcept {
   if (const ValidationError error = condition_error(rule.condition); error != ValidationError::None)
     return error;
-  return freshness_error(rule.condition.signal_key, rule.freshness);
+  return freshness_error(rule.freshness);
 }
 
 [[nodiscard]] ValidationError body_error(const SampledStateRule &rule) noexcept {
   if (const ValidationError error = condition_error(rule.condition); error != ValidationError::None)
     return error;
-  if (const ValidationError error = freshness_error(rule.condition.signal_key, rule.freshness);
-      error != ValidationError::None)
+  if (const ValidationError error = freshness_error(rule.freshness); error != ValidationError::None)
     return error;
   if (rule.release_threshold.has_value() &&
       !is_valid_release(rule.condition, *rule.release_threshold))
@@ -137,14 +127,13 @@ freshness_error(const std::string_view signal_key,
     return error;
   if (!name_of(rule.edge).has_value())
     return ValidationError::UnknownEventEdge;
-  return freshness_error(rule.condition.signal_key, rule.freshness);
+  return freshness_error(rule.freshness);
 }
 
 [[nodiscard]] ValidationError body_error(const RangeRule &rule) noexcept {
   if (rule.signal_key.empty())
     return ValidationError::EmptySignalKey;
-  if (const ValidationError error = freshness_error(rule.signal_key, rule.freshness);
-      error != ValidationError::None)
+  if (const ValidationError error = freshness_error(rule.freshness); error != ValidationError::None)
     return error;
   if (!is_finite(rule.input) || !is_finite(rule.output) || !(rule.input.from < rule.input.to))
     return ValidationError::InvalidRange;

@@ -121,28 +121,28 @@ TEST_CASE("JSON loader rejects invalid rule and output fields with their paths")
   }
 }
 
-TEST_CASE("JSON loader rejects unverified brake LED profiles without partial models") {
-  for (const std::string type : {"state", "event", "sampled_state", "range"}) {
+TEST_CASE("JSON loader retains owner opted unverified brake Boolean LED profiles") {
+  for (const std::string type : {"state", "event", "sampled_state"}) {
     INFO(type);
-    const std::string condition = type == "range"
-                                      ? R"("input":{"from":0,"to":1},"output":{"from":0,"to":1})"
-                                      : R"("comparison":"equal","operand":{"boolean":true})";
     const std::string edge = type == "event" ? R"(,"edge":"becomes_true")" : "";
     const auto input =
         std::string(R"({"version":1,"actions":[{"name":"brake_light"}],"rules":[{"type":")") +
         type +
-        R"(","action":"brake_light","signal_key":"vehicle.brake_pressed","freshness":"fresh_or_unverified",)" +
-        condition + edge +
+        R"(","action":"brake_light","signal_key":"vehicle.brake_pressed","freshness":"fresh_or_unverified","comparison":"equal","operand":{"boolean":true})" +
+        edge +
         R"(}],"outputs":[{"type":"led_effect","action":"brake_light","effect":"brake","priority":150}]})";
     const auto result = parse_controller_config(input);
-    CHECK_FALSE(result.ok());
-    CHECK_FALSE(result.configuration.has_value());
-    REQUIRE(result.diagnostic.has_value());
-    CHECK(result.diagnostic->category == ConfigErrorCategory::Semantic);
-    CHECK(result.diagnostic->schema_error == ValidationError::UnsupportedFreshnessPolicy);
-    CHECK(result.diagnostic->path == "rules[0]");
-    CHECK(result.diagnostic->message.find("vehicle.brake_pressed requires fresh") !=
-          std::string::npos);
+    REQUIRE(result.ok());
+    CHECK_FALSE(result.diagnostic.has_value());
+    REQUIRE(result.configuration->rules.size() == 1);
+    std::visit(
+        [](const auto &item) {
+          CHECK(item.freshness == action_engine::FreshnessRequirement::FreshOrUnverified);
+        },
+        result.configuration->rules[0]);
+    REQUIRE(result.configuration->outputs.size() == 1);
+    CHECK(std::get<LedEffectBinding>(result.configuration->outputs[0]).effect ==
+          local_argb_actions::LedEffect::Brake);
   }
 }
 

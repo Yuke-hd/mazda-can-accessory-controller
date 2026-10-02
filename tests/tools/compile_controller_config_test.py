@@ -458,14 +458,10 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 self.assertEqual(document["rules"][0]["freshness"], "fresh")
                 self.assertEqual(document["outputs"], [])
 
-    def test_unverified_brake_led_profiles_fail_before_json_is_written(self) -> None:
-        for rule_type in ("state", "event", "sampled_state", "range"):
+    def test_owner_opted_unverified_brake_led_profiles_compile(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
             with self.subTest(rule_type=rule_type):
-                condition = "comparison: equal\n                    operand: {boolean: true}"
-                if rule_type == "event":
-                    condition += "\n                    edge: becomes_true"
-                if rule_type == "range":
-                    condition = "input: {from: 0, to: 1}\n                    output: {from: 0, to: 1}"
+                edge = "edge: becomes_true" if rule_type == "event" else ""
                 source = f"""
                 version: 1
                 actions: [{{name: brake_light}}]
@@ -473,8 +469,10 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                   - type: {rule_type}
                     action: brake_light
                     signal_key: vehicle.brake_pressed
+                    comparison: equal
+                    operand: {{boolean: true}}
                     freshness: fresh_or_unverified
-                    {condition}
+                    {edge}
                 outputs:
                   - type: led_effect
                     action: brake_light
@@ -482,10 +480,11 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                     priority: 150
                 """
                 result, output = self.run_compiler(source)
-                self.assertEqual(result.returncode, 2, result.stderr)
-                self.assertIn("rules[0].freshness", result.stderr)
-                self.assertIn("vehicle.brake_pressed requires fresh", result.stderr)
-                self.assertIsNone(output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                document = json.loads(output)
+                self.assertEqual(document["rules"][0]["freshness"], "fresh_or_unverified")
+                self.assertEqual(document["rules"][0]["operand"], {"boolean": True})
+                self.assertEqual(document["outputs"][0]["effect"], "brake")
 
     def test_other_boolean_signals_allow_explicit_unverified_freshness(self) -> None:
         for rule_type in ("state", "event", "sampled_state"):
@@ -532,22 +531,25 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                     self.assertIsNone(output)
 
     def test_brake_boolean_signal_rejects_numeric_range_rules(self) -> None:
-        source = """
-        version: 1
-        actions: [{name: brake_condition}]
-        rules:
-          - type: range
-            action: brake_condition
-            signal_key: vehicle.brake_pressed
-            input: {from: 0, to: 1}
-            output: {from: 0, to: 1}
-        outputs: []
-        """
-        result, output = self.run_compiler(source)
-        self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("rules[0].signal_key", result.stderr)
-        self.assertIn("must be numeric", result.stderr)
-        self.assertIsNone(output)
+        for freshness in ("fresh", "fresh_or_unverified"):
+            with self.subTest(freshness=freshness):
+                source = f"""
+                version: 1
+                actions: [{{name: brake_condition}}]
+                rules:
+                  - type: range
+                    action: brake_condition
+                    signal_key: vehicle.brake_pressed
+                    input: {{from: 0, to: 1}}
+                    output: {{from: 0, to: 1}}
+                    freshness: {freshness}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("rules[0].signal_key", result.stderr)
+                self.assertIn("must be numeric", result.stderr)
+                self.assertIsNone(output)
 
     def test_invalid_output_bounds_fail(self) -> None:
         source = """
