@@ -122,8 +122,12 @@ the controller-config runtime/tooling:
 ```sh
 python3 -m pip install --user -r tools/requirements.txt
 python3 tools/compile_controller_config.py \
-  docs/specs/configuration/examples/controller-config-v1.yaml /tmp/controller-config-v1.json
+  config/default.yaml /tmp/controller-config-v1.json
 ```
+
+`config/default.yaml` is the factory profile the firmware embeds by default.
+Keep local profiles in `config/`; everything there except `default.yaml` is
+git-ignored.
 
 The ESP32 does not include a YAML parser; compilation is host-only. See the
 [persisted configuration schema](docs/specs/configuration/controller-config.md) for

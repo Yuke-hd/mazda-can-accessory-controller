@@ -204,7 +204,7 @@ Install the host-only dependency and compile a profile with:
 ```sh
 python3 -m pip install --user -r tools/requirements.txt
 python3 tools/compile_controller_config.py \
-  docs/specs/configuration/examples/controller-config-v1.yaml \
+  config/default.yaml \
   /tmp/controller-config-v1.json
 ```
 
@@ -241,9 +241,10 @@ schema exposes them:
 
 ## Production lighting profile
 
-This version 1 document is the factory profile for the firmware. It covers
-the mirrored turn signals, the hazard, the RPM level fill and the RPM red
-zone. `production_lighting_config()` builds the same document in C++ for host
+`config/default.yaml` is the factory profile for the firmware; the version 1
+example in `examples/controller-config-v1.yaml` documents the same profile.
+It covers the mirrored turn signals, the hazard, the RPM level fill and the
+RPM red zone. `production_lighting_config()` builds the same document in C++ for host
 parity tests; firmware loads this YAML's generated JSON through the canonical
 persisted configuration loader.
 `tests/host/controller_config_schema_tests.cpp` checks that the C++ builder
