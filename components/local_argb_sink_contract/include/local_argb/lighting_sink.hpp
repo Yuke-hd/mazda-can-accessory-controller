@@ -100,7 +100,10 @@ private:
   std::uint8_t value_{0};
 };
 
-// A solid-zone layer with a positive, finite duration. Zero draws nothing.
+// One-shot effects are bounded to five seconds; longer behavior is held state.
+inline constexpr vehicle_core::Microseconds kMaxTransientDurationUs = 5'000'000;
+
+// A solid-zone layer with duration in 1..kMaxTransientDurationUs.
 // Expiry compares elapsed time instead of adding a deadline, avoiding overflow.
 struct LightingTransient {
   LedZone zone{};
@@ -112,9 +115,22 @@ struct LightingTransient {
 // A changed nonzero sequence starts/restarts this identity at apply time.
 // Repeating a sequence does not replay it, even after expiry or fail-off.
 struct LightingTransientStart {
+  constexpr LightingTransientStart() noexcept = default;
+  constexpr LightingTransientStart(TransientId identity, std::uint64_t start_sequence,
+                                   LightingTransient definition,
+                                   vehicle_core::MonotonicTimestamp origin = 0,
+                                   std::uint32_t generation = 0) noexcept
+      : id(identity), epoch(generation), sequence(start_sequence), effect(definition),
+        origin_us(origin) {}
+
+  // Group the small fields so generation does not add a second padding gap.
   TransientId id{};
+  // Captured from the sink at trigger time, never refreshed on held updates.
+  std::uint32_t epoch{0};
   std::uint64_t sequence{0};
   LightingTransient effect{};
+  // Monotonic trigger time, preserved across subsequent held-state snapshots.
+  vehicle_core::MonotonicTimestamp origin_us{0};
 };
 
 // Latest-start snapshots survive a one-item overwrite queue: publishers retain
@@ -124,7 +140,8 @@ public:
   static constexpr std::size_t kCapacity = TransientId::kCapacity;
 
   [[nodiscard]] bool add(const LightingTransientStart &start) noexcept {
-    if (!start.id.valid() || start.sequence == 0 || count_ == kCapacity)
+    if (!start.id.valid() || start.sequence == 0 || start.effect.duration_us == 0 ||
+        start.effect.duration_us > kMaxTransientDurationUs || count_ == kCapacity)
       return false;
     for (const auto &existing : *this)
       if (existing.id.value() == start.id.value())
@@ -159,7 +176,9 @@ struct LightingCommand {
   LightingFills fills{};
   // Overlap resolution for the fixed effects; see EffectPriority.
   EffectPriorities priorities{};
-  // Missing identities cancel; expired/faulted sequences never replay.
+  // One authoritative publisher owns this complete snapshot; independent
+  // publishers must compose their state before publishing. Missing identities
+  // cancel; expired/faulted sequences never replay.
   LightingTransientStarts transients{};
 };
 
@@ -172,6 +191,9 @@ class LightingSink {
 public:
   virtual ~LightingSink() = default;
   virtual bool publish(const LightingCommand &command) noexcept = 0;
+  // Capture at trigger time. Runtime sinks invalidate this generation on
+  // fail-off and gate transitions, including starts the renderer never saw.
+  [[nodiscard]] virtual std::uint32_t transient_epoch() const noexcept { return 0; }
 };
 
 // Adapt an implementation-owned generic solid-colour command without exposing

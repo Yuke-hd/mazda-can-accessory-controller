@@ -172,12 +172,13 @@ void TransientLayers::cancel() noexcept {
 
 void TransientLayers::expire(const vehicle_core::MonotonicTimestamp now_us) noexcept {
   for (auto &timing : timing_)
-    if (now_us < timing.started_us || now_us - timing.started_us >= timing.effect.duration_us)
+    if (!timing.live(now_us))
       timing.active = false;
 }
 
 void TransientLayers::apply(const LightingTransientStarts &starts,
-                            const vehicle_core::MonotonicTimestamp now_us) noexcept {
+                            const vehicle_core::MonotonicTimestamp now_us,
+                            const std::uint32_t epoch) noexcept {
   std::array<bool, LightingTransientStarts::kCapacity> present{};
   for (const auto &start : starts) {
     const auto index = start.id.value() - 1;
@@ -186,7 +187,9 @@ void TransientLayers::apply(const LightingTransientStarts &starts,
     if (timing.sequence == start.sequence)
       continue;
     timing = {start.effect, start.sequence, now_us,
-              start.effect.duration_us > 0 &&
+              start.effect.duration_us > 0 && start.effect.duration_us <= kMaxTransientDurationUs &&
+                  start.epoch == epoch && now_us >= start.origin_us &&
+                  now_us - start.origin_us < start.effect.duration_us &&
                   validate_zone(start.effect.zone) == ZoneValidity::Valid};
   }
   for (std::size_t index = 0; index < timing_.size(); ++index)
@@ -194,14 +197,11 @@ void TransientLayers::apply(const LightingTransientStarts &starts,
       timing_[index].active = false;
 }
 
-LightingFills
-TransientLayers::active(const LightingTransientStarts &starts,
-                        const vehicle_core::MonotonicTimestamp now_us) const noexcept {
+LightingFills TransientLayers::active(const LightingTransientStarts &starts) const noexcept {
   LightingFills fills;
   for (const auto &start : starts) {
     const auto &timing = timing_[start.id.value() - 1];
-    if (timing.active && now_us >= timing.started_us &&
-        now_us - timing.started_us < timing.effect.duration_us)
+    if (timing.active)
       (void)fills.add(
           {timing.effect.zone, FillFraction::full(), timing.effect.color, timing.effect.priority});
   }
@@ -215,15 +215,20 @@ bool RendererController::start() noexcept {
   animation_started_us_ = 0;
   last_tick_us_ = 0;
   transients_ = {};
+  transient_epoch_ = 0;
   return write_desired(kBlackFrame);
 }
 
 bool RendererController::apply(const LightingCommand &command,
-                               const vehicle_core::MonotonicTimestamp now_us) noexcept {
+                               const vehicle_core::MonotonicTimestamp now_us,
+                               const std::uint32_t epoch) noexcept {
+  if (epoch != transient_epoch_)
+    transients_.cancel();
+  transient_epoch_ = epoch;
   const bool effects_changed = !has_command_ || command.left_turn != command_.left_turn ||
                                command.right_turn != command_.right_turn ||
                                command.brake != command_.brake;
-  transients_.apply(command.transients, now_us);
+  transients_.apply(command.transients, now_us, epoch);
   command_ = command;
   has_command_ = true;
   if (effects_changed)
@@ -259,7 +264,7 @@ RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) con
 
   // Painter's order by priority: each layer owns its region wherever no
   // later, higher-or-equal layer overlaps it; see EffectPriority.
-  const auto transients = transients_.active(command_.transients, now_us);
+  const auto transients = transients_.active(command_.transients);
   LayerStack layers{command_, transients};
   layers.sort_by_priority();
   const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
