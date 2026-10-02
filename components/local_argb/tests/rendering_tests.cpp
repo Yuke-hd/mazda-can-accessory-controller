@@ -5,6 +5,7 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
 #include "local_argb/renderer.hpp"
+#include "local_argb/stall_gated_sink.hpp"
 #include "vehicle_lighting_policy/command.hpp"
 
 namespace {
@@ -409,14 +410,16 @@ namespace transient {
 
 using namespace local_argb::internal;
 constexpr local_argb::Rgb kBlue{0, 0, 16};
+static_assert(sizeof(LightingTransientStart) <= 64, "queue slots must not waste epoch padding");
 
 LightingCommand started(std::uint64_t sequence = 1, vehicle_core::Microseconds duration = 800'000,
-                        EffectPriority priority = EffectPriority{150}) {
+                        EffectPriority priority = EffectPriority{150},
+                        vehicle_core::MonotonicTimestamp origin_us = 0, std::uint32_t epoch = 0) {
   LightingCommand command = priority::held();
   assert(command.fills.add(
       priority::fill({10, 20}, FillFraction::full(), priority::kGauge, EffectPriority{50})));
   assert(command.transients.add(
-      {TransientId{1}, sequence, {{15, 5}, {0, 0, 255}, priority, duration}}));
+      {TransientId{1}, sequence, {{15, 5}, {0, 0, 255}, priority, duration}, origin_us, epoch}));
   return command;
 }
 
@@ -449,13 +452,13 @@ void test_held_update_does_not_restart_but_new_sequence_does() {
   assert(renderer.apply(update, 400'100));
   assert(renderer.tick(800'100));
   assert(sink.writes.back()[15] == priority::kGauge);
-  assert(renderer.apply(started(2), 900'000));
+  assert(renderer.apply(started(2, 800'000, EffectPriority{150}, 900'000), 900'000));
   assert(renderer.tick(1'699'999));
   assert(sink.writes.back()[15] == kBlue);
   assert(renderer.tick(1'700'000));
   assert(sink.writes.back()[15] == priority::kGauge);
-  assert(renderer.apply(started(3), 1'800'000));
-  assert(renderer.apply(started(4), 2'000'000));
+  assert(renderer.apply(started(3, 800'000, EffectPriority{150}, 1'800'000), 1'800'000));
+  assert(renderer.apply(started(4, 800'000, EffectPriority{150}, 2'000'000), 2'000'000));
   assert(renderer.tick(2'799'999));
   assert(sink.writes.back()[15] == kBlue);
   assert(renderer.tick(2'800'000));
@@ -491,7 +494,14 @@ void test_same_sequence_preserves_the_original_effect() {
 }
 
 void test_invalid_requests_are_bounded_and_fail_off() {
-  assert(priority::render(started(1, 0))[15] == priority::kGauge);
+  LightingTransientStarts invalid;
+  assert(!invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, 0}}));
+  assert(!invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs + 1}}));
+  assert(!invalid.add({TransientId{1},
+                       1,
+                       {{15, 5}, {}, {}, std::numeric_limits<vehicle_core::Microseconds>::max()}}));
+  assert(invalid.empty());
+  assert(invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs}}));
   auto command = priority::held();
   for (std::uint8_t id = 1; id <= LightingTransientStarts::kCapacity; ++id)
     assert(command.transients.add({TransientId{id}, 1, {{id, 1}, {0, 0, 16}, {}, 100}}));
@@ -542,12 +552,76 @@ void test_mailbox_preserves_latest_start_and_duration_near_clock_limit() {
   FakePixelSink sink;
   RendererController renderer{sink};
   assert(renderer.start());
-  auto command = started(1, 100);
-  command.valid_until_us = std::numeric_limits<vehicle_core::MonotonicTimestamp>::max();
-  const auto near_limit = command.valid_until_us - 50;
+  const auto limit = std::numeric_limits<vehicle_core::MonotonicTimestamp>::max();
+  const auto near_limit = limit - 50;
+  auto command = started(1, 100, EffectPriority{150}, near_limit);
+  command.valid_until_us = limit;
   assert(renderer.apply(command, near_limit));
   assert(renderer.tick(command.valid_until_us));
   assert(sink.writes.back()[15] == kBlue); // elapsed comparison cannot overflow
+}
+
+void test_gate_rejected_start_is_not_replayed_after_resume() {
+  FakeLightingSink downstream;
+  StallGatedSink gate{downstream};
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  gate.close();
+  const auto rejected = started(1, 1'000, EffectPriority{150}, 100, gate.transient_epoch());
+  assert(!gate.publish(rejected));
+  gate.open();
+  assert(gate.publish(rejected)); // a held update retains the rejected start
+  assert(renderer.apply(downstream.commands.back(), 200, gate.transient_epoch()));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  const auto fresh = started(2, 1'000, EffectPriority{150}, 200, gate.transient_epoch());
+  assert(gate.publish(fresh));
+  assert(renderer.apply(downstream.commands.back(), 200, gate.transient_epoch()));
+  assert(sink.writes.back()[15] == kBlue);
+}
+
+void test_unseen_starts_require_current_epoch_and_fresh_origin() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  const auto old = started(1, 1'000, EffectPriority{150}, 100, 0);
+  // The queue accepted the start, but explicit fail-off overwrote it before take.
+  Mailbox mailbox;
+  mailbox.submit(old);
+  mailbox.submit({});
+  LightingCommand taken;
+  assert(mailbox.take(taken));
+  assert(renderer.apply(taken, 150, 1));
+  assert(renderer.apply(old, 200, 1));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  const auto fresh = started(2, 1'000, EffectPriority{150}, 200, 1);
+  assert(renderer.apply(fresh, 300, 1));
+  assert(sink.writes.back()[15] == kBlue);
+  assert(renderer.tick(1'299)); // full duration begins at application time
+  assert(sink.writes.back()[15] == kBlue);
+  assert(renderer.tick(1'300));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(3, 1'000, EffectPriority{150}, 200, 1), 1'300, 1));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(4, 1'000, EffectPriority{150}, 2'000, 1), 1'400, 1));
+  assert(sink.writes.back()[15] == priority::kGauge); // future origin is invalid
+}
+
+void test_compatibility_colour_is_restored_after_transient_expiry() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  auto command = priority::held();
+  command.color = {0, 12, 0};
+  assert(command.transients.add({TransientId{1}, 1, {{15, 5}, {0, 0, 16}, {}, 100}}));
+  assert(renderer.apply(command, 0));
+  assert((sink.writes.back()[14] == local_argb::Rgb{0, 12, 0}));
+  assert(sink.writes.back()[15] == kBlue);
+  assert((sink.writes.back()[20] == local_argb::Rgb{0, 12, 0}));
+  assert(renderer.tick(100));
+  assert((sink.writes.back()[15] == local_argb::Rgb{0, 12, 0}));
+  assert(renderer.tick(50)); // latched expiry cannot revive on clock rollback
+  assert((sink.writes.back()[15] == local_argb::Rgb{0, 12, 0}));
 }
 
 } // namespace transient
@@ -593,6 +667,9 @@ int main() {
   priority::test_lower_priority_turn_yields_to_a_fill();
   priority::test_equal_priorities_resolve_in_drawing_order();
   priority::test_priorities_do_not_change_disjoint_effects();
+  transient::test_gate_rejected_start_is_not_replayed_after_resume();
+  transient::test_unseen_starts_require_current_epoch_and_fresh_origin();
+  transient::test_compatibility_colour_is_restored_after_transient_expiry();
   transient::test_start_active_expiry_and_zone();
   transient::test_held_update_does_not_restart_but_new_sequence_does();
   transient::test_priorities_and_equal_priority_drawing_order();

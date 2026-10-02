@@ -54,12 +54,11 @@ inline constexpr AnimationStrategy kCenterOutFillAnimation = &render_center_out_
 // sequences remain recorded after cancellation so recovery cannot replay them.
 class TransientLayers {
 public:
-  void apply(const LightingTransientStarts &starts,
-             vehicle_core::MonotonicTimestamp now_us) noexcept;
+  void apply(const LightingTransientStarts &starts, vehicle_core::MonotonicTimestamp now_us,
+             std::uint32_t epoch) noexcept;
   void cancel() noexcept;
   void expire(vehicle_core::MonotonicTimestamp now_us) noexcept;
-  [[nodiscard]] LightingFills active(const LightingTransientStarts &starts,
-                                     vehicle_core::MonotonicTimestamp now_us) const noexcept;
+  [[nodiscard]] LightingFills active(const LightingTransientStarts &starts) const noexcept;
 
 private:
   struct Timing {
@@ -67,6 +66,10 @@ private:
     std::uint64_t sequence{0};
     vehicle_core::MonotonicTimestamp started_us{0};
     bool active{false};
+
+    [[nodiscard]] bool live(vehicle_core::MonotonicTimestamp now_us) const noexcept {
+      return active && now_us >= started_us && now_us - started_us < effect.duration_us;
+    }
   };
   std::array<Timing, LightingTransientStarts::kCapacity> timing_{};
 };
@@ -84,7 +87,8 @@ public:
   }
 
   bool start() noexcept;
-  bool apply(const LightingCommand &command, vehicle_core::MonotonicTimestamp now_us) noexcept;
+  bool apply(const LightingCommand &command, vehicle_core::MonotonicTimestamp now_us,
+             std::uint32_t epoch = 0) noexcept;
   bool tick(vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] bool faulted() const noexcept { return faulted_; }
 
@@ -96,6 +100,7 @@ private:
   LightingCommand command_{};
   TransientLayers transients_{};
   vehicle_core::MonotonicTimestamp last_tick_us_{0};
+  std::uint32_t transient_epoch_{0};
   bool has_command_{false};
   PixelFrame last_written_{};
   bool has_last_written_{false};
