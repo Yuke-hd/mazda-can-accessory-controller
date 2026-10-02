@@ -1,7 +1,7 @@
 # Supported host builds
 
-Portable host code uses C++17. CI covers CMake `3.20.5` and `4.4.3` with
-Ninja. The host test dependency is doctest `v2.5.0`, pinned to commit
+Portable host code uses C++17. CI runs the host tests with CMake `4.3.5` and
+Ninja. CMake 3.20 remains the declared minimum, but CI does not exercise it. The host test dependency is doctest `v2.5.0`, pinned to commit
 `d44d4f6e66232d716af82f00a063759e9d0e50d6` in
 `tests/host/CMakeLists.txt`. The exact pin avoids the pre-3.5 CMake minimum
 in doctest `v2.4.11` metadata, which CMake 4 rejects. The firmware toolchain
@@ -33,8 +33,8 @@ The doctest dependency is fetched by CMake at configure time. A clean build
 therefore needs network access unless the pinned source is already in the
 FetchContent cache. The generic companion core is pinned at release `0.1.0`;
 for an offline build, point `VEHICLE_CAN_CORE_SOURCE_DIR` at an exact `0.1.0`
-checkout. If a compiler, Ninja, network, or supported CMake leg is unavailable,
-record the exact command and report that leg as unavailable.
+checkout. If a compiler, Ninja, network, or the CI CMake version is unavailable,
+record the exact command and report that check as unavailable.
 
 ## Sanitizers
 

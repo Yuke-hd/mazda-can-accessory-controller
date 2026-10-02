@@ -22,11 +22,11 @@ Version = Tuple[int, ...]
 
 
 # Keep this policy in one place so checker output, documentation, and CI use
-# the same supported host-CMake floor. CMake 4.4 is the modern compatibility
-# leg exercised by CI; newer versions remain valid when they preserve the
-# project's declared policy range.
+# the same supported host-CMake floor. CMake 4.3 is the version exercised by
+# CI; the 3.20 floor is declared but not tested in CI. Newer versions remain
+# valid when they preserve the project's declared policy range.
 SUPPORTED_HOST_CMAKE_MINIMUM: Version = (3, 20)
-SUPPORTED_HOST_CMAKE_MODERN: Version = (4, 4)
+SUPPORTED_HOST_CMAKE_MODERN: Version = (4, 3)
 
 
 @dataclass(frozen=True)
