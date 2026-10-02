@@ -65,7 +65,7 @@ class ToolchainCheckerTests(unittest.TestCase):
     def test_cmake_support_includes_minimum_and_modern_legs(self) -> None:
         requirement = next(item for item in check_toolchain.REQUIREMENTS if item.name == "CMake")
         minimum_valid, _ = requirement.check("cmake version 3.20.5")
-        modern_valid, _ = requirement.check("cmake version 4.4.3")
+        modern_valid, _ = requirement.check("cmake version 4.3.5")
         below_minimum, detail = requirement.check("cmake version 3.19.9")
         self.assertTrue(minimum_valid)
         self.assertTrue(modern_valid)
