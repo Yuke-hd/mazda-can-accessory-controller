@@ -92,13 +92,15 @@ void check_config(const persisted::ControllerConfig &actual,
           const auto &reference = std::get<Binding>(expected.outputs[index]);
           CHECK(binding.action == reference.action);
           CHECK(binding.priority == reference.priority);
-          if constexpr (std::is_same_v<Binding, persisted::LedFillBinding>) {
+          if constexpr (!std::is_same_v<Binding, persisted::LedEffectBinding>) {
             CHECK(binding.zone.start == reference.zone.start);
             CHECK(binding.zone.length == reference.zone.length);
             CHECK(binding.zone.direction == reference.zone.direction);
             CHECK(binding.color.red == reference.color.red);
             CHECK(binding.color.green == reference.color.green);
             CHECK(binding.color.blue == reference.color.blue);
+            if constexpr (std::is_same_v<Binding, persisted::LedTransientBinding>)
+              CHECK(binding.duration_ms == reference.duration_ms);
           } else {
             CHECK(binding.effect == reference.effect);
           }
@@ -184,9 +186,12 @@ TEST_CASE("canonical serialization preserves factory configuration field by fiel
 TEST_CASE("canonical serialization preserves nondefault fields and every model alternative") {
   auto model = persisted::production_lighting_config();
   std::get<persisted::SampledStateRule>(model.rules[4]).release_threshold = 5800.1F;
-  model.actions.push_back(persisted::Action{"pulse"});
+  const std::string pulse = "pulse 123\"\\\n";
+  model.actions.push_back(persisted::Action{pulse});
+  model.outputs.push_back(persisted::LedTransientBinding{
+      pulse, {20, 20, local_argb::internal::FillDirection::EndToStart}, {0, 16, 32}, 800, 120});
   model.rules.push_back(
-      persisted::EventRule{"pulse",
+      persisted::EventRule{pulse,
                            persisted::Condition{"test.boolean", action_engine::Comparison::NotEqual,
                                                 persisted::BooleanOperand{true}},
                            action_engine::EventEdge::BecomesFalse,

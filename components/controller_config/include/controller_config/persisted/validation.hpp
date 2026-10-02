@@ -42,6 +42,7 @@ enum class ValidationError : std::uint8_t {
   InvalidColor,          // A colour channel is outside 0..255.
   InvalidPriority,       // The priority is outside 0..255.
   DuplicateBinding,      // The same action already drives this effect or zone.
+  InvalidDuration,       // Duration is outside 1..kMaxTransientDurationMs.
 };
 
 // The first error found, checking the version, then actions, rules and

@@ -119,6 +119,198 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIn("YAML", result.stderr)
         self.assertIsNone(output_path)
 
+    def transient_source(self, output: dict) -> str:
+        # JSON mappings are valid YAML and preserve exact integer input values.
+        return json.dumps({"version": 1, "actions": [{"name": "action"}], "outputs": [output]})
+
+    def transient_output(self, **overrides: object) -> dict:
+        return {
+            "type": "led_transient",
+            "action": "action",
+            "zone": {"start": 0, "length": 10, "direction": "start_to_end"},
+            "color": {"red": 255, "green": 16, "blue": 32},
+            "duration_ms": 500,
+            **overrides,
+        }
+
+    def test_transient_output_normalizes_alias_and_default_priority(self) -> None:
+        output = self.transient_output(
+            type="LedTransient",
+            zone={"start": 0, "length": 10, "direction": "StartToEnd"},
+        )
+        result, canonical = self.run_compiler(self.transient_source(output))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        normalized = json.loads(canonical)["outputs"][0]
+        self.assertEqual(normalized, self.transient_output(priority=100))
+        self.assertIsInstance(normalized["duration_ms"], int)
+
+    def test_transient_duration_accepts_exact_integer_bounds(self) -> None:
+        for duration in (1, 500, 9007199254740991, 1.0):
+            with self.subTest(duration=duration):
+                result, canonical = self.run_compiler(
+                    self.transient_source(self.transient_output(duration_ms=duration, priority=255))
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                normalized = json.loads(canonical)["outputs"][0]
+                self.assertEqual(normalized["duration_ms"], duration)
+                self.assertIsInstance(normalized["duration_ms"], int)
+                self.assertEqual(normalized["priority"], 255)
+        for scalar, expected in (("9007199254740991.000000000000000000", 9007199254740991),
+                                 ("8.0e+2", 800)):
+            with self.subTest(scalar=scalar):
+                source = self.transient_source(self.transient_output(duration_ms="DURATION"))
+                result, canonical = self.run_compiler(source.replace('"DURATION"', scalar))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(canonical)["outputs"][0]["duration_ms"], expected)
+
+    def test_invalid_transient_durations_have_field_diagnostics(self) -> None:
+        for duration in (0, -1, 1.5, True, False, "500", None,
+                         9007199254740992, 18446744073709552):
+            with self.subTest(duration=duration):
+                result, canonical = self.run_compiler(
+                    self.transient_source(self.transient_output(duration_ms=duration))
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("outputs[0].duration_ms", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIsNone(canonical)
+
+    def test_transient_duration_rejects_fractional_source_before_double_rounding(self) -> None:
+        for scalar in ("9007199254740991.1", "800.000000000000000001", "1.0e-100000000"):
+            with self.subTest(duration=scalar):
+                source = self.transient_source(self.transient_output(duration_ms="DURATION"))
+                result, canonical = self.run_compiler(source.replace('"DURATION"', scalar))
+
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("outputs[0].duration_ms", result.stderr)
+                self.assertIn("must be an integer", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIsNone(canonical)
+        source = self.transient_source(self.transient_output(duration_ms="DURATION"))
+        result, canonical = self.run_compiler(source.replace('"DURATION"', "1.0e+100000000"))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("outputs[0].duration_ms", result.stderr)
+        self.assertIn("must be in 1..9007199254740991", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIsNone(canonical)
+        for scalar in (".nan", ".inf", "-.inf"):
+            with self.subTest(nonfinite=scalar):
+                source = self.transient_source(self.transient_output(duration_ms="DURATION"))
+                result, canonical = self.run_compiler(source.replace('"DURATION"', scalar))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("outputs[0].duration_ms", result.stderr)
+                self.assertIn("must be an integer", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertIsNone(canonical)
+
+    def test_invalid_transient_fields_retain_existing_diagnostics(self) -> None:
+        cases = (
+            ({"type": "state"}, "type", "unsupported output type"),
+            ({"type": "LedFlash"}, "type", "unsupported type"),
+            ({"type": True}, "type", "expected a string"),
+            ({"action": "missing"}, "action", "not declared"),
+            ({"action": ""}, "action", "must not be empty"),
+            ({"action": True}, "action", "expected a string"),
+            ({"zone": None}, "zone", "expected a mapping"),
+            ({"zone": {"start": 99, "length": 2, "direction": "start_to_end"}}, "zone", "fit within"),
+            ({"zone": {"start": True, "length": 1, "direction": "start_to_end"}}, "zone.start", "integer"),
+            ({"zone": {"start": 0, "length": 1.5, "direction": "start_to_end"}}, "zone.length", "integer"),
+            ({"zone": {"start": 0, "length": 1, "direction": "sideways"}}, "zone.direction", "unsupported"),
+            ({"color": None}, "color", "expected a mapping"),
+            ({"color": {"red": -1, "green": 0, "blue": 0}}, "color.red", "0..255"),
+            ({"color": {"red": 0, "green": 256, "blue": 0}}, "color.green", "0..255"),
+            ({"color": {"red": 0, "green": 0, "blue": 1.5}}, "color.blue", "integer"),
+            ({"priority": 256}, "priority", "0..255"),
+            ({"priority": True}, "priority", "integer"),
+            ({"priority": 1.5}, "priority", "integer"),
+        )
+        for overrides, field, diagnostic in cases:
+            with self.subTest(overrides=overrides):
+                result, canonical = self.run_compiler(
+                    self.transient_source(self.transient_output(**overrides))
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"outputs[0].{field}", result.stderr)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertIsNone(canonical)
+
+    def test_transient_rejects_missing_and_unknown_fields(self) -> None:
+        for field in ("type", "action", "zone", "color", "duration_ms"):
+            with self.subTest(missing=field):
+                output = self.transient_output()
+                del output[field]
+                result, canonical = self.run_compiler(self.transient_source(output))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"outputs[0].{field}", result.stderr)
+                self.assertIn("required field is missing", result.stderr)
+                self.assertIsNone(canonical)
+        for field in ("effect", "unexpected"):
+            with self.subTest(unknown=field):
+                result, canonical = self.run_compiler(
+                    self.transient_source(self.transient_output(**{field: "brake"}))
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(f"outputs[0].{field}", result.stderr)
+                self.assertIn("unknown field", result.stderr)
+                self.assertIsNone(canonical)
+        for parent, fields in (("zone", ("start", "length", "direction")),
+                               ("color", ("red", "green", "blue"))):
+            for field in (*fields, "unexpected"):
+                with self.subTest(parent=parent, field=field):
+                    output = self.transient_output()
+                    if field == "unexpected":
+                        output[parent][field] = 1
+                        diagnostic = "unknown field"
+                    else:
+                        del output[parent][field]
+                        diagnostic = "required field is missing"
+                    result, canonical = self.run_compiler(self.transient_source(output))
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn(f"outputs[0].{parent}.{field}", result.stderr)
+                    self.assertIn(diagnostic, result.stderr)
+                    self.assertIsNone(canonical)
+
+    def test_transient_duplicate_target_ignores_color_duration_and_priority(self) -> None:
+        document = {
+            "version": 1,
+            "actions": [{"name": "action"}],
+            "outputs": [
+                self.transient_output(),
+                self.transient_output(
+                    type="LedTransient", duration_ms=1, priority=0,
+                    zone={"start": 0, "length": 10, "direction": "StartToEnd"},
+                    color={"red": 0, "green": 0, "blue": 0},
+                ),
+            ],
+        }
+        result, canonical = self.run_compiler(json.dumps(document))
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("outputs[1]", result.stderr)
+        self.assertIn("output binding target must be unique", result.stderr)
+        self.assertIsNone(canonical)
+
+    def test_transient_distinct_targets_and_fill_on_same_zone_are_allowed(self) -> None:
+        fill = self.transient_output(type="led_fill")
+        del fill["duration_ms"]
+        document = {
+            "version": 1,
+            "actions": [{"name": "action"}, {"name": "other"}],
+            "outputs": [
+                self.transient_output(),
+                self.transient_output(zone={"start": 1, "length": 10, "direction": "start_to_end"}),
+                self.transient_output(zone={"start": 0, "length": 11, "direction": "start_to_end"}),
+                self.transient_output(zone={"start": 0, "length": 10, "direction": "end_to_start"}),
+                self.transient_output(action="other"),
+                fill,
+            ],
+        }
+        result, canonical = self.run_compiler(json.dumps(document))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(json.loads(canonical)["outputs"]), 6)
+
     def test_fractional_integer_fields_fail_before_float_rounding(self) -> None:
         template = """
         version: VERSION

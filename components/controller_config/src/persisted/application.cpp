@@ -66,10 +66,21 @@ bind_output(const OutputBinding &output, const ControllerConfig &config,
         using Binding = std::decay_t<decltype(binding)>;
         if constexpr (std::is_same_v<Binding, LedEffectBinding>)
           return leds.bind(*id, binding.effect, priority(binding.priority));
-        else
+        else if constexpr (std::is_same_v<Binding, LedFillBinding>)
           return leds.bind(*id,
                            local_argb_actions::FillEffect{zone(binding.zone), color(binding.color),
                                                           priority(binding.priority)});
+        else {
+          // validate() precedes application: this checked persisted bound makes
+          // conversion to unsigned microseconds lossless and non-overflowing.
+          static_assert(static_cast<std::uint64_t>(kMaxTransientDurationMs) <=
+                        std::numeric_limits<vehicle_core::Microseconds>::max() / 1000U);
+          const auto duration =
+              static_cast<vehicle_core::Microseconds>(binding.duration_ms) * 1000U;
+          return leds.bind(
+              *id, local_argb::internal::LightingTransient{zone(binding.zone), color(binding.color),
+                                                           priority(binding.priority), duration});
+        }
       },
       output);
 }

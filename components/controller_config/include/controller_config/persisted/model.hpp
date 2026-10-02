@@ -138,14 +138,28 @@ struct LedFillBinding {
   Integer priority{kDefaultPriority};
 };
 
-using OutputBinding = std::variant<LedEffectBinding, LedFillBinding>;
+// Largest consecutive exact JSON binary64 integer. Multiplication by 1000
+// also fits the renderer's unsigned microsecond duration without overflow.
+inline constexpr Integer kMaxTransientDurationMs = 9007199254740991;
+
+// Binds Trigger to a solid local LED zone for a finite duration in milliseconds.
+struct LedTransientBinding {
+  std::string action{};
+  LedZone zone{};
+  Rgb color{};
+  Integer duration_ms{0};
+  Integer priority{kDefaultPriority};
+};
+
+using OutputBinding = std::variant<LedEffectBinding, LedFillBinding, LedTransientBinding>;
 
 // The persisted `type` of an output binding; the enumerator order is the
 // OutputBinding alternative order.
-enum class OutputType : std::uint8_t { LedEffect, LedFill };
+enum class OutputType : std::uint8_t { LedEffect, LedFill, LedTransient };
 
 static_assert(std::is_same_v<std::variant_alternative_t<0, OutputBinding>, LedEffectBinding>);
 static_assert(std::is_same_v<std::variant_alternative_t<1, OutputBinding>, LedFillBinding>);
+static_assert(std::is_same_v<std::variant_alternative_t<2, OutputBinding>, LedTransientBinding>);
 
 [[nodiscard]] constexpr OutputType type_of(const OutputBinding &binding) noexcept {
   return static_cast<OutputType>(binding.index());

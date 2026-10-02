@@ -197,7 +197,8 @@ freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
   return ValidationError::None;
 }
 
-[[nodiscard]] ValidationError body_error(const LedFillBinding &binding) noexcept {
+template <typename Binding>
+[[nodiscard]] ValidationError zone_binding_error(const Binding &binding) noexcept {
   if (const ValidationError error = zone_error(binding.zone); error != ValidationError::None)
     return error;
   if (!is_byte(binding.color.red) || !is_byte(binding.color.green) || !is_byte(binding.color.blue))
@@ -207,14 +208,27 @@ freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
   return ValidationError::None;
 }
 
-// As local_argb_actions: one binding per action and effect, and per action and
-// zone (direction included).
+[[nodiscard]] ValidationError body_error(const LedFillBinding &binding) noexcept {
+  return zone_binding_error(binding);
+}
+
+[[nodiscard]] ValidationError body_error(const LedTransientBinding &binding) noexcept {
+  if (const auto error = zone_binding_error(binding); error != ValidationError::None)
+    return error;
+  if (binding.duration_ms <= 0 || binding.duration_ms > kMaxTransientDurationMs)
+    return ValidationError::InvalidDuration;
+  return ValidationError::None;
+}
+
+// As local_argb_actions: one binding per kind, action and effect or zone
+// (direction included). Appearance, priority and duration do not change a target.
 [[nodiscard]] bool same_target(const LedEffectBinding &left,
                                const LedEffectBinding &right) noexcept {
   return left.action == right.action && left.effect == right.effect;
 }
 
-[[nodiscard]] bool same_target(const LedFillBinding &left, const LedFillBinding &right) noexcept {
+template <typename Binding>
+[[nodiscard]] bool same_target(const Binding &left, const Binding &right) noexcept {
   return left.action == right.action && left.zone.start == right.zone.start &&
          left.zone.length == right.zone.length && left.zone.direction == right.zone.direction;
 }

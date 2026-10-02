@@ -27,7 +27,7 @@ The C++ model is in `components/controller_config/include/controller_config/pers
 | --- | --- |
 | `model.hpp` | `ControllerConfig` and its value types. |
 | `names.hpp` | Persisted spellings: `name_of()` and `parse_name<Enum>()`. |
-| `json_loader.hpp` | `parse_controller_config(std::string_view)`, the canonical JSON boundary. |
+| `json_loader.hpp` | `parse_controller_config(std::string_view)` and `serialize_controller_config()`, the JSON boundary. |
 | `validation.hpp` | `validate(const ControllerConfig &)`. |
 | `production_profile.hpp` | `production_lighting_config()`, the example below in C++. |
 
@@ -116,6 +116,38 @@ Every binding has a `type` and the `action` it follows.
 | `color` | `{red, green, blue}` integers 0..255 | yes | Colour at full level. |
 | `priority` | integer 0..255 | no (`100`) | Drawing order among fills. |
 
+`led_transient` binds an action's `Trigger` to a solid zone for a bounded
+lifetime. It shares `action`, `zone`, `color`, and `priority` fields with
+`led_fill`, plus required `duration_ms` (integer `1..9007199254740991`). The
+upper bound is `2^53-1`: every accepted millisecond value is exactly representable
+as a JSON binary64 integer and its conversion to unsigned microseconds fits
+without overflow. This is a representation bound, not a recommended effect
+length. The renderer owns elapsed-time expiry and its brightness ceiling.
+
+JSON `duration_ms` must use an integer token: `800` is accepted, while `800.0`
+and `8e2` are rejected. The loader checks the original token before cJSON's
+double conversion can silently round a fractional or oversized duration.
+YAML authoring normalizes exactly integral numeric values to integer JSON.
+
+```yaml
+outputs:
+  - type: led_transient
+    action: door_open_event # Must be declared under actions.
+    zone: {start: 20, length: 20, direction: start_to_end}
+    color: {red: 32, green: 16, blue: 0}
+    duration_ms: 800
+    priority: 120
+```
+
+Multiple transient zones may follow one action. A duplicate is the same
+binding kind, action, zone start, length, and direction; changing colour,
+duration, or priority does not make a new target. A fill and transient may
+share a zone. `Activate`, `Deactivate`, and `SetLevel` leave transient timing
+unchanged; only `Trigger` starts or restarts a transient. Renderer expiry and
+explicit fail-off cancel active layers. Applying a configuration installs
+bindings through `LedActionSink`; it does not bypass trigger/fail-off behavior. No transient
+rule is added to the factory configuration.
+
 ### Persisted names
 
 Names are snake_case and case-sensitive. `names.hpp` holds the single table
@@ -125,7 +157,7 @@ persisted.
 | Value | Names |
 | --- | --- |
 | rule `type` | `state`, `sampled_state`, `event`, `range` |
-| output `type` | `led_effect`, `led_fill` |
+| output `type` | `led_effect`, `led_fill`, `led_transient` |
 | `comparison` | `equal`, `not_equal`, `less`, `less_or_equal`, `greater`, `greater_or_equal` |
 | `freshness` | `fresh`, `fresh_or_unverified` |
 | `edge` | `becomes_true`, `becomes_false` |
@@ -167,7 +199,8 @@ same name and meaning.
 | `ZoneOutOfRange` | The zone does not fit the 100-pixel logical strip (`local_argb::kLedCount`), or has a negative start or length. |
 | `InvalidColor` | A colour channel is outside 0..255. |
 | `InvalidPriority` | A priority is outside 0..255. |
-| `DuplicateBinding` | The same action already drives this effect, or this zone (start, length and direction). |
+| `DuplicateBinding` | The same binding kind and action already drive this effect, or this zone (start, length and direction). |
+| `InvalidDuration` | Transient `duration_ms` is outside `1..9007199254740991`. |
 
 A validated configuration can still fail when the runtime applies it. These
 checks need the provider's signal catalog or the runtime's fixed capacities,
@@ -177,7 +210,7 @@ so they remain with the runtime apply step and keep their existing
 - an unknown signal key;
 - an operand type that does not match the signal's type, or an unknown choice key;
 - a signal whose capabilities do not support the rule type;
-- rule or binding capacity (for example, 8 effect and 8 fill bindings).
+- rule or binding capacity (for example, 8 effect, 8 fill and 8 transient bindings).
 
 ## Versioning
 
@@ -386,6 +419,12 @@ For example, a rule is
 `{"type": "range", "action": "rpm_fill", "signal_key": "vehicle.engine_rpm", ...}`.
 
 ## Canonical JSON loading
+
+`serialize_controller_config()` emits deterministic JSON for a validated model,
+including transient durations. Its existing caller precondition is to call
+`validate()` first. Serialization preserves every rule/output alternative and
+escapes string values; transient outputs are optional additions to schema 1,
+so existing version-1 documents retain their behavior.
 
 `controller_config::persisted::parse_controller_config()` parses version-one
 JSON directly into the owning `ControllerConfig` above and calls its existing
