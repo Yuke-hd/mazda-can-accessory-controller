@@ -42,7 +42,8 @@ set(CONTROLLER_CONFIG_FACTORY_JSON
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CONTROLLER_CONFIG_DEFAULT_YAML}"
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
-    "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json")
+    "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp")
 message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 execute_process(
@@ -66,6 +67,7 @@ add_custom_command(
   DEPENDS "${CONTROLLER_CONFIG_DEFAULT_YAML}"
           "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
           "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
+          "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp"
   COMMENT "Compiling factory controller configuration")
 add_custom_target(controller_config_factory_json
   DEPENDS "${CONTROLLER_CONFIG_FACTORY_JSON}")

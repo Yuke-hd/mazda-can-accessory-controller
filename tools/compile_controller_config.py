@@ -14,6 +14,7 @@ import math
 import re
 import struct
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -33,6 +34,10 @@ MAX_JSON_BYTES = 16 * 1024
 # them as a finite double.
 FLOAT_MAX = 3.4028234663852886e38
 SIGNAL_CATALOG_PATH = Path(__file__).with_name("controller_signal_catalog.json")
+DURATION_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp"
+)
 SIGNAL_TYPES = {"boolean", "number", "enum"}
 RULE_CAPABILITIES = {
     "state": "notify",
@@ -55,6 +60,8 @@ ENUMS = {
         "LedEffect": "led_effect",
         "led_fill": "led_fill",
         "LedFill": "led_fill",
+        "led_transient": "led_transient",
+        "LedTransient": "led_transient",
     },
     "comparison": {
         "equal": "equal",
@@ -108,6 +115,25 @@ class CompileError(ValueError):
         super().__init__(message)
         self.path = path
         self.message = message
+
+
+def _max_transient_duration_ms() -> int:
+    """Read the sole lifetime authority from the repository's sink contract."""
+    try:
+        contract = DURATION_CONTRACT_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CompileError("$", f"cannot read transient duration contract: {error}") from error
+    match = re.search(r"\bkMaxTransientDurationUs\s*=\s*([0-9][0-9']*)\s*;", contract)
+    if match is None:
+        raise CompileError("$", "transient duration contract must define its maximum as an integer literal")
+    maximum_us = int(match.group(1).replace("'", ""))
+    if maximum_us < 1000 or maximum_us % 1000:
+        raise CompileError("$", "transient duration contract maximum must be positive whole milliseconds")
+    return maximum_us // 1000
+
+
+class _YamlDurationScalar(str):
+    """A YAML numeric duration lexeme retained before double rounding."""
 
 
 def _path(parent: str, child: str) -> str:
@@ -192,6 +218,26 @@ def _integer(value: Any, path: str, description: str = "integer") -> int:
     if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
         raise CompileError(path, f"{description} must be an integer")
     return int(value)
+
+
+def _normalize_duration(value: Any, path: str) -> int:
+    if isinstance(value, _YamlDurationScalar):
+        try:
+            exact = Decimal(value.replace("_", ""))
+        except InvalidOperation:
+            raise CompileError(path, "duration_ms must be an integer") from None
+        if not exact.is_finite() or exact != exact.to_integral_value():
+            raise CompileError(path, "duration_ms must be an integer")
+        duration = exact
+    else:
+        duration = _integer(value, path, "duration_ms")
+    # Check before int conversion to avoid allocating huge exponent values.
+    # This bound stays exact in JSON's double parser and fits uint64_t after
+    # the runtime millisecond-to-microsecond conversion.
+    maximum_ms = _max_transient_duration_ms()
+    if not 1 <= duration <= maximum_ms:
+        raise CompileError(path, f"duration_ms must be in 1..{maximum_ms}")
+    return int(duration)
 
 
 def _enum(value: Any, path: str, kind: str) -> str:
@@ -478,9 +524,9 @@ def _normalize_color(value: Any, path: str) -> dict[str, int]:
 
 def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[str, Any], tuple[Any, ...]]:
     output = _mapping(value, path)
-    _fields(output, path, ("type", "action"), ("effect", "zone", "color", "priority"))
+    _fields(output, path, ("type", "action"), ("effect", "zone", "color", "priority", "duration_ms"))
     output_type = _enum(output["type"], _path(path, "type"), "type")
-    if output_type not in {"led_effect", "led_fill"}:
+    if output_type not in {"led_effect", "led_fill", "led_transient"}:
         raise CompileError(_path(path, "type"), f"unsupported output type '{output_type}'")
     action = _non_blank_string(output["action"], _path(path, "action"), "action reference")
     if action not in actions:
@@ -497,12 +543,20 @@ def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[st
             (output_type, action, effect),
         )
 
-    _fields(output, path, ("type", "action", "zone", "color"), ("priority",))
+    required = ("type", "action", "zone", "color")
+    if output_type == "led_transient":
+        required += ("duration_ms",)
+    _fields(output, path, required, ("priority",))
     zone = _normalize_zone(output["zone"], _path(path, "zone"))
     color = _normalize_color(output["color"], _path(path, "color"))
+    normalized = {"type": output_type, "action": action, "zone": zone, "color": color, "priority": priority}
+    if output_type == "led_transient":
+        duration_path = _path(path, "duration_ms")
+        normalized["duration_ms"] = _normalize_duration(output["duration_ms"], duration_path)
     return (
-        {"type": output_type, "action": action, "zone": zone, "color": color, "priority": priority},
-        (output_type, action, zone["start"], zone["length"], zone["direction"]),
+        normalized,
+        (output_type, action, zone["start"], zone["length"])
+        + ((zone["direction"],) if output_type == "led_fill" else ()),
     )
 
 
@@ -578,7 +632,14 @@ def _yaml_loader() -> Any:
                 raise yaml.constructor.ConstructorError(
                     "while constructing a mapping", node.start_mark, f"duplicate key '{key}'", key_node.start_mark
                 )
-            mapping[key] = loader.construct_object(value_node, deep=deep)
+            # Retain numeric lexemes for every duration_ms mapping key. Schema
+            # validation currently permits that field only in transient outputs;
+            # a future duration_ms field must opt into _normalize_duration or
+            # narrow this interception before accepting ordinary float values.
+            if key == "duration_ms" and value_node.tag == "tag:yaml.org,2002:float":
+                mapping[key] = _YamlDurationScalar(value_node.value)
+            else:
+                mapping[key] = loader.construct_object(value_node, deep=deep)
         return mapping
 
     UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct_mapping)

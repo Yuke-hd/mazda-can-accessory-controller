@@ -27,8 +27,9 @@ template <> struct Names<RuleType> {
 };
 
 template <> struct Names<OutputType> {
-  static constexpr NameTable<OutputType, 2> kTable{
-      {{OutputType::LedEffect, "led_effect"}, {OutputType::LedFill, "led_fill"}}};
+  static constexpr NameTable<OutputType, 3> kTable{{{OutputType::LedEffect, "led_effect"},
+                                                    {OutputType::LedFill, "led_fill"},
+                                                    {OutputType::LedTransient, "led_transient"}}};
 };
 
 template <> struct Names<Comparison> {

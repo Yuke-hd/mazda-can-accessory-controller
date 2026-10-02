@@ -138,14 +138,31 @@ struct LedFillBinding {
   Integer priority{kDefaultPriority};
 };
 
-using OutputBinding = std::variant<LedEffectBinding, LedFillBinding>;
+// Persisted milliseconds share the renderer contract's bounded lifetime.
+static_assert(local_argb::internal::kMaxTransientDurationUs >= 1000 &&
+                  local_argb::internal::kMaxTransientDurationUs % 1000 == 0,
+              "Transient duration maximum must be at least one whole millisecond");
+inline constexpr Integer kMaxTransientDurationMs =
+    static_cast<Integer>(local_argb::internal::kMaxTransientDurationUs / 1000);
+
+// Binds Trigger to a solid local LED zone for a finite duration in milliseconds.
+struct LedTransientBinding {
+  std::string action{};
+  LedZone zone{};
+  Rgb color{};
+  Integer duration_ms{0};
+  Integer priority{kDefaultPriority};
+};
+
+using OutputBinding = std::variant<LedEffectBinding, LedFillBinding, LedTransientBinding>;
 
 // The persisted `type` of an output binding; the enumerator order is the
 // OutputBinding alternative order.
-enum class OutputType : std::uint8_t { LedEffect, LedFill };
+enum class OutputType : std::uint8_t { LedEffect, LedFill, LedTransient };
 
 static_assert(std::is_same_v<std::variant_alternative_t<0, OutputBinding>, LedEffectBinding>);
 static_assert(std::is_same_v<std::variant_alternative_t<1, OutputBinding>, LedFillBinding>);
+static_assert(std::is_same_v<std::variant_alternative_t<2, OutputBinding>, LedTransientBinding>);
 
 [[nodiscard]] constexpr OutputType type_of(const OutputBinding &binding) noexcept {
   return static_cast<OutputType>(binding.index());

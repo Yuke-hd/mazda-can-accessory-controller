@@ -2,6 +2,7 @@
 #include "controller_config/persisted/names.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -192,6 +193,79 @@ void set_error(ConfigDiagnostic &error, const Category category, const Code code
     return false;
   }
   output = static_cast<std::int64_t>(number);
+  return true;
+}
+
+// cJSON keeps numbers as doubles, so recover this field's original token
+// before accepting it. A rounded fractional/large input must not silently
+// become a different duration. In pinned cJSON 1.7.19, parse_object/parse_array
+// append children in source order, including duplicate members. Visiting each
+// child's complete subtree before its next sibling therefore visits numbers in
+// lexical order, even across nested arrays/objects. number_token skips complete
+// strings (including escaped quotes/backslashes), so digits in keys/strings do
+// not enter that order. Schema checks reject duplicate keys separately.
+// Each duration rescans the tree/document; the input size and element preflight
+// limits bound this O(outputs * bytes) work.
+[[nodiscard]] bool number_index(const cJSON &node, const cJSON *target,
+                                std::size_t &index) noexcept {
+  if (&node == target)
+    return true;
+  if (cJSON_IsNumber(&node))
+    ++index;
+  for (const cJSON *child = node.child; child != nullptr; child = child->next)
+    if (number_index(*child, target, index))
+      return true;
+  return false;
+}
+
+[[nodiscard]] std::string_view number_token(const std::string_view json,
+                                            std::size_t number) noexcept {
+  for (std::size_t index = 0; index < json.size(); ++index) {
+    if (json[index] == '"') {
+      while (++index < json.size() && json[index] != '"')
+        if (json[index] == '\\')
+          ++index;
+      continue;
+    }
+    if (json[index] != '-' && (json[index] < '0' || json[index] > '9'))
+      continue;
+    const auto start = index;
+    while (index < json.size() && json[index] != ',' && json[index] != ']' && json[index] != '}' &&
+           json[index] != ' ' && json[index] != '\t' && json[index] != '\r' && json[index] != '\n')
+      ++index;
+    if (number-- == 0)
+      return json.substr(start, index - start);
+    --index;
+  }
+  return {};
+}
+
+[[nodiscard]] bool parse_duration(const cJSON *value, const cJSON &root,
+                                  const std::string_view json, const std::string_view path,
+                                  Integer &output, ConfigDiagnostic &error) {
+  if (value == nullptr || !cJSON_IsNumber(value)) {
+    set_error(error, Category::Structural, Code::TypeMismatch, std::string(path),
+              "duration_ms must be an integer number");
+    return false;
+  }
+  std::size_t index = 0;
+  if (!number_index(root, value, index)) {
+    set_error(error, Category::Structural, Code::InvalidValue, std::string(path),
+              "duration_ms source number was not found in the parsed document",
+              ValidationError::InvalidDuration);
+    return false;
+  }
+  const auto token = number_token(json, index);
+  std::from_chars_result parsed{};
+  if (!token.empty())
+    parsed = std::from_chars(token.data(), token.data() + token.size(), output);
+  if (token.empty() || parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
+    set_error(error, Category::Structural, Code::InvalidValue, std::string(path),
+              "duration_ms must use an integer token in 1.." +
+                  std::to_string(kMaxTransientDurationMs),
+              ValidationError::InvalidDuration);
+    return false;
+  }
   return true;
 }
 
@@ -424,7 +498,8 @@ template <typename Binding>
 }
 
 [[nodiscard]] bool parse_output(const cJSON &object, const std::string_view path,
-                                OutputBinding &output, ConfigDiagnostic &error) {
+                                OutputBinding &output, ConfigDiagnostic &error, const cJSON &root,
+                                const std::string_view json) {
   const cJSON *type = required_field(object, "type", path, error);
   OutputType kind{};
   if (type == nullptr || !parse_enum(type, child_path(path, "type"), kind, error))
@@ -436,12 +511,25 @@ template <typename Binding>
     if (!parse_binding_body(object, path, binding, error))
       return false;
     output = std::move(binding);
-  } else {
+  } else if (kind == OutputType::LedFill) {
     if (!reject_unknown_fields(object, path, {"type", "action", "zone", "color", "priority"},
                                error))
       return false;
     LedFillBinding binding{};
     if (!parse_binding_body(object, path, binding, error))
+      return false;
+    output = std::move(binding);
+  } else {
+    if (!reject_unknown_fields(
+            object, path, {"type", "action", "zone", "color", "duration_ms", "priority"}, error))
+      return false;
+    LedTransientBinding binding{};
+    if (!parse_binding_body(object, path, binding, error))
+      return false;
+    const cJSON *duration = required_field(object, "duration_ms", path, error);
+    if (duration == nullptr ||
+        !parse_duration(duration, root, json, child_path(path, "duration_ms"), binding.duration_ms,
+                        error))
       return false;
     output = std::move(binding);
   }
@@ -482,7 +570,7 @@ template <typename Entry, typename Parser>
   }
   return "$";
 }
-[[nodiscard]] const char *validation_message(const ValidationError error) {
+[[nodiscard]] std::string validation_message(const ValidationError error) {
   switch (error) {
   case ValidationError::UnsupportedVersion:
     return "unsupported configuration version; expected 1";
@@ -526,6 +614,8 @@ template <typename Entry, typename Parser>
     return "priority must be in 0..255";
   case ValidationError::DuplicateBinding:
     return "output binding target must be unique";
+  case ValidationError::InvalidDuration:
+    return "transient duration_ms must be in 1.." + std::to_string(kMaxTransientDurationMs);
   case ValidationError::None:
     return "configuration is valid";
   }
@@ -632,7 +722,13 @@ ConfigLoadResult parse_controller_config(const std::string_view json) {
   if (version == nullptr || !parse_integer(version, "version", config.version, error) ||
       !parse_array(*root, "actions", config.actions, parse_action, error) ||
       !parse_array(*root, "rules", config.rules, parse_rule, error) ||
-      !parse_array(*root, "outputs", config.outputs, parse_output, error))
+      !parse_array(
+          *root, "outputs", config.outputs,
+          [&](const cJSON &object, const std::string_view path, OutputBinding &output,
+              ConfigDiagnostic &diagnostic) {
+            return parse_output(object, path, output, diagnostic, *root, json.substr(0, length));
+          },
+          error))
     return failure(std::move(error));
   const auto validation = validate(config);
   if (!validation.ok()) {
@@ -802,7 +898,10 @@ void append_output_binding(std::string &output, const persisted::OutputBinding &
           output += ",\"priority\":";
           append_integer(output, value.priority);
         } else {
-          output += "\"led_fill\",\"action\":";
+          if constexpr (std::is_same_v<Binding, persisted::LedTransientBinding>)
+            output += "\"led_transient\",\"action\":";
+          else
+            output += "\"led_fill\",\"action\":";
           append_json_string(output, value.action);
           output += ",\"zone\":{\"start\":";
           append_integer(output, value.zone.start);
@@ -816,7 +915,12 @@ void append_output_binding(std::string &output, const persisted::OutputBinding &
           append_integer(output, value.color.green);
           output += ",\"blue\":";
           append_integer(output, value.color.blue);
-          output += "},\"priority\":";
+          output.push_back('}');
+          if constexpr (std::is_same_v<Binding, persisted::LedTransientBinding>) {
+            output += ",\"duration_ms\":";
+            append_integer(output, value.duration_ms);
+          }
+          output += ",\"priority\":";
           append_integer(output, value.priority);
         }
         output.push_back('}');
