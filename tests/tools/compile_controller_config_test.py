@@ -421,6 +421,75 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertEqual(document["rules"][0]["type"], "event")
         self.assertEqual(document["rules"][1]["release_threshold"], 5900)
 
+    def test_brake_boolean_conditions_compile_for_notify_and_read_rules(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
+            for operand in ("{boolean: true}", "{boolean: false}"):
+                with self.subTest(rule_type=rule_type, operand=operand):
+                    edge = "edge: becomes_true" if rule_type == "event" else ""
+                    source = f"""
+                    version: 1
+                    actions: [{{name: brake_condition}}]
+                    rules:
+                      - type: {rule_type}
+                        action: brake_condition
+                        signal_key: vehicle.brake_pressed
+                        comparison: equal
+                        operand: {operand}
+                        {edge}
+                    outputs: []
+                    """
+                    result, output = self.run_compiler(source)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    document = json.loads(output)
+                    self.assertEqual(document["rules"][0]["type"], rule_type)
+                    self.assertEqual(
+                        document["rules"][0]["operand"],
+                        {"boolean": operand == "{boolean: true}"},
+                    )
+                    self.assertEqual(document["rules"][0]["freshness"], "fresh")
+                    self.assertEqual(document["outputs"], [])
+
+    def test_brake_conditions_reject_numeric_and_choice_operands(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
+            for operand in ("{number: 1}", "{choice: pressed}"):
+                with self.subTest(rule_type=rule_type, operand=operand):
+                    edge = "edge: becomes_true" if rule_type == "event" else ""
+                    source = f"""
+                    version: 1
+                    actions: [{{name: brake_condition}}]
+                    rules:
+                      - type: {rule_type}
+                        action: brake_condition
+                        signal_key: vehicle.brake_pressed
+                        comparison: equal
+                        operand: {operand}
+                        {edge}
+                    outputs: []
+                    """
+                    result, output = self.run_compiler(source)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("rules[0].operand", result.stderr)
+                    self.assertIn("does not match signal", result.stderr)
+                    self.assertIsNone(output)
+
+    def test_brake_boolean_signal_rejects_numeric_range_rules(self) -> None:
+        source = """
+        version: 1
+        actions: [{name: brake_condition}]
+        rules:
+          - type: range
+            action: brake_condition
+            signal_key: vehicle.brake_pressed
+            input: {from: 0, to: 1}
+            output: {from: 0, to: 1}
+        outputs: []
+        """
+        result, output = self.run_compiler(source)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("rules[0].signal_key", result.stderr)
+        self.assertIn("must be numeric", result.stderr)
+        self.assertIsNone(output)
+
     def test_invalid_output_bounds_fail(self) -> None:
         source = """
         version: 1

@@ -199,6 +199,14 @@ signal catalog manifest at `tools/controller_signal_catalog.json`: signal
 existence, delivery capability, operand type, and enum choice keys must match
 the catalog exposed by the Mazda telemetry provider.
 
+`vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
+with Boolean equality or inequality conditions in `state`, `event` and
+`sampled_state` rules; numeric ranges and enum choices are invalid. Compiling
+or loading such a rule does not make its observation fresh. The default
+`fresh` requirement excludes a `FreshnessUnverified` brake observation, and
+the schema does not configure telemetry freshness timeouts. The production
+profile has no brake-pedal rule or brake-to-LED binding.
+
 Install the host-only dependency and compile a profile with:
 
 ```sh
@@ -223,7 +231,9 @@ The host CTest `controller_config_yaml_loader` compiles the production example
 and valid regression profiles, loads the emitted bytes through the canonical
 C++ loader, and resolves each rule against the real Mazda catalog. It also
 compares the complete catalog metadata with the host manifest. Compiler enum
-spellings are checked against the C++ persisted name tables.
+spellings are checked against the C++ persisted name tables. Brake regression
+profiles cover Boolean notify and read rules without output bindings, while
+type-mismatch and numeric-range cases must fail before JSON is emitted.
 
 ## Not configurable
 

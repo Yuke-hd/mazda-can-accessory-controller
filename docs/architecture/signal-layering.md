@@ -29,6 +29,22 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
   `unsubscribe()`). The generic action engine consumes only this port; see
   [`action-engine.md`](../specs/action-engine.md).
 
+## Brake signal contract
+
+The Mazda generic catalog contains nineteen signals. `vehicle.brake_pressed`
+is a Boolean signal with Read and Notify capabilities and Confirmed field
+interpretation evidence. Reads and notifications use the same coherent brake
+publication; generic subscribers share the two slots of the public
+`on_brake_pressed_changed` notification channel.
+
+Default brake freshness remains unset. A valid decoded observation is
+`FreshnessUnverified` until a caller explicitly supplies a freshness policy;
+Confirmed evidence does not imply `Fresh` availability. Unknown, malformed,
+stopped and faulted brake observations remain unavailable through the public
+contracts. The default controller profile binds no brake-pedal action to an
+LED output. See [signal evidence](../protocol/signal-evidence.md) for the
+field mapping and its evidence boundary.
+
 ## Boundary contracts
 
 `vehicle_signals` depends on `vehicle_core` value contracts and has no Mazda

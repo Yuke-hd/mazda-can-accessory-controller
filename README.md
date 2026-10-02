@@ -215,7 +215,8 @@ See [`docs/specs/lighting/local-led-actions.md`](docs/specs/lighting/local-led-a
   runtime strategy.
 - **Brake / RPM red zone:** the renderer can light the center 30-pixel region
   solid red. The firmware binds no brake-pedal action (brake has no freshness
-  timeout and no generic catalog signal yet); instead the region is the RPM
+  timeout). `vehicle.brake_pressed` is a Boolean Read + Notify signal whose
+  default availability remains `FreshnessUnverified`; the region is the RPM
   red-zone warning, lit while engine speed is above a configurable threshold
   (6000 rpm by default). See
   [lighting profile](docs/specs/configuration/lighting-profile.md#rpm-threshold-red-zone).
