@@ -38,7 +38,7 @@ bool TransientBindings::trigger(const action_engine::ActionId action,
       ++binding.sequence;
     binding.origin_us = origin_us;
     binding.epoch = epoch;
-    binding.pending = true;
+    binding.retained = true;
     bound = true;
   }
   return bound;
@@ -49,7 +49,7 @@ TransientBindings::latest(const std::uint32_t epoch) const noexcept {
   local_argb::internal::LightingTransientStarts starts{};
   for (std::size_t index = 0; index < count_; ++index) {
     const Binding &binding = bindings_[index];
-    if (!binding.pending || binding.epoch != epoch)
+    if (!binding.retained || binding.epoch != epoch)
       continue;
     // Unique slot IDs and matching capacities make this append infallible.
     (void)starts.add({local_argb::internal::TransientId{static_cast<std::uint8_t>(index + 1)},
@@ -60,7 +60,7 @@ TransientBindings::latest(const std::uint32_t epoch) const noexcept {
 
 void TransientBindings::discard_starts() noexcept {
   for (std::size_t index = 0; index < count_; ++index)
-    bindings_[index].pending = false;
+    bindings_[index].retained = false;
 }
 
 bool TransientBindings::contains(const action_engine::ActionId action,
