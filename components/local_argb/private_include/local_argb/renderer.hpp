@@ -50,6 +50,27 @@ void render_center_out_fill(PixelFrame &frame, const AnimationContext &context) 
 inline constexpr AnimationStrategy kRunningFlowAnimation = &render_running_flow;
 inline constexpr AnimationStrategy kCenterOutFillAnimation = &render_center_out_fill;
 
+// Bounded renderer-owned timing, separate from held command state. Seen
+// sequences remain recorded after cancellation so recovery cannot replay them.
+class TransientLayers {
+public:
+  void apply(const LightingTransientStarts &starts,
+             vehicle_core::MonotonicTimestamp now_us) noexcept;
+  void cancel() noexcept;
+  void expire(vehicle_core::MonotonicTimestamp now_us) noexcept;
+  [[nodiscard]] LightingFills active(const LightingTransientStarts &starts,
+                                     vehicle_core::MonotonicTimestamp now_us) const noexcept;
+
+private:
+  struct Timing {
+    LightingTransient effect{};
+    std::uint64_t sequence{0};
+    vehicle_core::MonotonicTimestamp started_us{0};
+    bool active{false};
+  };
+  std::array<Timing, LightingTransientStarts::kCapacity> timing_{};
+};
+
 // Generic strip renderer state machine. It is implementation-only so
 // ordinary users cannot acquire renderer queue/task ownership.
 class RendererController {
@@ -63,7 +84,7 @@ public:
   }
 
   bool start() noexcept;
-  bool apply(LightingCommand command, vehicle_core::MonotonicTimestamp now_us) noexcept;
+  bool apply(const LightingCommand &command, vehicle_core::MonotonicTimestamp now_us) noexcept;
   bool tick(vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] bool faulted() const noexcept { return faulted_; }
 
@@ -73,6 +94,8 @@ private:
 
   PixelFrameSink *sink_;
   LightingCommand command_{};
+  TransientLayers transients_{};
+  vehicle_core::MonotonicTimestamp last_tick_us_{0};
   bool has_command_{false};
   PixelFrame last_written_{};
   bool has_last_written_{false};

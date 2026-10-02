@@ -54,6 +54,47 @@ the colored frame again on its own. If the black write fails, the worker
 retries black on its next 10 ms tick. The supervisor requests a restart if a
 driver call stops returning.
 
+## Bounded transient layers
+
+The private value-only handoff also accepts up to eight solid-zone transients.
+A `LightingTransient` carries a zone, color, priority, and positive finite
+`duration_us`. Zero duration or an invalid zone owns no pixels. The renderer
+caps transient color channels at the same brightness ceiling as fills.
+
+`LightingCommand::transients` is a latest-start snapshot. Each entry has a
+stable renderer-local `TransientId` (1..8) and nonzero sequence. The publisher
+retains each entry in subsequent held-state updates. This prevents a start
+from being lost if a held update replaces it in the one-item queue. A changed
+sequence starts that identity at command-application time, restarting its
+full duration; equal sequences do not restart. Definition changes under an
+unchanged sequence are ignored: zone, color, priority and duration are copied
+when the renderer accepts the start. Identities have no vehicle or action
+meaning. Duplicate identities and invalid IDs/sequences are rejected by the
+bounded snapshot collection without modifying it.
+
+A transient owns only its zone and participates in the existing per-pixel
+priority ordering. Higher priority wins, including dark pixels of held turn
+animations. Equal priorities retain existing held drawing order, followed by
+transients in snapshot order. Expiry occurs when elapsed time reaches the
+duration, so an 800 ms layer applied at 100 ms ends at 900 ms. Expiry restores
+the currently held result and needs no clear command. Elapsed subtraction
+avoids deadline overflow; no arbitrary duration ceiling is imposed beyond the
+finite microsecond value representation.
+
+Missing identities cancel their active layers. Non-actionable commands,
+expired command deadlines, backwards renderer time, startup, and driver faults
+cancel transients. The renderer records seen sequences after cancellation or
+expiry, so a later held update or fault recovery cannot replay them; a new
+sequence is required. Startup resets this record along with held state. A
+transient does not extend a command's overall actionable deadline, and generic
+compatibility color remains the background when no held effects are present.
+
+Host renderer tests cover start and zone bounds, brightness, active interval,
+expiry restoring held fills, priority overlap with fills and turns, equal
+priority, repeated starts, held updates through the overwrite mailbox, invalid
+requests, immutable accepted definitions, fault/explicit fail-off recovery,
+backwards time, and durations near the clock representation limit.
+
 ## Watched dispatcher progress
 
 The composition root can register one nonblocking progress probe with

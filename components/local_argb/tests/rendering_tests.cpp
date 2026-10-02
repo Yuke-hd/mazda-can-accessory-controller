@@ -1,4 +1,5 @@
 #include <cassert>
+#include <limits>
 #include <vector>
 
 #include "local_argb/lighting_sink.hpp"
@@ -404,6 +405,153 @@ void test_default_priority() {
 
 } // namespace priority
 
+namespace transient {
+
+using namespace local_argb::internal;
+constexpr local_argb::Rgb kBlue{0, 0, 16};
+
+LightingCommand started(std::uint64_t sequence = 1, vehicle_core::Microseconds duration = 800'000,
+                        EffectPriority priority = EffectPriority{150}) {
+  LightingCommand command = priority::held();
+  assert(command.fills.add(
+      priority::fill({10, 20}, FillFraction::full(), priority::kGauge, EffectPriority{50})));
+  assert(command.transients.add(
+      {TransientId{1}, sequence, {{15, 5}, {0, 0, 255}, priority, duration}}));
+  return command;
+}
+
+void test_start_active_expiry_and_zone() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(started(), 100));
+  const auto first = sink.writes.back();
+  assert(first[9] == local_argb::kBlack);
+  assert(first[10] == priority::kGauge);
+  assert(first[15] == kBlue);
+  assert(first[19] == kBlue);
+  assert(first[20] == priority::kGauge);
+  assert(renderer.tick(400'100));
+  assert(sink.writes.back() == first);
+  assert(renderer.tick(800'100));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(), 900'000));
+  assert(sink.writes.back()[15] == priority::kGauge); // seen sequence never replays
+}
+
+void test_held_update_does_not_restart_but_new_sequence_does() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(started(), 100));
+  auto update = started();
+  update.brake = true;
+  assert(renderer.apply(update, 400'100));
+  assert(renderer.tick(800'100));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(2), 900'000));
+  assert(renderer.tick(1'699'999));
+  assert(sink.writes.back()[15] == kBlue);
+  assert(renderer.tick(1'700'000));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(3), 1'800'000));
+  assert(renderer.apply(started(4), 2'000'000));
+  assert(renderer.tick(2'799'999));
+  assert(sink.writes.back()[15] == kBlue);
+  assert(renderer.tick(2'800'000));
+  assert(sink.writes.back()[15] == priority::kGauge);
+}
+
+void test_priorities_and_equal_priority_drawing_order() {
+  assert(priority::render(started(1, 800'000, EffectPriority{49}))[15] == priority::kGauge);
+  assert(priority::render(started(1, 800'000, EffectPriority{50}))[15] == kBlue);
+  auto command = started();
+  assert(
+      command.transients.add({TransientId{2}, 1, {{17, 5}, {16, 0, 0}, EffectPriority{150}, 100}}));
+  const auto frame = priority::render(command);
+  assert(frame[16] == kBlue);
+  assert(frame[17] == priority::kBrakeRed);
+  command.left_turn = true;
+  command.priorities.left_turn = EffectPriority{200};
+  assert(priority::render(command)[15] == local_argb::kBlack);
+}
+
+void test_same_sequence_preserves_the_original_effect() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(started(), 100));
+  auto changed = priority::held();
+  assert(changed.transients.add({TransientId{1}, 1, {{99, 2}, {16, 0, 0}, {}, 1}}));
+  assert(renderer.apply(changed, 400'100));
+  assert(sink.writes.back()[15] == kBlue);
+  assert(sink.writes.back()[99] == local_argb::kBlack);
+  assert(renderer.tick(800'100));
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+}
+
+void test_invalid_requests_are_bounded_and_fail_off() {
+  assert(priority::render(started(1, 0))[15] == priority::kGauge);
+  auto command = priority::held();
+  for (std::uint8_t id = 1; id <= LightingTransientStarts::kCapacity; ++id)
+    assert(command.transients.add({TransientId{id}, 1, {{id, 1}, {0, 0, 16}, {}, 100}}));
+  assert(!command.transients.add({TransientId{1}, 2, {}}));
+  assert(!LightingTransientStarts{}.add({TransientId{0}, 1, {}}));
+  assert(!LightingTransientStarts{}.add({TransientId{9}, 1, {}}));
+  assert(!LightingTransientStarts{}.add({TransientId{1}, 0, {}}));
+  command = priority::held();
+  assert(command.transients.add({TransientId{1}, 1, {{99, 2}, {0, 0, 16}, {}, 100}}));
+  assert(priority::render(command) == local_argb::kBlackFrame);
+}
+
+void test_cancel_expired_command_fault_and_backwards_time_do_not_replay() {
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(started(), 100));
+  assert(renderer.apply({}, 200));
+  assert(renderer.apply(started(), 300));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  auto expired = started(2);
+  expired.valid_until_us = 400;
+  assert(renderer.apply(expired, 400));
+  assert(renderer.tick(401));
+  assert(renderer.apply(started(2), 500));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  sink.failures_remaining = 1;
+  assert(!renderer.apply(started(3), 600));
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(renderer.apply(started(3), 700));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(4), 800));
+  assert(renderer.tick(799));
+  assert(sink.writes.back()[15] == priority::kGauge);
+  assert(renderer.apply(started(4), 900));
+  assert(sink.writes.back()[15] == priority::kGauge);
+}
+
+void test_mailbox_preserves_latest_start_and_duration_near_clock_limit() {
+  Mailbox mailbox;
+  mailbox.submit(started());
+  auto update = started();
+  update.brake = true;
+  mailbox.submit(update);
+  LightingCommand taken{};
+  assert(mailbox.take(taken));
+  assert(priority::render(taken)[15] == kBlue);
+  FakePixelSink sink;
+  RendererController renderer{sink};
+  assert(renderer.start());
+  auto command = started(1, 100);
+  command.valid_until_us = std::numeric_limits<vehicle_core::MonotonicTimestamp>::max();
+  const auto near_limit = command.valid_until_us - 50;
+  assert(renderer.apply(command, near_limit));
+  assert(renderer.tick(command.valid_until_us));
+  assert(sink.writes.back()[15] == kBlue); // elapsed comparison cannot overflow
+}
+
+} // namespace transient
+
 void test_onboard_status_collapses_logical_frame() {
   local_argb::PixelFrame turn_frame{};
   turn_frame[0] = {128, 16, 0};
@@ -445,5 +593,12 @@ int main() {
   priority::test_lower_priority_turn_yields_to_a_fill();
   priority::test_equal_priorities_resolve_in_drawing_order();
   priority::test_priorities_do_not_change_disjoint_effects();
+  transient::test_start_active_expiry_and_zone();
+  transient::test_held_update_does_not_restart_but_new_sequence_does();
+  transient::test_priorities_and_equal_priority_drawing_order();
+  transient::test_same_sequence_preserves_the_original_effect();
+  transient::test_invalid_requests_are_bounded_and_fail_off();
+  transient::test_cancel_expired_command_fault_and_backwards_time_do_not_replay();
+  transient::test_mailbox_preserves_latest_start_and_duration_near_clock_limit();
   return 0;
 }
