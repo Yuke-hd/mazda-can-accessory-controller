@@ -114,12 +114,13 @@ struct LightingTransient {
 
 // A changed nonzero sequence starts/restarts this identity at apply time.
 // Repeating a sequence does not replay it, even after expiry or fail-off.
+// Publishers must explicitly supply trigger origin and cancellation generation.
 struct LightingTransientStart {
   constexpr LightingTransientStart() noexcept = default;
   constexpr LightingTransientStart(TransientId identity, std::uint64_t start_sequence,
                                    LightingTransient definition,
-                                   vehicle_core::MonotonicTimestamp origin = 0,
-                                   std::uint32_t generation = 0) noexcept
+                                   vehicle_core::MonotonicTimestamp origin,
+                                   std::uint32_t generation) noexcept
       : id(identity), epoch(generation), sequence(start_sequence), effect(definition),
         origin_us(origin) {}
 
