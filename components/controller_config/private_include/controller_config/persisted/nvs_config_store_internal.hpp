@@ -14,7 +14,8 @@ using NvsHandle = std::uint32_t;
 using NvsResult = std::int32_t;
 
 inline constexpr NvsResult kNvsOk = 0;
-inline constexpr NvsResult kNvsNotFound = 1;
+// Match ESP-IDF's error code so the adapter can preserve raw error results.
+inline constexpr NvsResult kNvsNotFound = 0x1102;
 
 // A tiny seam around the NVS operations used by the adapter. The ESP-IDF
 // implementation stays in nvs_config_store.cpp; host tests can model NVS's

@@ -264,7 +264,21 @@ YAML, parser objects or runtime `action_engine::ActionId` values.
 `save_override()` parses and semantically validates the candidate with the same
 `parse_controller_config()` loader used for the embedded factory document, then
 serializes the owning `ControllerConfig` into deterministic JSON before writing
-it. A rejected candidate does not reach the backend, and a failed backend write
+it. New overrides are limited to **4 KiB of canonical JSON**, separately from
+the parser's 16 KiB input limit. Canonicalization can expand a candidate; an
+oversized result returns `InvalidCandidate` with an `InputTooLarge` diagnostic
+before writing. The NVS adapter enforces the same write bound. The existing
+16 KiB read bound is retained so previously stored documents can still load.
+
+The default ESP-IDF single-app partition table provides a 24 KiB `nvs`
+partition. A 4 KiB write limit leaves conservative room for the two slot blobs,
+an in-flight replacement of the inactive slot, NVS metadata and garbage
+collection. This is a software storage bound, not an on-target capacity or
+endurance guarantee. Other namespaces share the partition and may exhaust it;
+the adapter reports the specific ESP-IDF error, including
+`ESP_ERR_NVS_NOT_ENOUGH_SPACE`.
+
+A rejected candidate does not reach the backend, and a failed backend write
 does not replace the active override. The adapter verifies the written slot and
 active marker after each NVS commit and restores the previous marker when a
 commit or read-back check fails.
@@ -274,7 +288,22 @@ semantically invalid override is retained for diagnostics, logged, and ignored
 for the current boot; the embedded factory JSON is selected instead. A missing
 override and a storage read failure also use the factory document, with the
 failure reported. Clearing the active marker restores factory selection on the
-next boot. Configuration is loaded and applied once during startup; this
+next boot, including when the marker has the wrong type, is out of range, or
+cannot be read. Clear reports success only when the marker is absent; if
+clearing fails, it attempts to restore a previously readable valid marker.
+Clear deactivates the override: **`slot_a` and `slot_b` remain in flash**. It is
+not a secure wipe of user configuration or an erase of the NVS partition.
+
+The configuration component currently owns global `nvs_flash_init()` during
+boot. Initialization failures, including `ESP_ERR_NVS_NO_FREE_PAGES` and
+`ESP_ERR_NVS_NEW_VERSION_FOUND`, are logged with the specific error and leave
+the partition intact. The firmware uses the factory document and provides no
+store for save or clear during that boot. Recovery requires deliberate
+partition maintenance and a reboot; automatic partition erasure is excluded
+because it would also destroy other namespaces. Future Wi-Fi/WebUI work must
+coordinate global initialization and recovery through a shared NVS owner.
+
+Configuration is loaded and applied once during startup; this
 iteration has no WebUI, hot reload, or live action-engine mutation.
 
 ```yaml

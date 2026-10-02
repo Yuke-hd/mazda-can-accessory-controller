@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -9,6 +10,10 @@
 #include "controller_config/persisted/json_loader.hpp"
 
 namespace controller_config::persisted {
+
+// New overrides reserve room for both slots and an in-flight replacement in
+// the default 24 KiB NVS partition. Other namespaces can still exhaust NVS.
+inline constexpr std::size_t kMaxStoredControllerConfigJsonBytes = 4U * 1024U;
 
 // A raw storage adapter owns the platform-specific persistence details. Its
 // value is always one complete canonical JSON document. Implementations must

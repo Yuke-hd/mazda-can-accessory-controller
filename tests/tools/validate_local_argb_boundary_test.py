@@ -338,6 +338,21 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("canonical boot configuration loader is missing")
 
+    def test_single_boot_configuration_loader_is_accepted(self) -> None:
+        text = (self.root / MAIN).read_text(encoding="utf-8")
+        self.assertEqual(text.count("controller_config::persisted::load_boot_configuration("), 1)
+        self.assert_accepted()
+
+    def test_boot_loader_outside_configuration_function_is_rejected(self) -> None:
+        path = self.root / MAIN
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("controller_config::persisted::load_boot_configuration(",
+                            "controller_config::persisted::parse_controller_config(")
+        text += ("\nvoid unused() { controller_config::persisted::load_boot_configuration(); "
+                 "controller_config::persisted::load_boot_configuration(); }\n")
+        path.write_text(text, encoding="utf-8")
+        self.assert_rejected("canonical boot configuration loader is missing")
+
     def test_boot_configuration_load_before_renderer_start_is_rejected(self) -> None:
         self.edit(
             MAIN,

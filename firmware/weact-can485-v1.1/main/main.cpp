@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -96,15 +97,11 @@ void log_configuration_diagnostic(
 // remains alive for the lifetime of the firmware process.
 bool configure_engine_lighting(
     controller_config::persisted::ConfigStoreBackend *const backend) noexcept {
-  controller_config::persisted::BootConfigurationResult selected{};
-  if (backend != nullptr) {
-    controller_config::persisted::ConfigStore store{*backend};
-    selected = controller_config::persisted::load_boot_configuration(
-        &store, controller_config::factory_default_config_json());
-  } else {
-    selected = controller_config::persisted::load_boot_configuration(
-        nullptr, controller_config::factory_default_config_json());
-  }
+  std::optional<controller_config::persisted::ConfigStore> store;
+  if (backend != nullptr)
+    store.emplace(*backend);
+  auto selected = controller_config::persisted::load_boot_configuration(
+      store ? &*store : nullptr, controller_config::factory_default_config_json());
   if (!selected.ok()) {
     if (selected.override_diagnostic.has_value())
       log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);

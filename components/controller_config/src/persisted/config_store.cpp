@@ -34,6 +34,18 @@ SaveOverrideResult ConfigStore::save_override(const std::string_view candidate_j
   }
 
   result.canonical_json = serialize_controller_config(*loaded.configuration);
+  if (result.canonical_json.size() > kMaxStoredControllerConfigJsonBytes) {
+    result.status = SaveOverrideResult::Status::InvalidCandidate;
+    result.message = "canonical configuration JSON exceeds the 4 KiB override storage limit";
+    result.diagnostic = ConfigDiagnostic{ConfigErrorCategory::Structural,
+                                         ConfigErrorCode::InputTooLarge,
+                                         ValidationError::None,
+                                         0U,
+                                         "$",
+                                         result.message};
+    result.canonical_json.clear();
+    return result;
+  }
   const auto canonical = parse_controller_config(result.canonical_json);
   if (!canonical.ok()) {
     result.status = SaveOverrideResult::Status::Failed;

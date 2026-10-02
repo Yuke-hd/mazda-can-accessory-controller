@@ -10,6 +10,7 @@
 
 #if defined(ESP_PLATFORM)
 #include "esp_err.h"
+#include "esp_log.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #endif
@@ -85,7 +86,7 @@ ConfigStoreBackend::ReadResult NvsConfigBackend::read_override() {
 
 ConfigStoreBackend::WriteResult
 NvsConfigBackend::write_override(const std::string_view canonical_json) {
-  if (canonical_json.empty() || canonical_json.size() > kMaxControllerConfigJsonBytes)
+  if (canonical_json.empty() || canonical_json.size() > kMaxStoredControllerConfigJsonBytes)
     return {false, "canonical configuration JSON exceeds storage bounds"};
 
   const auto active_slot = read_active_slot();
@@ -138,29 +139,31 @@ NvsConfigBackend::write_override(const std::string_view canonical_json) {
 
 ConfigStoreBackend::ClearResult NvsConfigBackend::clear_override() {
   const auto active_slot = read_active_slot();
-  if (!active_slot.has_value()) {
-    if (active_slot_error_)
-      return {false, *active_slot_error_};
+  if (!active_slot.has_value() && !active_slot_error_)
     return {true, {}};
-  }
+
+  // A malformed or unreadable marker must still be erasable. Only a known
+  // valid marker can be restored if clearing fails.
 
   NvsResult result = api_.erase_key(handle_, kActiveKey);
   if (result != kNvsOk && result != kNvsNotFound)
     return {false, error_message("clear active slot", result)};
   result = api_.commit(handle_);
   if (result != kNvsOk) {
-    const auto restored = restore_marker(*active_slot, error_message("commit clear", result));
-    return {false, restored.message};
+    const auto message = error_message("commit clear", result);
+    return active_slot.has_value()
+               ? ClearResult{false, restore_marker(active_slot, message).message}
+               : ClearResult{false, message};
   }
 
   std::uint8_t ignored = 0U;
   result = api_.get_u8(handle_, kActiveKey, ignored);
   if (result == kNvsNotFound)
     return {true, {}};
-  const auto restored = restore_marker(
-      *active_slot, result == kNvsOk ? "clear read-back verification failed"
-                                     : error_message("read cleared active slot", result));
-  return {false, restored.message};
+  const auto message = result == kNvsOk ? "clear read-back verification failed"
+                                        : error_message("read cleared active slot", result);
+  return active_slot.has_value() ? ClearResult{false, restore_marker(active_slot, message).message}
+                                 : ClearResult{false, message};
 }
 
 NvsConfigBackend::RestoreResult
@@ -198,50 +201,44 @@ using internal::kNvsOk;
 using internal::NvsHandle;
 using internal::NvsResult;
 
+static_assert(kNvsOk == ESP_OK);
+static_assert(kNvsNotFound == ESP_ERR_NVS_NOT_FOUND);
+
 class EspNvsApi final : public internal::NvsApi {
 public:
   [[nodiscard]] NvsResult get_u8(const NvsHandle handle, const char *const key,
                                  std::uint8_t &value) override {
-    return map(nvs_get_u8(static_cast<nvs_handle_t>(handle), key, &value));
+    return nvs_get_u8(static_cast<nvs_handle_t>(handle), key, &value);
   }
   [[nodiscard]] NvsResult set_u8(const NvsHandle handle, const char *const key,
                                  const std::uint8_t value) override {
-    return map(nvs_set_u8(static_cast<nvs_handle_t>(handle), key, value));
+    return nvs_set_u8(static_cast<nvs_handle_t>(handle), key, value);
   }
   [[nodiscard]] NvsResult get_blob(const NvsHandle handle, const char *const key,
                                    void *const buffer, const std::size_t capacity,
                                    std::size_t &length) override {
     std::size_t requested = capacity;
-    const NvsResult result = map(nvs_get_blob(static_cast<nvs_handle_t>(handle), key, buffer,
-                                              buffer == nullptr ? &length : &requested));
+    const NvsResult result = nvs_get_blob(static_cast<nvs_handle_t>(handle), key, buffer,
+                                          buffer == nullptr ? &length : &requested);
     if (buffer != nullptr && result == kNvsOk)
       length = requested;
     return result;
   }
   [[nodiscard]] NvsResult set_blob(const NvsHandle handle, const char *const key,
                                    const void *const value, const std::size_t length) override {
-    return map(nvs_set_blob(static_cast<nvs_handle_t>(handle), key, value, length));
+    return nvs_set_blob(static_cast<nvs_handle_t>(handle), key, value, length);
   }
   [[nodiscard]] NvsResult erase_key(const NvsHandle handle, const char *const key) override {
-    return map(nvs_erase_key(static_cast<nvs_handle_t>(handle), key));
+    return nvs_erase_key(static_cast<nvs_handle_t>(handle), key);
   }
   [[nodiscard]] NvsResult commit(const NvsHandle handle) override {
-    return map(nvs_commit(static_cast<nvs_handle_t>(handle)));
+    return nvs_commit(static_cast<nvs_handle_t>(handle));
   }
   void close(const NvsHandle handle) noexcept override {
     nvs_close(static_cast<nvs_handle_t>(handle));
   }
   [[nodiscard]] const char *error_name(const NvsResult result) const noexcept override {
-    return result == kNvsNotFound ? "ESP_ERR_NVS_NOT_FOUND" : "ESP_ERR_NVS_FAILURE";
-  }
-
-private:
-  static NvsResult map(const esp_err_t result) noexcept {
-    if (result == ESP_OK)
-      return kNvsOk;
-    if (result == ESP_ERR_NVS_NOT_FOUND)
-      return kNvsNotFound;
-    return -1;
+    return esp_err_to_name(result);
   }
 };
 
@@ -250,13 +247,23 @@ constexpr char kNamespace[] = "mazda_config";
 } // namespace
 
 std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept {
+  // This boot-only component currently owns global NVS initialization. Never
+  // auto-erase on NO_FREE_PAGES or NEW_VERSION_FOUND: that would destroy other
+  // namespaces. A future shared NVS owner must coordinate explicit recovery.
   const esp_err_t init_result = nvs_flash_init();
-  if (init_result != ESP_OK)
+  if (init_result != ESP_OK) {
+    ESP_LOGE("controller_config", "NVS initialization failed; retaining partition: %s",
+             esp_err_to_name(init_result));
     return nullptr;
+  }
 
   nvs_handle_t handle = 0;
-  if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK)
+  const esp_err_t open_result = nvs_open(kNamespace, NVS_READWRITE, &handle);
+  if (open_result != ESP_OK) {
+    ESP_LOGE("controller_config", "NVS configuration namespace open failed: %s",
+             esp_err_to_name(open_result));
     return nullptr;
+  }
   static EspNvsApi api{};
   auto backend = std::unique_ptr<internal::NvsConfigBackend>(
       new (std::nothrow) internal::NvsConfigBackend(api, static_cast<internal::NvsHandle>(handle)));

@@ -172,6 +172,34 @@ TEST_CASE("generated factory YAML matches the production profile field by field"
   check_config(loaded_factory_config(), persisted::production_lighting_config());
 }
 
+TEST_CASE("canonical serialization preserves factory configuration field by field") {
+  const auto factory = loaded_factory_config();
+  const auto json = persisted::serialize_controller_config(factory);
+  const auto parsed = persisted::parse_controller_config(json);
+  REQUIRE(parsed.ok());
+  check_config(*parsed.configuration, factory);
+  CHECK(persisted::serialize_controller_config(*parsed.configuration) == json);
+}
+
+TEST_CASE("canonical serialization preserves nondefault fields and every model alternative") {
+  auto model = persisted::production_lighting_config();
+  std::get<persisted::SampledStateRule>(model.rules[4]).release_threshold = 5800.1F;
+  model.actions.push_back(persisted::Action{"pulse"});
+  model.rules.push_back(
+      persisted::EventRule{"pulse",
+                           persisted::Condition{"test.boolean", action_engine::Comparison::NotEqual,
+                                                persisted::BooleanOperand{true}},
+                           action_engine::EventEdge::BecomesFalse,
+                           action_engine::FreshnessRequirement::FreshOrUnverified});
+  REQUIRE(persisted::validate(model).ok());
+
+  const auto json = persisted::serialize_controller_config(model);
+  const auto parsed = persisted::parse_controller_config(json);
+  REQUIRE(parsed.ok());
+  check_config(*parsed.configuration, model);
+  CHECK(persisted::serialize_controller_config(*parsed.configuration) == json);
+}
+
 TEST_CASE("generated factory RPM fill covers the board vehicle light strip") {
   const auto config = loaded_factory_config();
   std::size_t rpm_fills = 0;

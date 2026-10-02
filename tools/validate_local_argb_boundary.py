@@ -392,7 +392,7 @@ def main() -> int:
          "NVS configuration store factory"),
         ("controller_config::persisted::load_boot_configuration(",
          "canonical boot configuration loader"),
-        ("controller_config::persisted::ConfigStore store{*backend}",
+        ("controller_config::persisted::ConfigStore",
          "injected configuration store boundary"),
         ("controller_config::persisted::apply_controller_config(",
          "persisted configuration application"),
@@ -414,9 +414,16 @@ def main() -> int:
     # the two start calls.
     app_main_body = _app_main_body(structure) or ""
     boot_loader = "controller_config::persisted::load_boot_configuration("
-    if structure.count(boot_loader) != 2:
+    configure = re.search(r"\bbool\s+configure_engine_lighting\s*\(", structure)
+    configure_body = ""
+    if configure is not None:
+        close_paren = _matching_paren(structure, configure.end() - 1)
+        open_index = structure.find("{", close_paren + 1)
+        if open_index >= 0:
+            configure_body = structure[open_index + 1 : _matching_close(structure, open_index)]
+    if boot_loader not in configure_body:
         failures.append(
-            "canonical boot configuration loader is missing from one or more boot paths"
+            "canonical boot configuration loader is missing from configure_engine_lighting"
         )
     for call, label in (
         ("board::initialize_safe_defaults()", "board::initialize_safe_defaults()"),
