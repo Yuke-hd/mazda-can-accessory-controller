@@ -20,8 +20,9 @@ public:
     const bool accepted = downstream_->publish(command);
     if (!closed_.load(std::memory_order_seq_cst) && epoch == transient_epoch())
       return accepted;
-    // The gate closed while this command was on its way, possibly after the
-    // stall fail-off. Fail off again so the command cannot stay lit.
+    // The gate closed or its epoch changed during publication, including
+    // faulted worker passes and explicit fail-off. Write black after any
+    // racing command so it cannot stay lit.
     (void)downstream_->publish(LightingCommand{});
     return false;
   }

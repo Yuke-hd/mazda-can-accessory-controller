@@ -185,6 +185,20 @@ void test_a_close_and_resume_during_publish_is_still_followed_by_black() {
   assert(!downstream.last.actionable);
 }
 
+void test_an_epoch_invalidation_during_publish_is_followed_by_black() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  downstream.gate = &gate;
+  downstream.on_publish = [](RecordingLightingSink &sink) {
+    sink.on_publish = nullptr;
+    sink.gate->invalidate_transients(); // driver fault or explicit fail-off, gate stays open
+  };
+  assert(!gate.publish(lit()));
+  assert(downstream.published == 2);
+  assert(!downstream.last.actionable);
+  assert(gate.publish(lit())); // invalidation did not close the progress gate
+}
+
 void test_explicit_cancellation_preserves_a_closed_progress_gate() {
   RecordingLightingSink downstream{};
   StallGatedSink gate{downstream};
@@ -279,6 +293,7 @@ int main() {
   test_a_clock_that_runs_backwards_is_treated_as_a_stall();
   test_rearming_clears_a_stall();
   test_a_close_and_resume_during_publish_is_still_followed_by_black();
+  test_an_epoch_invalidation_during_publish_is_followed_by_black();
   test_explicit_cancellation_preserves_a_closed_progress_gate();
   test_an_open_gate_forwards_commands_and_their_result();
   test_a_closed_gate_rejects_commands_without_forwarding();

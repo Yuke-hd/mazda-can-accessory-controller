@@ -5,6 +5,7 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
 #include "local_argb/renderer.hpp"
+#include "local_argb/renderer_runtime.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 #include "vehicle_lighting_policy/command.hpp"
 
@@ -410,7 +411,17 @@ namespace transient {
 
 using namespace local_argb::internal;
 constexpr local_argb::Rgb kBlue{0, 0, 16};
+static_assert(!std::is_constructible_v<LightingTransientStart, TransientId, std::uint64_t,
+                                       LightingTransient>);
+static_assert(!std::is_constructible_v<LightingTransientStart, TransientId, std::uint64_t,
+                                       LightingTransient, vehicle_core::MonotonicTimestamp>);
 static_assert(sizeof(LightingTransientStart) <= 64, "queue slots must not waste epoch padding");
+
+LightingTransientStart test_start(TransientId id, std::uint64_t sequence, LightingTransient effect,
+                                  vehicle_core::MonotonicTimestamp origin_us = 0,
+                                  std::uint32_t epoch = 0) {
+  return {id, sequence, effect, origin_us, epoch};
+}
 
 LightingCommand started(std::uint64_t sequence = 1, vehicle_core::Microseconds duration = 800'000,
                         EffectPriority priority = EffectPriority{150},
@@ -418,8 +429,8 @@ LightingCommand started(std::uint64_t sequence = 1, vehicle_core::Microseconds d
   LightingCommand command = priority::held();
   assert(command.fills.add(
       priority::fill({10, 20}, FillFraction::full(), priority::kGauge, EffectPriority{50})));
-  assert(command.transients.add(
-      {TransientId{1}, sequence, {{15, 5}, {0, 0, 255}, priority, duration}, origin_us, epoch}));
+  assert(command.transients.add(test_start(
+      TransientId{1}, sequence, {{15, 5}, {0, 0, 255}, priority, duration}, origin_us, epoch)));
   return command;
 }
 
@@ -469,8 +480,8 @@ void test_priorities_and_equal_priority_drawing_order() {
   assert(priority::render(started(1, 800'000, EffectPriority{49}))[15] == priority::kGauge);
   assert(priority::render(started(1, 800'000, EffectPriority{50}))[15] == kBlue);
   auto command = started();
-  assert(
-      command.transients.add({TransientId{2}, 1, {{17, 5}, {16, 0, 0}, EffectPriority{150}, 100}}));
+  assert(command.transients.add(
+      test_start(TransientId{2}, 1, {{17, 5}, {16, 0, 0}, EffectPriority{150}, 100})));
   const auto frame = priority::render(command);
   assert(frame[16] == kBlue);
   assert(frame[17] == priority::kBrakeRed);
@@ -485,7 +496,7 @@ void test_same_sequence_preserves_the_original_effect() {
   assert(renderer.start());
   assert(renderer.apply(started(), 100));
   auto changed = priority::held();
-  assert(changed.transients.add({TransientId{1}, 1, {{99, 2}, {16, 0, 0}, {}, 1}}));
+  assert(changed.transients.add(test_start(TransientId{1}, 1, {{99, 2}, {16, 0, 0}, {}, 1})));
   assert(renderer.apply(changed, 400'100));
   assert(sink.writes.back()[15] == kBlue);
   assert(sink.writes.back()[99] == local_argb::kBlack);
@@ -495,22 +506,23 @@ void test_same_sequence_preserves_the_original_effect() {
 
 void test_invalid_requests_are_bounded_and_fail_off() {
   LightingTransientStarts invalid;
-  assert(!invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, 0}}));
-  assert(!invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs + 1}}));
-  assert(!invalid.add({TransientId{1},
-                       1,
-                       {{15, 5}, {}, {}, std::numeric_limits<vehicle_core::Microseconds>::max()}}));
+  assert(!invalid.add(test_start(TransientId{1}, 1, {{15, 5}, {}, {}, 0})));
+  assert(
+      !invalid.add(test_start(TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs + 1})));
+  assert(!invalid.add(
+      test_start(TransientId{1}, 1,
+                 {{15, 5}, {}, {}, std::numeric_limits<vehicle_core::Microseconds>::max()})));
   assert(invalid.empty());
-  assert(invalid.add({TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs}}));
+  assert(invalid.add(test_start(TransientId{1}, 1, {{15, 5}, {}, {}, kMaxTransientDurationUs})));
   auto command = priority::held();
   for (std::uint8_t id = 1; id <= LightingTransientStarts::kCapacity; ++id)
-    assert(command.transients.add({TransientId{id}, 1, {{id, 1}, {0, 0, 16}, {}, 100}}));
-  assert(!command.transients.add({TransientId{1}, 2, {}}));
-  assert(!LightingTransientStarts{}.add({TransientId{0}, 1, {}}));
-  assert(!LightingTransientStarts{}.add({TransientId{9}, 1, {}}));
-  assert(!LightingTransientStarts{}.add({TransientId{1}, 0, {}}));
+    assert(command.transients.add(test_start(TransientId{id}, 1, {{id, 1}, {0, 0, 16}, {}, 100})));
+  assert(!command.transients.add(test_start(TransientId{1}, 2, {})));
+  assert(!LightingTransientStarts{}.add(test_start(TransientId{0}, 1, {})));
+  assert(!LightingTransientStarts{}.add(test_start(TransientId{9}, 1, {})));
+  assert(!LightingTransientStarts{}.add(test_start(TransientId{1}, 0, {})));
   command = priority::held();
-  assert(command.transients.add({TransientId{1}, 1, {{99, 2}, {0, 0, 16}, {}, 100}}));
+  assert(command.transients.add(test_start(TransientId{1}, 1, {{99, 2}, {0, 0, 16}, {}, 100})));
   assert(priority::render(command) == local_argb::kBlackFrame);
 }
 
@@ -607,13 +619,91 @@ void test_unseen_starts_require_current_epoch_and_fresh_origin() {
   assert(sink.writes.back()[15] == priority::kGauge); // future origin is invalid
 }
 
+class MailboxSink final : public LightingSink {
+public:
+  bool publish(const LightingCommand &command) noexcept override {
+    mailbox.submit(command);
+    return true;
+  }
+  Mailbox mailbox;
+};
+
+struct RuntimeFixture {
+  RuntimeFixture() { assert(renderer.start()); }
+  bool consume(vehicle_core::MonotonicTimestamp now_us) {
+    LightingCommand command{};
+    assert(queue.mailbox.take(command));
+    return runtime.apply(command, now_us);
+  }
+  MailboxSink queue;
+  StallGatedSink gate{queue};
+  FakePixelSink pixels;
+  RendererController renderer{pixels};
+  RendererRuntime runtime{renderer, gate};
+};
+
+void test_runtime_fail_off_cancels_an_unseen_queued_start() {
+  RuntimeFixture fixture;
+  const auto old = started(1, 1'000, EffectPriority{150}, 100, fixture.gate.transient_epoch());
+  assert(fixture.gate.publish(old));
+  assert(fixture.runtime.fail_off(fixture.queue));
+  assert(fixture.consume(150));
+  assert(fixture.pixels.writes.back() == local_argb::kBlackFrame);
+  assert(fixture.gate.publish(old));
+  assert(fixture.consume(200));
+  assert(fixture.pixels.writes.back()[15] == priority::kGauge);
+  const auto fresh = started(2, 1'000, EffectPriority{150}, 200, fixture.gate.transient_epoch());
+  assert(fixture.gate.publish(fresh));
+  assert(fixture.consume(200));
+  assert(fixture.pixels.writes.back()[15] == kBlue);
+  fixture.gate.close();
+  assert(fixture.runtime.fail_off(fixture.queue));
+  assert(!fixture.gate.publish(fresh)); // explicit fail-off cannot reopen a stalled gate
+}
+
+void test_runtime_apply_failure_cancels_an_unseen_start_before_next_command() {
+  RuntimeFixture fixture;
+  const auto epoch = fixture.gate.transient_epoch();
+  const auto failed = started(1, 1'000, EffectPriority{150}, 100, epoch);
+  const auto pending = started(2, 1'000, EffectPriority{150}, 100, epoch);
+  fixture.pixels.failures_remaining = 1; // immediate black succeeds
+  assert(!fixture.runtime.apply(failed, 100));
+  assert(fixture.renderer.faulted());
+  assert(fixture.gate.publish(pending));
+  assert(fixture.consume(110)); // recovery without an intervening worker tick
+  assert(!fixture.renderer.faulted());
+  assert(fixture.pixels.writes.back()[15] == priority::kGauge);
+}
+
+void test_runtime_faulted_ticks_cancel_starts_captured_before_recovery() {
+  RuntimeFixture fixture;
+  const auto failed = started(1, 1'000, EffectPriority{150}, 100, fixture.gate.transient_epoch());
+  assert(fixture.gate.publish(failed));
+  fixture.pixels.failures_remaining = 3; // color and both black attempts fail
+  assert(!fixture.consume(100));
+  assert(fixture.renderer.faulted());
+  const auto during_fault =
+      started(2, 1'000, EffectPriority{150}, 110, fixture.gate.transient_epoch());
+  assert(!fixture.runtime.tick(110));
+  assert(fixture.runtime.tick(120)); // black succeeds, fault still waits for a command
+  assert(fixture.pixels.writes.back() == local_argb::kBlackFrame);
+  assert(fixture.gate.publish(during_fault));
+  assert(fixture.consume(130));
+  assert(!fixture.renderer.faulted());
+  assert(fixture.pixels.writes.back()[15] == priority::kGauge);
+  const auto fresh = started(3, 1'000, EffectPriority{150}, 140, fixture.gate.transient_epoch());
+  assert(fixture.gate.publish(fresh));
+  assert(fixture.consume(140));
+  assert(fixture.pixels.writes.back()[15] == kBlue);
+}
+
 void test_compatibility_colour_is_restored_after_transient_expiry() {
   FakePixelSink sink;
   RendererController renderer{sink};
   assert(renderer.start());
   auto command = priority::held();
   command.color = {0, 12, 0};
-  assert(command.transients.add({TransientId{1}, 1, {{15, 5}, {0, 0, 16}, {}, 100}}));
+  assert(command.transients.add(test_start(TransientId{1}, 1, {{15, 5}, {0, 0, 16}, {}, 100})));
   assert(renderer.apply(command, 0));
   assert((sink.writes.back()[14] == local_argb::Rgb{0, 12, 0}));
   assert(sink.writes.back()[15] == kBlue);
@@ -667,6 +757,9 @@ int main() {
   priority::test_lower_priority_turn_yields_to_a_fill();
   priority::test_equal_priorities_resolve_in_drawing_order();
   priority::test_priorities_do_not_change_disjoint_effects();
+  transient::test_runtime_fail_off_cancels_an_unseen_queued_start();
+  transient::test_runtime_apply_failure_cancels_an_unseen_start_before_next_command();
+  transient::test_runtime_faulted_ticks_cancel_starts_captured_before_recovery();
   transient::test_gate_rejected_start_is_not_replayed_after_resume();
   transient::test_unseen_starts_require_current_epoch_and_fresh_origin();
   transient::test_compatibility_colour_is_restored_after_transient_expiry();
