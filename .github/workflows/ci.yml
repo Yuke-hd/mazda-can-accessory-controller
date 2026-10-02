@@ -12,17 +12,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Keep both compatibility legs exact and reproducible. The modern
-        # leg catches policy removals in new CMake releases (notably the
-        # removal of compatibility with pre-3.5 projects).
-        cmake: ["3.20.5", "4.4.3"]
+        # Keep the minimum compatibility leg exact and reproducible. The
+        # modern CMake 4.4.3 leg runs in the `host` job, where it catches
+        # policy removals in new CMake releases (notably the removal of
+        # compatibility with pre-3.5 projects).
+        cmake: ["3.20.5"]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install pinned CMake
         run: |
           case "${{ matrix.cmake }}" in
             3.20.5) sha256="5ffbc450c992cbc383c787576385ff35aefb762b0f05cbde8bab2c995ab045aa" ;;
-            4.4.3) sha256="d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc" ;;
             *) echo "Unsupported CMake matrix entry" >&2; exit 1 ;;
           esac
           archive="$RUNNER_TEMP/cmake-${{ matrix.cmake }}.tar.gz"
@@ -58,8 +58,20 @@ jobs:
       - name: Install host tools
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang-format-14 cmake ccache ninja-build ripgrep python3 python3-pip
+          sudo apt-get install --no-install-recommends -y clang-format-14 ccache ninja-build ripgrep python3 python3-pip
           python3 -m pip install --user --disable-pip-version-check --no-input --requirement tools/requirements.txt
+      - name: Install pinned CMake
+        env:
+          CMAKE_VERSION: 4.4.3
+          CMAKE_SHA256: d6c83076c575bc00b823522ac974bda66d0af05d6ddc30e739c12385cf32c6cc
+        run: |
+          archive="$RUNNER_TEMP/cmake-$CMAKE_VERSION.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION-linux-x86_64.tar.gz"
+          echo "$CMAKE_SHA256  $archive" | sha256sum --check --status
+          mkdir -p "$RUNNER_TEMP/cmake"
+          tar --extract --gzip --file "$archive" --strip-components=1 --directory "$RUNNER_TEMP/cmake"
+          echo "$RUNNER_TEMP/cmake/bin" >> "$GITHUB_PATH"
       - name: Check host toolchain versions
         run: python3 tools/check_toolchain.py --scope host
       - name: Test toolchain checker diagnostics
