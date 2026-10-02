@@ -429,6 +429,14 @@ target_link_libraries(controller_config_json_tests PRIVATE controller_config doc
 target_compile_features(controller_config_json_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_json_tests)
 
+add_executable(controller_config_store_tests controller_config_store_tests.cpp)
+target_include_directories(controller_config_store_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/controller_config/private_include
+)
+target_link_libraries(controller_config_store_tests PRIVATE controller_config doctest::doctest)
+target_compile_features(controller_config_store_tests PRIVATE cxx_std_17)
+doctest_discover_tests(controller_config_store_tests)
+
 add_executable(controller_config_application_tests controller_config_application_tests.cpp)
 set(_factory_yaml "${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/controller-config-v1.yaml")
 set(_factory_compiler "${CMAKE_SOURCE_DIR}/tools/compile_controller_config.py")

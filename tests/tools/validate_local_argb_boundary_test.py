@@ -311,24 +311,59 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_duplicate_turn_configuration_in_firmware_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "bool configure_engine_lighting() noexcept {",
+            "bool configure_engine_lighting(\n",
             "constexpr int kTurnRules[] = {1};\n"
-            "bool configure_engine_lighting() noexcept {",
+            "bool configure_engine_lighting(\n",
         )
         self.assert_rejected("vehicle integration retains duplicated turn rules")
 
     def test_missing_shared_profile_application_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "controller_config::persisted::apply_controller_config(factory_configuration,\n"
+            "controller_config::persisted::apply_controller_config(active_configuration,\n"
             "                                                                            led_actions, engine);",
             "(void)led_actions;",
         )
         self.assert_rejected("must call controller_config::persisted::apply_controller_config()")
 
     def test_unreachable_shared_profile_application_is_rejected(self) -> None:
-        self.edit(MAIN, "if (!configure_engine_lighting()) {", "if (false) {")
+        self.edit(MAIN, "if (!configure_engine_lighting(config_backend.get())) {", "if (false) {")
         self.assert_rejected("configure_engine_lighting() is not called in app_main")
+
+    def test_missing_boot_configuration_loader_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "controller_config::persisted::load_boot_configuration(",
+            "controller_config::persisted::parse_controller_config(",
+        )
+        self.assert_rejected("canonical boot configuration loader is missing")
+
+    def test_single_boot_configuration_loader_is_accepted(self) -> None:
+        text = (self.root / MAIN).read_text(encoding="utf-8")
+        self.assertEqual(text.count("controller_config::persisted::load_boot_configuration("), 1)
+        self.assert_accepted()
+
+    def test_boot_loader_outside_configuration_function_is_rejected(self) -> None:
+        path = self.root / MAIN
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("controller_config::persisted::load_boot_configuration(",
+                            "controller_config::persisted::parse_controller_config(")
+        text += ("\nvoid unused() { controller_config::persisted::load_boot_configuration(); "
+                 "controller_config::persisted::load_boot_configuration(); }\n")
+        path.write_text(text, encoding="utf-8")
+        self.assert_rejected("canonical boot configuration loader is missing")
+
+    def test_boot_configuration_load_before_renderer_start_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  if (!local_argb::start()) {",
+            "  if (!configure_engine_lighting(config_backend.get())) {\n"
+            "    local_argb::fail_off();\n"
+            "    return;\n"
+            "  }\n"
+            "  if (!local_argb::start()) {",
+        )
+        self.assert_rejected("local ARGB startup does not precede boot configuration loading")
 
     def test_direct_turn_rule_in_main_is_rejected(self) -> None:
         self.edit(

@@ -235,18 +235,18 @@ def _loop_body(structure: str, pattern: str) -> Optional[str]:
 
 
 def _binding_failures(structure: str) -> List[str]:
-    """Require the firmware to consume the embedded persisted-config API."""
+    """Require the firmware to consume the boot-time persisted-config API."""
 
     failures: List[str] = []
     squashed = _squash(structure)
     persisted_apply = (
         "controller_config::persisted::apply_controller_config("
-        "factory_configuration,led_actions,engine)"
+        "active_configuration,led_actions,engine)"
     )
     if squashed.count(persisted_apply) != 1:
         failures.append(
             "vehicle integration must call controller_config::persisted::"
-            "apply_controller_config() with factory_configuration exactly 1 time(s)"
+            "apply_controller_config() with active_configuration exactly 1 time(s)"
         )
     for forbidden, label in (
         ("kTurnRules", "duplicated turn rules"),
@@ -373,6 +373,7 @@ def main() -> int:
         ("controller_config/factory_default.hpp", "factory configuration API include"),
         ("controller_config/persisted/application.hpp",
          "persisted configuration application include"),
+        ("controller_config/persisted/config_store.hpp", "boot configuration store include"),
         ("controller_config/persisted/json_loader.hpp", "persisted JSON loader include"),
     ):
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
@@ -384,11 +385,15 @@ def main() -> int:
         ("static action_engine::ActionEngine engine{signal_provider}", "static action engine"),
         ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()}",
          "static LED action sink bound to the renderer queue"),
-        ("static controller_config::persisted::ControllerConfig factory_configuration{}",
-         "static owning factory configuration"),
+        ("static controller_config::persisted::ControllerConfig active_configuration{}",
+         "static owning active configuration"),
         ("controller_config::factory_default_config_json()", "embedded factory configuration API"),
-        ("controller_config::persisted::parse_controller_config(",
-         "canonical JSON configuration loader"),
+        ("controller_config::persisted::make_nvs_config_store_backend()",
+         "NVS configuration store factory"),
+        ("controller_config::persisted::load_boot_configuration(",
+         "canonical boot configuration loader"),
+        ("controller_config::persisted::ConfigStore",
+         "injected configuration store boundary"),
         ("controller_config::persisted::apply_controller_config(",
          "persisted configuration application"),
         ("engine.attach()", "engine attachment"),
@@ -408,20 +413,34 @@ def main() -> int:
     # that app_main does not make is a violation. _fail_off_failures reports
     # the two start calls.
     app_main_body = _app_main_body(structure) or ""
-    for call in (
-        "board::initialize_safe_defaults()",
-        "configure_engine_lighting()",
-        "engine.attach()",
-        "local_argb::watch_progress(",
+    boot_loader = "controller_config::persisted::load_boot_configuration("
+    configure = re.search(r"\bbool\s+configure_engine_lighting\s*\(", structure)
+    configure_body = ""
+    if configure is not None:
+        close_paren = _matching_paren(structure, configure.end() - 1)
+        open_index = structure.find("{", close_paren + 1)
+        if open_index >= 0:
+            configure_body = structure[open_index + 1 : _matching_close(structure, open_index)]
+    if boot_loader not in configure_body:
+        failures.append(
+            "canonical boot configuration loader is missing from configure_engine_lighting"
+        )
+    for call, label in (
+        ("board::initialize_safe_defaults()", "board::initialize_safe_defaults()"),
+        ("configure_engine_lighting(", "configure_engine_lighting()"),
+        ("engine.attach()", "engine.attach()"),
+        ("local_argb::watch_progress(", "local_argb::watch_progress()"),
     ):
         if call not in app_main_body:
-            failures.append(f"{call} is not called in app_main")
+            failures.append(f"{label} is not called in app_main")
     for earlier, later, label in (
         ("board::initialize_safe_defaults()", "local_argb::start()",
          "board safe defaults do not precede local ARGB startup"),
         ("local_argb::start()", "engine.attach()",
          "local ARGB startup does not precede engine attachment"),
-        ("configure_engine_lighting()", "engine.attach()",
+        ("local_argb::start()", "configure_engine_lighting(",
+         "local ARGB startup does not precede boot configuration loading"),
+        ("configure_engine_lighting(", "engine.attach()",
          "lighting profile application does not precede engine attachment"),
         ("engine.attach()", "telemetry.start()",
          "engine attachment does not precede telemetry/CAN startup"),

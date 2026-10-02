@@ -5,7 +5,7 @@ The WeAct application is the ordinary public-facade consumer. Startup order is:
 ```text
 board::initialize_safe_defaults()
     -> local_argb::start()          # physical black frame and supervised worker
-    -> load and apply embedded factory JSON
+    -> load NVS override or embedded factory JSON, then apply it
     -> typed turn subscription, ActionEngine::attach()
     -> VehicleTelemetry::start()    # facade starts strict vehicle CAN
     -> application polling cadence
@@ -19,9 +19,13 @@ builds `mazda::MazdaSignalProvider` over the telemetry facade, an
 
 ## Lighting profile and setup
 
-Before vehicle CAN starts, the WeAct composition root obtains the generated
-factory JSON through `controller_config::factory_default_config_json()`, parses
-it with the canonical persisted loader, and invokes
+Before vehicle CAN starts, the WeAct composition root opens the dedicated NVS
+configuration store, loads a persisted override when one is active, and falls
+back to the generated factory JSON when the override is absent, unreadable,
+malformed or semantically invalid. Both choices go through the same
+`controller_config::persisted::parse_controller_config()` loader, and an invalid
+override is retained for diagnostics rather than silently accepted or erased.
+The selected model is then passed to
 `controller_config::persisted::apply_controller_config()`. The persisted
 validator checks the profile bindings and rules, including that each LED zone
 fits within the logical strip capacity. The generated factory profile's RPM

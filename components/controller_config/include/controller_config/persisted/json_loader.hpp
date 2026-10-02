@@ -64,4 +64,9 @@ struct ConfigLoadResult final {
 // the implementation file. A failed load never returns a partial model.
 [[nodiscard]] ConfigLoadResult parse_controller_config(std::string_view json);
 
+// Serialize a validated persisted model into the deterministic JSON spelling
+// used by configuration storage. The serializer has no parser-library types
+// in its contract; callers must validate a model before serializing it.
+[[nodiscard]] std::string serialize_controller_config(const ControllerConfig &configuration);
+
 } // namespace controller_config::persisted

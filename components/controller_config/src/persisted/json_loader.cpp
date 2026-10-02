@@ -6,9 +6,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include "cJSON.h"
@@ -638,4 +642,217 @@ ConfigLoadResult parse_controller_config(const std::string_view json) {
   }
   return success(std::move(config));
 }
+
+namespace {
+
+void append_json_string(std::string &output, const std::string_view value) {
+  output.push_back('"');
+  constexpr char kHex[] = "0123456789abcdef";
+  for (const unsigned char character : value) {
+    switch (character) {
+    case '"':
+      output += "\\\"";
+      break;
+    case '\\':
+      output += "\\\\";
+      break;
+    case '\b':
+      output += "\\b";
+      break;
+    case '\f':
+      output += "\\f";
+      break;
+    case '\n':
+      output += "\\n";
+      break;
+    case '\r':
+      output += "\\r";
+      break;
+    case '\t':
+      output += "\\t";
+      break;
+    default:
+      if (character < 0x20U) {
+        output += "\\u00";
+        output.push_back(kHex[(character >> 4U) & 0x0fU]);
+        output.push_back(kHex[character & 0x0fU]);
+      } else {
+        output.push_back(static_cast<char>(character));
+      }
+      break;
+    }
+  }
+  output.push_back('"');
+}
+
+void append_integer(std::string &output, const persisted::Integer value) {
+  output += std::to_string(value);
+}
+
+void append_float(std::string &output, const float value) {
+  std::ostringstream stream;
+  stream.imbue(std::locale::classic());
+  stream << std::setprecision(std::numeric_limits<float>::max_digits10) << std::defaultfloat
+         << value;
+  output += stream.str();
+}
+
+template <typename Enum> void append_enum(std::string &output, const Enum value) {
+  const auto name = name_of(value);
+  append_json_string(output, name.value_or(""));
+}
+
+void append_operand(std::string &output, const persisted::Operand &operand) {
+  output.push_back('{');
+  std::visit(
+      [&output](const auto &value) {
+        using Value = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<Value, persisted::BooleanOperand>) {
+          output += "\"boolean\":";
+          output += value.value ? "true" : "false";
+        } else if constexpr (std::is_same_v<Value, persisted::NumberOperand>) {
+          output += "\"number\":";
+          append_float(output, value.value);
+        } else {
+          output += "\"choice\":";
+          append_json_string(output, value.key);
+        }
+      },
+      operand);
+  output.push_back('}');
+}
+
+void append_condition(std::string &output, const persisted::Condition &condition) {
+  output += "\"signal_key\":";
+  append_json_string(output, condition.signal_key);
+  output += ",\"comparison\":";
+  append_enum(output, condition.comparison);
+  output += ",\"operand\":";
+  append_operand(output, condition.operand);
+}
+
+void append_numeric_range(std::string &output, const action_engine::NumericRange &range) {
+  output += "{\"from\":";
+  append_float(output, range.from);
+  output += ",\"to\":";
+  append_float(output, range.to);
+  output.push_back('}');
+}
+
+void append_rule(std::string &output, const persisted::Rule &rule) {
+  std::visit(
+      [&output](const auto &value) {
+        using Rule = std::decay_t<decltype(value)>;
+        output.push_back('{');
+        if constexpr (std::is_same_v<Rule, persisted::StateRule>) {
+          output += "\"type\":\"state\",\"action\":";
+          append_json_string(output, value.action);
+          output.push_back(',');
+          append_condition(output, value.condition);
+          output += ",\"freshness\":";
+          append_enum(output, value.freshness);
+        } else if constexpr (std::is_same_v<Rule, persisted::SampledStateRule>) {
+          output += "\"type\":\"sampled_state\",\"action\":";
+          append_json_string(output, value.action);
+          output.push_back(',');
+          append_condition(output, value.condition);
+          if (value.release_threshold.has_value()) {
+            output += ",\"release_threshold\":";
+            append_float(output, *value.release_threshold);
+          }
+          output += ",\"freshness\":";
+          append_enum(output, value.freshness);
+        } else if constexpr (std::is_same_v<Rule, persisted::EventRule>) {
+          output += "\"type\":\"event\",\"action\":";
+          append_json_string(output, value.action);
+          output.push_back(',');
+          append_condition(output, value.condition);
+          output += ",\"edge\":";
+          append_enum(output, value.edge);
+          output += ",\"freshness\":";
+          append_enum(output, value.freshness);
+        } else {
+          output += "\"type\":\"range\",\"action\":";
+          append_json_string(output, value.action);
+          output += ",\"signal_key\":";
+          append_json_string(output, value.signal_key);
+          output += ",\"input\":";
+          append_numeric_range(output, value.input);
+          output += ",\"output\":";
+          append_numeric_range(output, value.output);
+          output += ",\"freshness\":";
+          append_enum(output, value.freshness);
+        }
+        output.push_back('}');
+      },
+      rule);
+}
+
+void append_output_binding(std::string &output, const persisted::OutputBinding &binding) {
+  std::visit(
+      [&output](const auto &value) {
+        using Binding = std::decay_t<decltype(value)>;
+        output.push_back('{');
+        output += "\"type\":";
+        if constexpr (std::is_same_v<Binding, persisted::LedEffectBinding>) {
+          output += "\"led_effect\",\"action\":";
+          append_json_string(output, value.action);
+          output += ",\"effect\":";
+          append_enum(output, value.effect);
+          output += ",\"priority\":";
+          append_integer(output, value.priority);
+        } else {
+          output += "\"led_fill\",\"action\":";
+          append_json_string(output, value.action);
+          output += ",\"zone\":{\"start\":";
+          append_integer(output, value.zone.start);
+          output += ",\"length\":";
+          append_integer(output, value.zone.length);
+          output += ",\"direction\":";
+          append_enum(output, value.zone.direction);
+          output += "},\"color\":{\"red\":";
+          append_integer(output, value.color.red);
+          output += ",\"green\":";
+          append_integer(output, value.color.green);
+          output += ",\"blue\":";
+          append_integer(output, value.color.blue);
+          output += "},\"priority\":";
+          append_integer(output, value.priority);
+        }
+        output.push_back('}');
+      },
+      binding);
+}
+
+} // namespace
+
+std::string serialize_controller_config(const ControllerConfig &configuration) {
+  std::string output;
+  output.reserve(512U);
+  output += "{\"version\":";
+  append_integer(output, configuration.version);
+  output += ",\"actions\":[";
+  for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
+    if (index != 0U)
+      output.push_back(',');
+    output += "{\"name\":";
+    append_json_string(output, configuration.actions[index].name);
+    output.push_back('}');
+  }
+  output += "],\"rules\":[";
+  for (std::size_t index = 0; index < configuration.rules.size(); ++index) {
+    if (index != 0U)
+      output.push_back(',');
+    append_rule(output, configuration.rules[index]);
+  }
+  output += "],\"outputs\":[";
+  for (std::size_t index = 0; index < configuration.outputs.size(); ++index) {
+    if (index != 0U)
+      output.push_back(',');
+    append_output_binding(output, configuration.outputs[index]);
+  }
+  output += "]}";
+  return output;
+}
+
 } // namespace controller_config::persisted
