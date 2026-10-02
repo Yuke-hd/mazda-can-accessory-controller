@@ -118,11 +118,15 @@ Every binding has a `type` and the `action` it follows.
 
 `led_transient` binds an action's `Trigger` to a solid zone for a bounded
 lifetime. It shares `action`, `zone`, `color`, and `priority` fields with
-`led_fill`, plus required `duration_ms` (integer `1..9007199254740991`). The
-upper bound is `2^53-1`: every accepted millisecond value is exactly representable
-as a JSON binary64 integer and its conversion to unsigned microseconds fits
-without overflow. This is a representation bound, not a recommended effect
-length. The renderer owns elapsed-time expiry and its brightness ceiling.
+`led_fill`, plus required `duration_ms` (integer `1..5000`). The five-second
+maximum is the renderer contract's `local_argb::internal::kMaxTransientDurationUs`
+converted to milliseconds; the validator and YAML compiler derive their bound
+from that contract. It limits an event accent to a short lifetime even if
+telemetry becomes stale immediately after its `Trigger`: `Deactivate` cannot
+extend or restart the accent, and it expires within five seconds of the source
+trigger. This software policy limit is not measured vehicle timing evidence.
+The renderer owns elapsed-time expiry and its brightness ceiling; driver
+fail-off clears active layers immediately.
 
 JSON `duration_ms` must use an integer token: `800` is accepted, while `800.0`
 and `8e2` are rejected. The loader checks the original token before cJSON's
@@ -140,8 +144,10 @@ outputs:
 ```
 
 Multiple transient zones may follow one action. A duplicate is the same
-binding kind, action, zone start, length, and direction; changing colour,
-duration, or priority does not make a new target. A fill and transient may
+binding kind, action, zone start, and length; direction does not change the
+physical target of a solid transient. Changing colour, duration, or priority
+does not make a new target. Fill targets continue to include direction because
+it changes their partial-level rendering. A fill and transient may
 share a zone. `Activate`, `Deactivate`, and `SetLevel` leave transient timing
 unchanged; only `Trigger` starts or restarts a transient. Renderer expiry and
 explicit fail-off cancel active layers. Applying a configuration installs
@@ -199,8 +205,8 @@ same name and meaning.
 | `ZoneOutOfRange` | The zone does not fit the 100-pixel logical strip (`local_argb::kLedCount`), or has a negative start or length. |
 | `InvalidColor` | A colour channel is outside 0..255. |
 | `InvalidPriority` | A priority is outside 0..255. |
-| `DuplicateBinding` | The same binding kind and action already drive this effect, or this zone (start, length and direction). |
-| `InvalidDuration` | Transient `duration_ms` is outside `1..9007199254740991`. |
+| `DuplicateBinding` | The same binding kind and action already drive this effect or zone. Fill zones include start, length and direction; solid transient zones include only start and length. |
+| `InvalidDuration` | Transient `duration_ms` is outside `1..5000`, derived from the renderer contract maximum. |
 
 A validated configuration can still fail when the runtime applies it. These
 checks need the provider's signal catalog or the runtime's fixed capacities,

@@ -198,7 +198,14 @@ void set_error(ConfigDiagnostic &error, const Category category, const Code code
 
 // cJSON keeps numbers as doubles, so recover this field's original token
 // before accepting it. A rounded fractional/large input must not silently
-// become a different duration. Number order in the tree matches source order.
+// become a different duration. In pinned cJSON 1.7.19, parse_object/parse_array
+// append children in source order, including duplicate members. Visiting each
+// child's complete subtree before its next sibling therefore visits numbers in
+// lexical order, even across nested arrays/objects. number_token skips complete
+// strings (including escaped quotes/backslashes), so digits in keys/strings do
+// not enter that order. Schema checks reject duplicate keys separately.
+// Each duration rescans the tree/document; the input size and element preflight
+// limits bound this O(outputs * bytes) work.
 [[nodiscard]] bool number_index(const cJSON &node, const cJSON *target,
                                 std::size_t &index) noexcept {
   if (&node == target)
@@ -242,15 +249,20 @@ void set_error(ConfigDiagnostic &error, const Category category, const Code code
     return false;
   }
   std::size_t index = 0;
-  if (!number_index(root, value, index))
+  if (!number_index(root, value, index)) {
+    set_error(error, Category::Structural, Code::InvalidValue, std::string(path),
+              "duration_ms source number was not found in the parsed document",
+              ValidationError::InvalidDuration);
     return false;
+  }
   const auto token = number_token(json, index);
   std::from_chars_result parsed{};
   if (!token.empty())
     parsed = std::from_chars(token.data(), token.data() + token.size(), output);
   if (token.empty() || parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
     set_error(error, Category::Structural, Code::InvalidValue, std::string(path),
-              "duration_ms must use an integer token in 1..9007199254740991",
+              "duration_ms must use an integer token in 1.." +
+                  std::to_string(kMaxTransientDurationMs),
               ValidationError::InvalidDuration);
     return false;
   }
@@ -558,7 +570,7 @@ template <typename Entry, typename Parser>
   }
   return "$";
 }
-[[nodiscard]] const char *validation_message(const ValidationError error) {
+[[nodiscard]] std::string validation_message(const ValidationError error) {
   switch (error) {
   case ValidationError::UnsupportedVersion:
     return "unsupported configuration version; expected 1";
@@ -603,7 +615,7 @@ template <typename Entry, typename Parser>
   case ValidationError::DuplicateBinding:
     return "output binding target must be unique";
   case ValidationError::InvalidDuration:
-    return "transient duration_ms must be in 1..9007199254740991";
+    return "transient duration_ms must be in 1.." + std::to_string(kMaxTransientDurationMs);
   case ValidationError::None:
     return "configuration is valid";
   }

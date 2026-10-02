@@ -56,6 +56,32 @@ private:
 };
 } // namespace
 
+TEST_CASE("persisted transients are capped at five seconds with useful duration diagnostics") {
+  CHECK(persisted::kMaxTransientDurationMs == 5000);
+  auto config = transient_config();
+  std::get<persisted::LedTransientBinding>(config.outputs[0]).duration_ms = 5001;
+  check_error(config, persisted::ValidationError::InvalidDuration);
+  for (const auto *duration : {"5001", "5000.0"}) {
+    const auto loaded = persisted::parse_controller_config(transient_json(duration));
+    REQUIRE_FALSE(loaded.ok());
+    REQUIRE(loaded.diagnostic.has_value());
+    CHECK(loaded.diagnostic->schema_error == persisted::ValidationError::InvalidDuration);
+    CHECK(loaded.diagnostic->message.find("1..5000") != std::string::npos);
+  }
+}
+
+TEST_CASE("transient duplicate physical zones reject direction-only variations") {
+  auto config = transient_config();
+  auto binding = std::get<persisted::LedTransientBinding>(config.outputs[0]);
+  binding.zone.direction = FillDirection::EndToStart;
+  config.outputs.push_back(binding);
+  check_error(config, persisted::ValidationError::DuplicateBinding);
+  const auto loaded =
+      persisted::parse_controller_config(persisted::serialize_controller_config(config));
+  REQUIRE_FALSE(loaded.ok());
+  CHECK(loaded.diagnostic->schema_error == persisted::ValidationError::DuplicateBinding);
+}
+
 TEST_CASE("transient duration preserves exact milliseconds through JSON round trips") {
   auto config = transient_config();
   for (const auto duration : {persisted::Integer{1}, persisted::kMaxTransientDurationMs}) {
@@ -211,8 +237,10 @@ TEST_CASE("duration source token mapping skips escaped digit strings and adjacen
   // The schema key can also be escaped; token recovery follows the parsed node.
   json.replace(json.find("duration_ms"), 11, "\\u0064uration_ms");
   REQUIRE(persisted::parse_controller_config(json).ok());
-  const auto offset = json.find("9007199254740991");
-  json.insert(offset + 16, ".1");
+  const auto maximum = std::to_string(persisted::kMaxTransientDurationMs);
+  const auto offset = json.find(maximum);
+  REQUIRE(offset != std::string::npos);
+  json.insert(offset + maximum.size(), ".1");
   loaded = persisted::parse_controller_config(json);
   REQUIRE_FALSE(loaded.ok());
   CHECK(loaded.diagnostic->path == "outputs[1].duration_ms");

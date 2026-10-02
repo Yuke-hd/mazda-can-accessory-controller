@@ -221,10 +221,17 @@ template <typename Binding>
 }
 
 // As local_argb_actions: one binding per kind, action and effect or zone
-// (direction included). Appearance, priority and duration do not change a target.
+// (fill direction included). Solid transient direction does not change its
+// physical target. Appearance, priority and duration do not change a target.
 [[nodiscard]] bool same_target(const LedEffectBinding &left,
                                const LedEffectBinding &right) noexcept {
   return left.action == right.action && left.effect == right.effect;
+}
+
+[[nodiscard]] bool same_target(const LedTransientBinding &left,
+                               const LedTransientBinding &right) noexcept {
+  return left.action == right.action && left.zone.start == right.zone.start &&
+         left.zone.length == right.zone.length;
 }
 
 template <typename Binding>

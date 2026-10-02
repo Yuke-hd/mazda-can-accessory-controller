@@ -138,9 +138,9 @@ struct LedFillBinding {
   Integer priority{kDefaultPriority};
 };
 
-// Largest consecutive exact JSON binary64 integer. Multiplication by 1000
-// also fits the renderer's unsigned microsecond duration without overflow.
-inline constexpr Integer kMaxTransientDurationMs = 9007199254740991;
+// Persisted milliseconds share the renderer contract's bounded lifetime.
+inline constexpr Integer kMaxTransientDurationMs =
+    static_cast<Integer>(local_argb::internal::kMaxTransientDurationUs / 1000);
 
 // Binds Trigger to a solid local LED zone for a finite duration in milliseconds.
 struct LedTransientBinding {

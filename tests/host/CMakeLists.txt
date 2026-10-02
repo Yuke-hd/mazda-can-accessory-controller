@@ -441,11 +441,13 @@ add_executable(controller_config_application_tests controller_config_application
 set(_factory_yaml "${CMAKE_SOURCE_DIR}/config/default.yaml")
 set(_factory_compiler "${CMAKE_SOURCE_DIR}/tools/compile_controller_config.py")
 set(_factory_catalog "${CMAKE_SOURCE_DIR}/tools/controller_signal_catalog.json")
+set(_factory_duration_contract
+  "${CMAKE_SOURCE_DIR}/components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp")
 set(_factory_json "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json")
 # Exercise the same YAML compiler and canonical loader as the firmware. A
-# source/compiler/catalog edit must regenerate this document before testing.
+# source/compiler/catalog/contract edit must regenerate this document before testing.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  "${_factory_yaml}" "${_factory_compiler}" "${_factory_catalog}")
+  "${_factory_yaml}" "${_factory_compiler}" "${_factory_catalog}" "${_factory_duration_contract}")
 execute_process(
   COMMAND "${Python3_EXECUTABLE}" "${_factory_compiler}" "${_factory_yaml}" "${_factory_json}"
   RESULT_VARIABLE _factory_compile_result

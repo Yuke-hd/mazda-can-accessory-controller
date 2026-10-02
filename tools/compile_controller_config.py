@@ -28,13 +28,16 @@ VERSION = 1
 PIXEL_COUNT = 100
 DEFAULT_FRESHNESS = "fresh"
 DEFAULT_PRIORITY = 100
-MAX_DURATION_MS = 2**53 - 1
 MAX_JSON_BYTES = 16 * 1024
 # The persisted C++ model stores numeric fields as float. Reject values that
 # the runtime model would convert to infinity even when Python can represent
 # them as a finite double.
 FLOAT_MAX = 3.4028234663852886e38
 SIGNAL_CATALOG_PATH = Path(__file__).with_name("controller_signal_catalog.json")
+DURATION_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp"
+)
 SIGNAL_TYPES = {"boolean", "number", "enum"}
 RULE_CAPABILITIES = {
     "state": "notify",
@@ -112,6 +115,21 @@ class CompileError(ValueError):
         super().__init__(message)
         self.path = path
         self.message = message
+
+
+def _max_transient_duration_ms() -> int:
+    """Read the sole lifetime authority from the repository's sink contract."""
+    try:
+        contract = DURATION_CONTRACT_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CompileError("$", f"cannot read transient duration contract: {error}") from error
+    match = re.search(r"\bkMaxTransientDurationUs\s*=\s*([0-9][0-9']*)\s*;", contract)
+    if match is None:
+        raise CompileError("$", "transient duration contract must define its maximum as an integer literal")
+    maximum_us = int(match.group(1).replace("'", ""))
+    if maximum_us < 1000 or maximum_us % 1000:
+        raise CompileError("$", "transient duration contract maximum must be positive whole milliseconds")
+    return maximum_us // 1000
 
 
 class _YamlDurationScalar(str):
@@ -216,8 +234,9 @@ def _normalize_duration(value: Any, path: str) -> int:
     # Check before int conversion to avoid allocating huge exponent values.
     # This bound stays exact in JSON's double parser and fits uint64_t after
     # the runtime millisecond-to-microsecond conversion.
-    if not 1 <= duration <= MAX_DURATION_MS:
-        raise CompileError(path, f"duration_ms must be in 1..{MAX_DURATION_MS}")
+    maximum_ms = _max_transient_duration_ms()
+    if not 1 <= duration <= maximum_ms:
+        raise CompileError(path, f"duration_ms must be in 1..{maximum_ms}")
     return int(duration)
 
 
@@ -536,7 +555,8 @@ def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[st
         normalized["duration_ms"] = _normalize_duration(output["duration_ms"], duration_path)
     return (
         normalized,
-        (output_type, action, zone["start"], zone["length"], zone["direction"]),
+        (output_type, action, zone["start"], zone["length"])
+        + ((zone["direction"],) if output_type == "led_fill" else ()),
     )
 
 
@@ -612,6 +632,10 @@ def _yaml_loader() -> Any:
                 raise yaml.constructor.ConstructorError(
                     "while constructing a mapping", node.start_mark, f"duplicate key '{key}'", key_node.start_mark
                 )
+            # Retain numeric lexemes for every duration_ms mapping key. Schema
+            # validation currently permits that field only in transient outputs;
+            # a future duration_ms field must opt into _normalize_duration or
+            # narrow this interception before accepting ordinary float values.
             if key == "duration_ms" and value_node.tag == "tag:yaml.org,2002:float":
                 mapping[key] = _YamlDurationScalar(value_node.value)
             else:

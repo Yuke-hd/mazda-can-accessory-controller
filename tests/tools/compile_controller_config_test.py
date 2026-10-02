@@ -133,6 +133,37 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             **overrides,
         }
 
+    def test_transient_duration_safety_boundary_has_field_diagnostic(self) -> None:
+        result, canonical = self.run_compiler(
+            self.transient_source(self.transient_output(duration_ms=5000))
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(canonical)["outputs"][0]["duration_ms"], 5000)
+        result, canonical = self.run_compiler(
+            self.transient_source(self.transient_output(duration_ms=5001))
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("outputs[0].duration_ms", result.stderr)
+        self.assertIn("1..5000", result.stderr)
+        self.assertIsNone(canonical)
+
+    def test_transient_direction_only_variation_is_a_duplicate_physical_target(self) -> None:
+        document = {
+            "version": 1,
+            "actions": [{"name": "action"}],
+            "outputs": [
+                self.transient_output(),
+                self.transient_output(
+                    zone={"start": 0, "length": 10, "direction": "end_to_start"}
+                ),
+            ],
+        }
+        result, canonical = self.run_compiler(json.dumps(document))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("outputs[1]", result.stderr)
+        self.assertIn("output binding target must be unique", result.stderr)
+        self.assertIsNone(canonical)
+
     def test_transient_output_normalizes_alias_and_default_priority(self) -> None:
         output = self.transient_output(
             type="LedTransient",
@@ -146,7 +177,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIsInstance(normalized["duration_ms"], int)
 
     def test_transient_duration_accepts_exact_integer_bounds(self) -> None:
-        for duration in (1, 500, 9007199254740991, 1.0):
+        for duration in (1, 500, 5000, 1.0):
             with self.subTest(duration=duration):
                 result, canonical = self.run_compiler(
                     self.transient_source(self.transient_output(duration_ms=duration, priority=255))
@@ -156,7 +187,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 self.assertEqual(normalized["duration_ms"], duration)
                 self.assertIsInstance(normalized["duration_ms"], int)
                 self.assertEqual(normalized["priority"], 255)
-        for scalar, expected in (("9007199254740991.000000000000000000", 9007199254740991),
+        for scalar, expected in (("5000.000000000000000000", 5000),
                                  ("8.0e+2", 800)):
             with self.subTest(scalar=scalar):
                 source = self.transient_source(self.transient_output(duration_ms="DURATION"))
@@ -166,7 +197,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
 
     def test_invalid_transient_durations_have_field_diagnostics(self) -> None:
         for duration in (0, -1, 1.5, True, False, "500", None,
-                         9007199254740992, 18446744073709552):
+                         5001, 9007199254740992, 18446744073709552):
             with self.subTest(duration=duration):
                 result, canonical = self.run_compiler(
                     self.transient_source(self.transient_output(duration_ms=duration))
@@ -191,7 +222,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         result, canonical = self.run_compiler(source.replace('"DURATION"', "1.0e+100000000"))
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("outputs[0].duration_ms", result.stderr)
-        self.assertIn("must be in 1..9007199254740991", result.stderr)
+        self.assertIn("must be in 1..5000", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
         self.assertIsNone(canonical)
         for scalar in (".nan", ".inf", "-.inf"):
@@ -301,7 +332,6 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 self.transient_output(),
                 self.transient_output(zone={"start": 1, "length": 10, "direction": "start_to_end"}),
                 self.transient_output(zone={"start": 0, "length": 11, "direction": "start_to_end"}),
-                self.transient_output(zone={"start": 0, "length": 10, "direction": "end_to_start"}),
                 self.transient_output(action="other"),
                 fill,
             ],
@@ -309,7 +339,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         result, canonical = self.run_compiler(json.dumps(document))
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(json.loads(canonical)["outputs"]), 6)
+        self.assertEqual(len(json.loads(canonical)["outputs"]), 5)
 
     def test_fractional_integer_fields_fail_before_float_rounding(self) -> None:
         template = """
