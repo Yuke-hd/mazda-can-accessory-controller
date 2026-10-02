@@ -438,7 +438,7 @@ target_compile_features(controller_config_store_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_store_tests)
 
 add_executable(controller_config_application_tests controller_config_application_tests.cpp)
-set(_factory_yaml "${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/controller-config-v1.yaml")
+set(_factory_yaml "${CMAKE_SOURCE_DIR}/config/default.yaml")
 set(_factory_compiler "${CMAKE_SOURCE_DIR}/tools/compile_controller_config.py")
 set(_factory_catalog "${CMAKE_SOURCE_DIR}/tools/controller_signal_catalog.json")
 set(_factory_json "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json")

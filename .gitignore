@@ -27,6 +27,8 @@ __pycache__/
 venv/
 
 # Local secrets and configuration
+/config/*
+!/config/default.yaml
 .env
 .env.*
 !.env.example

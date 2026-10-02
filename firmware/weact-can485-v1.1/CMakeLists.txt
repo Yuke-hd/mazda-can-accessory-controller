@@ -33,7 +33,7 @@ endif()
 # the embedded artifact current when the source document changes.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 set(_controller_config_default_yaml
-    "${CMAKE_CURRENT_LIST_DIR}/../../docs/specs/configuration/examples/controller-config-v1.yaml")
+    "${CMAKE_CURRENT_LIST_DIR}/../../config/default.yaml")
 set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
     CACHE FILEPATH "Factory controller configuration YAML")
 set(CONTROLLER_CONFIG_FACTORY_JSON

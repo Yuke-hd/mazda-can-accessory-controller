@@ -21,6 +21,10 @@ idf.py set-target esp32
 idf.py build
 ```
 
+The factory profile defaults to `config/default.yaml`. To build with a local
+profile, place it in `config/` (git-ignored apart from `default.yaml`) and pass
+`-DCONTROLLER_CONFIG_DEFAULT_YAML=<path>` to `idf.py`.
+
 Configuration prints the selected `CONTROLLER_CONFIG_DEFAULT_YAML` path and
 the SHA256 of its generated factory JSON. The YAML selection is a CMake cache
 entry: an explicit `-D` override persists in that build directory until changed
