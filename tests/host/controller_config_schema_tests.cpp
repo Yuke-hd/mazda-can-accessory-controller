@@ -326,6 +326,34 @@ TEST_CASE("a rule needs a signal key") {
   check_error(config, ValidationError::EmptySignalKey, ConfigSection::Rules, 0);
 }
 
+TEST_CASE("brake Boolean rules retain owner opted unverified freshness with LED outputs") {
+  const persisted::Condition condition{"vehicle.brake_pressed", Comparison::Equal,
+                                       persisted::BooleanOperand{true}};
+  const persisted::Rule rules[] = {
+      persisted::StateRule{"brake_light", condition, FreshnessRequirement::FreshOrUnverified},
+      persisted::EventRule{"brake_light", condition, EventEdge::BecomesTrue,
+                           FreshnessRequirement::FreshOrUnverified},
+      persisted::SampledStateRule{"brake_light", condition,
+                                  FreshnessRequirement::FreshOrUnverified}};
+  for (const auto &rule : rules) {
+    CAPTURE(persisted::type_of(rule));
+    auto config = with_actions({"brake_light"});
+    config.rules = {rule};
+    config.outputs = {persisted::LedEffectBinding{"brake_light", LedEffect::Brake, 150}};
+    CHECK(persisted::validate(config).ok());
+    std::visit(
+        [](const auto &item) { CHECK(item.freshness == FreshnessRequirement::FreshOrUnverified); },
+        config.rules[0]);
+    config.outputs.clear();
+    CHECK(persisted::validate(config).ok());
+    std::visit([](auto &item) { item.freshness = FreshnessRequirement::Fresh; }, config.rules[0]);
+    CHECK(persisted::validate(config).ok());
+    std::visit([](auto &item) { item.freshness = enum_value<FreshnessRequirement>(99); },
+               config.rules[0]);
+    check_error(config, ValidationError::UnknownFreshness, ConfigSection::Rules, 0);
+  }
+}
+
 TEST_CASE("a rule rejects unrecognized comparison, freshness and edge values") {
   persisted::ControllerConfig config = with_actions({"left_turn"});
 

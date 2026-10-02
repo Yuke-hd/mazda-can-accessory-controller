@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from itertools import product
 import re
 import subprocess
 import sys
@@ -642,6 +643,135 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         document = json.loads(output_path.decode("utf-8"))
         self.assertEqual(document["rules"][0]["type"], "event")
         self.assertEqual(document["rules"][1]["release_threshold"], 5900)
+
+    def test_brake_boolean_conditions_compile_for_notify_and_read_rules(self) -> None:
+        cases = product(
+            ("state", "event", "sampled_state"),
+            ("equal", "not_equal"),
+            ("{boolean: true}", "{boolean: false}"),
+            ("", "freshness: fresh"),
+        )
+        for rule_type, comparison, operand, freshness in cases:
+            with self.subTest(rule_type=rule_type, comparison=comparison,
+                              operand=operand, freshness=freshness):
+                edge = "edge: becomes_true" if rule_type == "event" else ""
+                source = f"""
+                version: 1
+                actions: [{{name: brake_condition}}]
+                rules:
+                  - type: {rule_type}
+                    action: brake_condition
+                    signal_key: vehicle.brake_pressed
+                    comparison: {comparison}
+                    operand: {operand}
+                    {edge}
+                    {freshness}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                document = json.loads(output)
+                self.assertEqual(document["rules"][0]["type"], rule_type)
+                self.assertEqual(document["rules"][0]["comparison"], comparison)
+                self.assertEqual(
+                    document["rules"][0]["operand"],
+                    {"boolean": operand == "{boolean: true}"},
+                )
+                self.assertEqual(document["rules"][0]["freshness"], "fresh")
+                self.assertEqual(document["outputs"], [])
+
+    def test_owner_opted_unverified_brake_led_profiles_compile(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
+            with self.subTest(rule_type=rule_type):
+                edge = "edge: becomes_true" if rule_type == "event" else ""
+                source = f"""
+                version: 1
+                actions: [{{name: brake_light}}]
+                rules:
+                  - type: {rule_type}
+                    action: brake_light
+                    signal_key: vehicle.brake_pressed
+                    comparison: equal
+                    operand: {{boolean: true}}
+                    freshness: fresh_or_unverified
+                    {edge}
+                outputs:
+                  - type: led_effect
+                    action: brake_light
+                    effect: brake
+                    priority: 150
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                document = json.loads(output)
+                self.assertEqual(document["rules"][0]["freshness"], "fresh_or_unverified")
+                self.assertEqual(document["rules"][0]["operand"], {"boolean": True})
+                self.assertEqual(document["outputs"][0]["effect"], "brake")
+
+    def test_other_boolean_signals_allow_explicit_unverified_freshness(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
+            with self.subTest(rule_type=rule_type):
+                edge = "edge: becomes_true" if rule_type == "event" else ""
+                source = f"""
+                version: 1
+                actions: [{{name: hazard_condition}}]
+                rules:
+                  - type: {rule_type}
+                    action: hazard_condition
+                    signal_key: vehicle.hazard_request
+                    comparison: equal
+                    operand: {{boolean: true}}
+                    freshness: fresh_or_unverified
+                    {edge}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(output)["rules"][0]["freshness"], "fresh_or_unverified")
+
+    def test_brake_conditions_reject_numeric_and_choice_operands(self) -> None:
+        for rule_type in ("state", "event", "sampled_state"):
+            for operand in ("{number: 1}", "{choice: pressed}"):
+                with self.subTest(rule_type=rule_type, operand=operand):
+                    edge = "edge: becomes_true" if rule_type == "event" else ""
+                    source = f"""
+                    version: 1
+                    actions: [{{name: brake_condition}}]
+                    rules:
+                      - type: {rule_type}
+                        action: brake_condition
+                        signal_key: vehicle.brake_pressed
+                        comparison: equal
+                        operand: {operand}
+                        {edge}
+                    outputs: []
+                    """
+                    result, output = self.run_compiler(source)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("rules[0].operand", result.stderr)
+                    self.assertIn("does not match signal", result.stderr)
+                    self.assertIsNone(output)
+
+    def test_brake_boolean_signal_rejects_numeric_range_rules(self) -> None:
+        for freshness in ("fresh", "fresh_or_unverified"):
+            with self.subTest(freshness=freshness):
+                source = f"""
+                version: 1
+                actions: [{{name: brake_condition}}]
+                rules:
+                  - type: range
+                    action: brake_condition
+                    signal_key: vehicle.brake_pressed
+                    input: {{from: 0, to: 1}}
+                    output: {{from: 0, to: 1}}
+                    freshness: {freshness}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("rules[0].signal_key", result.stderr)
+                self.assertIn("must be numeric", result.stderr)
+                self.assertIsNone(output)
 
     def test_invalid_output_bounds_fail(self) -> None:
         source = """

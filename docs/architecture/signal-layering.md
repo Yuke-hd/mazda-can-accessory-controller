@@ -18,7 +18,8 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
   one build and must not be persisted.
 - `MazdaSignalProvider` exposes the Mazda-owned signal catalog. Reads use the
   same coherent publication as the typed polling API. Subscriptions share the
-  typed notification channels and their two-slot capacity. Subscriptions are
+  typed notification channels and their capacity, defined by
+  `vehicle_core::kNotificationSubscribersPerChannel`. Subscriptions are
   stopped-only mutations on the facade's lifecycle owner. The facade owns
   every registration, typed or generic, so the provider is a stateless view
   that is safe to destroy at any time, including while the facade runs.
@@ -28,6 +29,34 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
   `MazdaSignalProvider` implements (`catalog()`, `read()`, `subscribe()`,
   `unsubscribe()`). The generic action engine consumes only this port; see
   [`action-engine.md`](../specs/action-engine.md).
+
+## Brake signal contract
+
+The Mazda generic catalog contains nineteen signals. `vehicle.brake_pressed`
+is a Boolean signal with Read and Notify capabilities and Confirmed field
+interpretation evidence. Reads and notifications use the same coherent brake
+publication; generic subscribers share the public
+`on_brake_pressed_changed` notification channel. Its capacity is
+`vehicle_core::kNotificationSubscribersPerChannel`, shared across typed and
+generic registrations. Typed subscribers can exhaust the capacity needed by
+generic `subscribe()` calls, and generic subscribers can exhaust the capacity
+needed by typed subscriptions.
+
+Default brake freshness remains unset. A valid decoded observation is
+`FreshnessUnverified` until a caller explicitly supplies a freshness policy;
+Confirmed evidence does not imply `Fresh` availability. Unknown, malformed,
+stopped and faulted brake observations remain unavailable through the public
+contracts. Controller configurations default to `fresh`, which excludes
+unverified brake observations. The project owner explicitly approved the
+`fresh_or_unverified` opt-in for Boolean brake rules. With an unset brake
+timeout, the last decoded value can remain eligible when brake frames stop
+arriving while other CAN traffic keeps transport health available; accepting
+this policy does not promote the reading to `Fresh` or establish timing
+evidence. The default controller profile is unchanged and binds no brake-pedal
+action to an LED output. See
+[signal evidence](../protocol/signal-evidence.md) for the field mapping and its
+evidence boundary, and [controller configuration](../specs/configuration/controller-config.md#yaml-compiler)
+for the owner-approved opt-in.
 
 ## Boundary contracts
 

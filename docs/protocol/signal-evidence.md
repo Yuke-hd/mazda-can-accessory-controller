@@ -25,15 +25,19 @@ without changing those historical records or the frozen decoder metadata.
 
 ## Public channel inventory
 
-The public facade declares two polling channels and sixteen notify channels in
+The public facade declares two polling channels and seventeen notify channels in
 [`mazda/vehicle_telemetry.hpp`](../../components/mazda_telemetry/include/mazda/vehicle_telemetry.hpp).
 The corresponding state members are listed in
 [`VehicleState`](../../lib/mazda/include/mazda/state.hpp#L11-L34).
 “DBC source” uses the byte-for-byte reviewed file; “decoder” identifies the
 current portable implementation and metadata. A status qualified by a value
 set applies only to that set, not to unobserved values in the same field.
-The private lighting handoff additionally consumes the confirmed brake-pedal
-state; it is not exposed as a public facade channel.
+The brake-pedal state is available through the public notification facade and
+the generic provider as `vehicle.brake_pressed` (Boolean, Read and Notify).
+The generic catalog contains nineteen entries. Brake freshness remains unset
+in the default policy: a valid observation is `FreshnessUnverified`, not
+`Fresh`. Confirmed field interpretation does not establish timing evidence or
+enable a brake lighting binding.
 
 | Public channel | Mode | DBC source field / derivation | Decoder and source mapping | Evidence status and boundary |
 | --- | --- | --- | --- | --- |
@@ -55,7 +59,7 @@ state; it is not exposed as a public facade channel.
 | `right_indicator_lamp` | Notify | `BLINK_INFO.RightIndicatorLamp_Reference`, ID `0x09a`, `19\|1@0+`, `0=Off`, `1=On`. | Metadata [`kRightIndicatorLampDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L179-L180); byte 2 bit 3 in [`decode_blink_info`](../../lib/mazda/src/mazda_candidate.cpp#L171-L195). | **Reference** — source mapping only; synthetic lamp tests do not promote it ([DBC](mazda_custom.dbc#L53-L56)). |
 | `wiper_low` | Notify | `BLINK_INFO.WiperLow_Reference`, ID `0x09a`, `33\|1@0+`, `0=Off`, `1=On`. | Metadata [`kWiperLowDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L181-L182); byte 4 bit 1 in [`decode_blink_info`](../../lib/mazda/src/mazda_candidate.cpp#L171-L195). | **Observed** — the reviewed DBC records correlation with wiper activity but explicitly describes the interpretation as “appears” to be operation rather than a stalk request ([DBC comment](mazda_custom.dbc#L107-L108)). |
 | `front_wiper` | Notify | `TURN_SWITCH.FrontWiper`, ID `0x091`, `21\|2@0+`, scale `1`, value table `0=Off`, `1=On`, `2=High`, `3=Intermittent`. | Metadata [`kFrontWiperDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L192-L206); `(data[2] >> 4) & 0x03` in [`decode_turn_switch`](../../lib/mazda/src/mazda_candidate.cpp#L197-L225). | **Observed** — the reviewed DBC records the field/bit correlation and observed `0=Off`, `1=On`; values `2=High`, `3=Intermittent` remain reference mappings ([DBC comment](mazda_custom.dbc#L109-L110)). |
-| `brake_pressed` | Private lighting input | `BRAKE_PEDAL.BrakePressed`, ID `0x165`, `4\|1@0+`, `0=Released`, `1=Pressed`. | Metadata [`kBrakePressedDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L246-L248); `data[0] & 0x10` in [`decode_brake_pedal`](../../lib/mazda/src/mazda_candidate.cpp#L347-L371). | **Confirmed** for the reviewed field/bit/value interpretation ([DBC comment](mazda_custom.dbc#L111-L112)); no public polling or notification channel is added. |
+| `brake_pressed` | Notify; generic Read + Notify | `BRAKE_PEDAL.BrakePressed`, ID `0x165`, `4\|1@0+`, `0=Released`, `1=Pressed`. | Metadata [`kBrakePressedDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L246-L248); `data[0] & 0x10` in [`decode_brake_pedal`](../../lib/mazda/src/mazda_candidate.cpp#L347-L371). | **Confirmed** for the reviewed field/bit/value interpretation ([DBC comment](mazda_custom.dbc#L111-L112)); freshness timing remains unverified and the default profile has no brake-pedal action. |
 
 The metadata line links above are intentionally descriptive only. When metadata layout
 changes, preserve the stable channel name, DBC field, and status boundary; a

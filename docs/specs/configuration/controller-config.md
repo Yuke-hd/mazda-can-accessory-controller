@@ -238,6 +238,24 @@ signal catalog manifest at `tools/controller_signal_catalog.json`: signal
 existence, delivery capability, operand type, and enum choice keys must match
 the catalog exposed by the Mazda telemetry provider.
 
+`vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
+with Boolean equality or inequality conditions in `state`, `event` and
+`sampled_state` rules; numeric ranges and enum choices are invalid. Compiling
+or loading such a rule does not make its observation fresh. The default
+`fresh` requirement excludes a `FreshnessUnverified` brake observation.
+
+The project owner explicitly approved `fresh_or_unverified` as an opt-in for
+`vehicle.brake_pressed`. The compiler, persisted validator and canonical JSON
+loader accept that policy for Boolean state, event and sampled-state rules,
+including rules with LED output bindings. With the brake timeout unset, the
+last decoded brake value can remain eligible when brake frames stop arriving
+while other CAN traffic keeps transport health available. This opt-in does not
+turn the observation into `Fresh` or establish brake timing evidence; normal
+malformed, faulted, stopped and unavailable fail-off behavior still applies.
+The schema does not configure telemetry freshness timeouts. Other signals
+retain their existing freshness policies. The production profile is unchanged
+and has no brake-pedal rule or brake-to-LED binding.
+
 Install the host-only dependency and compile a profile with:
 
 ```sh
@@ -262,7 +280,14 @@ The host CTest `controller_config_yaml_loader` compiles the production example
 and valid regression profiles, loads the emitted bytes through the canonical
 C++ loader, and resolves each rule against the real Mazda catalog. It also
 compares the complete catalog metadata with the host manifest. Compiler enum
-spellings are checked against the C++ persisted name tables.
+spellings are checked against the C++ persisted name tables. Brake regression
+profiles cover Boolean equality and inequality notify and read rules without
+output bindings. Owner-approved unverified-brake LED profiles compile and
+resolve through the canonical loader/catalog harness. Direct C++ validator
+and JSON-loader regressions independently retain `FreshOrUnverified` on
+accepted Boolean brake rules rather than converting it to `Fresh`.
+Type-mismatch and numeric-range profiles still fail before JSON is emitted,
+including numeric brake ranges with either freshness policy.
 
 ## Not configurable
 
