@@ -44,7 +44,7 @@ struct SignalSubscriptionRecord final {
 // limiting capacity.
 inline constexpr std::size_t kGenericSubscriptionCapacity =
     notify_signal_count() * vehicle_core::kNotificationSubscribersPerChannel;
-static_assert(notify_signal_count() == 16);
+static_assert(notify_signal_count() == 17);
 
 // Typed channel callback registered for a generic subscription. It converts
 // `current` and exactly the four flags and forwards them with the user

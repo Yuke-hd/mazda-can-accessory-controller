@@ -88,7 +88,7 @@ int main() {
   static_assert(std::tuple_size_v<mazda::internal::NotificationDescriptorTuple> ==
                 mazda::internal::kNotificationChannelCount);
   using TestNotificationDescriptor =
-      std::tuple_element_t<16, mazda::internal::NotificationDescriptorTuple>;
+      std::tuple_element_t<17, mazda::internal::NotificationDescriptorTuple>;
   static_assert(TestNotificationDescriptor::Channel::channel_id() ==
                 mazda::internal::kTestFrontWiperNotificationChannel);
 
@@ -106,14 +106,14 @@ int main() {
       std::strcmp(std::get<1>(polling_descriptors).name, "engine_rpm") != 0 ||
       std::strcmp(std::get<2>(polling_descriptors).name, "test_front_wiper") != 0 ||
       std::strcmp(std::get<15>(notification_descriptors).name, "front_wiper") != 0 ||
-      std::strcmp(std::get<16>(notification_descriptors).name, "test_front_wiper") != 0 ||
-      std::get<16>(notification_descriptors).channel == nullptr)
+      std::strcmp(std::get<17>(notification_descriptors).name, "test_front_wiper") != 0 ||
+      std::get<17>(notification_descriptors).channel == nullptr)
     return 1;
 
   // Both records are test-only extensions of the same fixed registries. Their
   // own channel/member and signal metadata are consumed by unchanged workers.
   const auto test_polling_descriptor = std::get<2>(polling_descriptors);
-  const auto test_notify_descriptor = std::get<16>(notification_descriptors);
+  const auto test_notify_descriptor = std::get<17>(notification_descriptors);
   WiperRecorder recorder{};
   const auto subscription =
       service.subscribe_notification_descriptor(test_notify_descriptor, &record_wiper, &recorder);

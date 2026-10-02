@@ -232,13 +232,13 @@ struct Harness final {
   mazda::MazdaSignalProvider provider{telemetry};
 };
 
-constexpr std::array<SignalId, 16> kNotifyIds{
-    ids::kTurnState,         ids::kHazardRequest,     ids::kTurnRequestLeft,
-    ids::kTurnRequestRight,  ids::kIndicatorLampLeft, ids::kIndicatorLampRight,
-    ids::kSelectorPosition,  ids::kActualGear,        ids::kLiftgateOpen,
-    ids::kDoorRearRight,     ids::kDoorRearLeft,      ids::kDoorFrontLeftRhd,
-    ids::kDoorFrontRightRhd, ids::kDoorsUnlocked,     ids::kWiperLow,
-    ids::kWiperFrontPosition};
+constexpr std::array<SignalId, 17> kNotifyIds{
+    ids::kTurnState,          ids::kHazardRequest,     ids::kTurnRequestLeft,
+    ids::kTurnRequestRight,   ids::kIndicatorLampLeft, ids::kIndicatorLampRight,
+    ids::kSelectorPosition,   ids::kActualGear,        ids::kLiftgateOpen,
+    ids::kDoorRearRight,      ids::kDoorRearLeft,      ids::kDoorFrontLeftRhd,
+    ids::kDoorFrontRightRhd,  ids::kDoorsUnlocked,     ids::kWiperLow,
+    ids::kWiperFrontPosition, ids::kBrakePressed};
 
 // Waits until `target` is true and every other id of the same message is
 // false, so each boolean is proven to route to its own typed channel.
@@ -373,6 +373,20 @@ void test_every_notify_signal_routes_to_its_typed_channel() {
   EXPECT(harness.inject(kDoorsId, 45, {0, 0, 0, 0x40, 0, 0, 0, 0}));
   EXPECT(wait_for_single_true(recorder, ids::kDoorsUnlocked, doors));
 
+  // BRAKE_PEDAL: released and pressed reach the generic dispatcher while
+  // the existing unset freshness policy remains visible to consumers.
+  EXPECT(harness.inject(kBrakePedalId, 50, {0, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_flag(
+      [&] { return recorder.latest_value_is(ids::kBrakePressed, SignalValue::boolean(false)); }));
+  const auto released_count = recorder.count_for(ids::kBrakePressed);
+  EXPECT(harness.inject(kBrakePedalId, 51, {0x10, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_flag(
+      [&] { return recorder.latest_value_is(ids::kBrakePressed, SignalValue::boolean(true)); }));
+  EXPECT(recorder.count_for(ids::kBrakePressed) > released_count);
+  const auto brake = recorder.latest(ids::kBrakePressed);
+  EXPECT(brake->current.availability == mazda::Availability::FreshnessUnverified);
+  EXPECT(brake->current.validation == mazda::ValidationStatus::Confirmed);
+
   EXPECT(harness.telemetry.stop().ok());
   {
     std::lock_guard<std::mutex> lock{recorder.mutex};
@@ -398,7 +412,7 @@ void test_request_failures_are_distinct() {
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(SignalId{}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
-  EXPECT(provider.subscribe(SignalId{19}, &record_notice, &context).status ==
+  EXPECT(provider.subscribe(SignalId{20}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
   EXPECT(provider.subscribe(SignalId{0xffffU}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);

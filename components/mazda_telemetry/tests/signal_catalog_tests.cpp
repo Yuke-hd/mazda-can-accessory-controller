@@ -71,19 +71,20 @@ constexpr std::string_view kLockedKeys[] = {
     "vehicle.doors_unlocked",
     "vehicle.wiper.low",
     "vehicle.wiper.front_position",
+    "vehicle.brake_pressed",
 };
 
 constexpr SignalCatalogView kCatalog{kSignalCatalog};
 
 static_assert(kCatalog.well_formed());
-static_assert(kCatalog.size() == 18);
-static_assert(kSignalCatalogSize == 18);
+static_assert(kCatalog.size() == 19);
+static_assert(kSignalCatalogSize == 19);
 static_assert(std::size(kLockedKeys) == kSignalCatalogSize);
 
 constexpr bool ids_nonzero_unique_and_sequential() noexcept {
   for (std::size_t index = 0; index < kCatalog.size(); ++index) {
     const SignalId id = kCatalog.at(index)->id;
-    // Ids are assigned 1..18 in locked-key order.
+    // Ids are assigned 1..19 in locked-key order.
     if (!id.valid() || id.value() != index + 1)
       return false;
     for (std::size_t other = index + 1; other < kCatalog.size(); ++other) {
@@ -108,8 +109,10 @@ constexpr bool keys_match_locked_list() noexcept {
 }
 static_assert(keys_match_locked_list());
 
-// No unsuffixed aliases and no out-of-scope signals.
-static_assert(kCatalog.find("vehicle.brake_pressed") == nullptr);
+// Brake is appended without changing existing ids; no unsuffixed aliases.
+static_assert(kCatalog.find(ids::kBrakePressed)->key == "vehicle.brake_pressed");
+static_assert(kCatalog.find(ids::kBrakePressed)->validation == ValidationStatus::Confirmed);
+static_assert(kCatalog.find(ids::kBrakePressed)->type == SignalType::Boolean);
 static_assert(kCatalog.find("vehicle.door.front_left") == nullptr);
 static_assert(kCatalog.find("vehicle.door.front_right") == nullptr);
 static_assert(kCatalog.find("vehicle.turn_request") == nullptr);
@@ -156,7 +159,7 @@ constexpr bool others_are_read_notify() noexcept {
       return false;
     ++count;
   }
-  return count == 16;
+  return count == 17;
 }
 static_assert(others_are_read_notify());
 
@@ -367,6 +370,7 @@ constexpr ExpectedBinding kExpectedBindings[] = {
     {ids::kDoorsUnlocked, candidate::kDoorsId, internal::kDoorsUnlockedNotificationChannel},
     {ids::kWiperLow, candidate::kBlinkInfoId, internal::kWiperLowNotificationChannel},
     {ids::kWiperFrontPosition, candidate::kTurnSwitchId, internal::kFrontWiperNotificationChannel},
+    {ids::kBrakePressed, candidate::kBrakePedalId, internal::kBrakeNotificationChannel},
 };
 static_assert(std::size(kExpectedBindings) == kSignalCatalogSize);
 
@@ -392,6 +396,7 @@ constexpr ExpectedMember<bool> kBoolMembers[] = {
     {ids::kDoorFrontRightRhd, &VehicleState::front_right_door_open_rhd},
     {ids::kDoorsUnlocked, &VehicleState::doors_unlocked},
     {ids::kWiperLow, &VehicleState::wiper_low},
+    {ids::kBrakePressed, &VehicleState::brake_pressed},
 };
 constexpr ExpectedMember<TurnState> kTurnStateMembers[] = {
     {ids::kTurnState, &VehicleState::turn_state},
@@ -522,15 +527,15 @@ void check_descriptor_bindings() {
           kCatalog.at(index)->key);
   }
   check(tally.polling_rows == 2, "two catalog rows are bound to polling descriptors");
-  check(tally.notification_rows == 16, "sixteen catalog rows are bound to notification channels");
+  check(tally.notification_rows == 17, "seventeen catalog rows are bound to notification channels");
 
-  // The host build carries one test polling descriptor and test channel 17.
+  // The host build carries one test polling descriptor and test channel 18.
   check(tally.host_only == 2, "host-only descriptors are present and excluded");
   check(!std::get<2>(polling).id.valid(), "host test polling descriptor has no signal id");
-  using TestDescriptor = std::tuple_element_t<16, internal::NotificationDescriptorTuple>;
+  using TestDescriptor = std::tuple_element_t<17, internal::NotificationDescriptorTuple>;
   static_assert(TestDescriptor::Channel::channel_id() ==
                 internal::kTestFrontWiperNotificationChannel);
-  check(!std::get<16>(notifications).id.valid(), "host test channel descriptor has no signal id");
+  check(!std::get<17>(notifications).id.valid(), "host test channel descriptor has no signal id");
 }
 
 // Explicit separation checks for the easily confused signals.

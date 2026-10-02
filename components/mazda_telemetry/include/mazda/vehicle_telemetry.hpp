@@ -81,6 +81,9 @@ public:
   [[nodiscard]] Result<Subscription> on_front_wiper_changed(Callback<FrontWiperPosition> callback,
                                                             void *context) noexcept;
 
+  [[nodiscard]] Result<Subscription> on_brake_pressed_changed(Callback<bool> callback,
+                                                              void *context) noexcept;
+
   [[nodiscard]] StatusResult unsubscribe(Subscription subscription) noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   // Liveness of the notification dispatcher: a wrapping count of completed
