@@ -87,12 +87,13 @@ TEST_CASE("the production example is a valid version 1 configuration") {
 TEST_CASE("the production example names one action per behaviour") {
   const persisted::ControllerConfig config = persisted::production_lighting_config();
 
-  REQUIRE(config.actions.size() == 5);
+  REQUIRE(config.actions.size() == 6);
   CHECK(config.actions[0].name == "left_turn");
   CHECK(config.actions[1].name == "right_turn");
   CHECK(config.actions[2].name == "hazard");
   CHECK(config.actions[3].name == "rpm_fill");
   CHECK(config.actions[4].name == "red_zone");
+  CHECK(config.actions[5].name == "brake");
 }
 
 TEST_CASE("the production example turn rules match the default lighting profile") {
@@ -103,7 +104,7 @@ TEST_CASE("the production example turn rules match the default lighting profile"
       {"right_turn", profile.turn_right.choice},
       {"hazard", profile.hazard.choice}};
 
-  REQUIRE(config.rules.size() == 5);
+  REQUIRE(config.rules.size() == 6);
   for (std::size_t index = 0; index < 3; ++index) {
     CAPTURE(index);
     const auto *rule = std::get_if<persisted::StateRule>(&config.rules[index]);
@@ -156,7 +157,7 @@ TEST_CASE("the production example turn outputs keep the mirrored strip mapping")
   const std::string_view action_names[] = {"left_turn", "right_turn", "hazard", "hazard"};
   const persisted::ControllerConfig config = persisted::production_lighting_config();
 
-  REQUIRE(config.outputs.size() == 6);
+  REQUIRE(config.outputs.size() == 7);
   for (std::size_t index = 0; index < bindings.size(); ++index) {
     CAPTURE(index);
     const auto *binding = std::get_if<persisted::LedEffectBinding>(&config.outputs[index]);
@@ -188,6 +189,37 @@ TEST_CASE("the production example RPM outputs match the default lighting profile
   CHECK(red_zone->action == "red_zone");
   CHECK(red_zone->effect == profile.rpm_red_zone.effect);
   CHECK(red_zone->priority == profile.rpm_red_zone.priority.rank());
+}
+
+TEST_CASE("the production example holds the brake action while the pedal is pressed") {
+  const persisted::ControllerConfig config = persisted::production_lighting_config();
+
+  REQUIRE(config.rules.size() == 6);
+  const auto *rule = std::get_if<persisted::StateRule>(&config.rules[5]);
+  REQUIRE(rule != nullptr);
+  CHECK(rule->action == "brake");
+  CHECK(rule->condition.signal_key == "vehicle.brake_pressed");
+  CHECK(rule->condition.comparison == Comparison::Equal);
+  const auto *pressed = std::get_if<persisted::BooleanOperand>(&rule->condition.operand);
+  REQUIRE(pressed != nullptr);
+  CHECK(pressed->value);
+  // Brake has no evidence-backed freshness timeout; the owner-approved
+  // opt-in accepts an unverified observation without promoting it to Fresh.
+  CHECK(rule->freshness == FreshnessRequirement::FreshOrUnverified);
+}
+
+TEST_CASE("the production example binds the brake action above the RPM red zone") {
+  const persisted::ControllerConfig config = persisted::production_lighting_config();
+
+  REQUIRE(config.outputs.size() == 7);
+  const auto *brake = std::get_if<persisted::LedEffectBinding>(&config.outputs[6]);
+  REQUIRE(brake != nullptr);
+  CHECK(brake->action == "brake");
+  CHECK(brake->effect == LedEffect::Brake);
+  CHECK(brake->priority == 200);
+  const auto *red_zone = std::get_if<persisted::LedEffectBinding>(&config.outputs[5]);
+  REQUIRE(red_zone != nullptr);
+  CHECK(red_zone->priority < brake->priority);
 }
 
 // --- Defaults --------------------------------------------------------------

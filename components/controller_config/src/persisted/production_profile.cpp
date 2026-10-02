@@ -11,6 +11,7 @@ using local_argb_actions::LedEffect;
 
 constexpr const char *kTurnStateSignal = "vehicle.turn_state";
 constexpr const char *kEngineRpmSignal = "vehicle.engine_rpm";
+constexpr const char *kBrakePressedSignal = "vehicle.brake_pressed";
 
 StateRule turn_rule(const char *action, const char *choice) {
   return StateRule{action, Condition{kTurnStateSignal, Comparison::Equal, ChoiceOperand{choice}},
@@ -21,8 +22,8 @@ StateRule turn_rule(const char *action, const char *choice) {
 
 ControllerConfig production_lighting_config() {
   ControllerConfig config{};
-  config.actions = {Action{"left_turn"}, Action{"right_turn"}, Action{"hazard"}, Action{"rpm_fill"},
-                    Action{"red_zone"}};
+  config.actions = {Action{"left_turn"}, Action{"right_turn"}, Action{"hazard"},
+                    Action{"rpm_fill"},  Action{"red_zone"},   Action{"brake"}};
   config.rules = {
       turn_rule("left_turn", "left"),
       turn_rule("right_turn", "right"),
@@ -32,6 +33,10 @@ ControllerConfig production_lighting_config() {
       SampledStateRule{"red_zone",
                        Condition{kEngineRpmSignal, Comparison::Greater, NumberOperand{6000.0F}},
                        FreshnessRequirement::FreshOrUnverified, std::nullopt},
+      // Brake freshness is unset; the owner-approved opt-in accepts an
+      // unverified observation without promoting it to Fresh.
+      StateRule{"brake", Condition{kBrakePressedSignal, Comparison::Equal, BooleanOperand{true}},
+                FreshnessRequirement::FreshOrUnverified},
   };
   // The strip is mounted mirrored, so a left turn animates the right-hand
   // effect and a right turn the left-hand one.
@@ -42,6 +47,7 @@ ControllerConfig production_lighting_config() {
       LedEffectBinding{"hazard", LedEffect::RightTurn, 100},
       LedFillBinding{"rpm_fill", LedZone{0, 100, FillDirection::CenterOut}, Rgb{0, 16, 32}, 50},
       LedEffectBinding{"red_zone", LedEffect::Brake, 150},
+      LedEffectBinding{"brake", LedEffect::Brake, 200},
   };
   return config;
 }
