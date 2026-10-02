@@ -134,7 +134,7 @@ std::string render_pixels(const replay::SignalObservers *observers) {
   replay::ReplayClock clock;
   std::ostringstream stream;
   replay::JsonlPixelFrameSink pixels{clock, stream};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const auto result =
       observers == nullptr
           ? replay::run_replay(rpm_then_left_turn(), clock, stage, {600'000})
@@ -149,7 +149,7 @@ std::string render_signal_records() {
   std::ostringstream pixel_stream;
   std::ostringstream signal_stream;
   replay::JsonlPixelFrameSink pixels{clock, pixel_stream};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::JsonlSignalRecordWriter signals{signal_stream};
   const auto result = replay::run_replay(rpm_then_left_turn(), clock, stage, {&signals}, {600'000});
   REQUIRE(result.ok());
@@ -475,7 +475,7 @@ TEST_CASE("fan-out rejects a null observer") {
 TEST_CASE("replay observer receives the production catalog once before any reading") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
   const auto result =
@@ -492,7 +492,7 @@ TEST_CASE("replay observer receives the production catalog once before any readi
 TEST_CASE("replay observer receives a notified turn at its CAN frame time") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
   const auto result =
@@ -515,7 +515,7 @@ TEST_CASE("replay observer receives a notified turn at its CAN frame time") {
 TEST_CASE("a sparse notified turn goes stale through a timeout publication") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
   const auto result = replay::run_replay({left_turn(0)}, clock, stage, {&observer}, {600'000});
@@ -531,7 +531,7 @@ TEST_CASE("a sparse notified turn goes stale through a timeout publication") {
 TEST_CASE("polled signals are sampled at the polled-rule cadence by default") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
   const auto result =
@@ -553,7 +553,7 @@ TEST_CASE("polled signals are sampled at the polled-rule cadence by default") {
 TEST_CASE("the signal sample cadence is configurable") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
   replay::ReplayScheduleOptions options{500'000};
   options.signal_sample_period_us = 250'000;
@@ -570,7 +570,7 @@ TEST_CASE("the signal sample cadence is configurable") {
 TEST_CASE("signal samples run after polled rules and before the output tick") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
   RecordingEvents events;
 
@@ -603,7 +603,7 @@ TEST_CASE("signal samples run after polled rules and before the output tick") {
 TEST_CASE("no signal sample is scheduled without an observer") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingEvents events;
 
   const auto result = replay::run_replay(rpm_then_left_turn(), clock, stage,
@@ -620,7 +620,7 @@ TEST_CASE("no signal sample is scheduled without an observer") {
 TEST_CASE("invalid signal sample options are rejected before the observer is attached") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingObserver observer;
 
   replay::ReplayScheduleOptions zero{500'000};
@@ -639,7 +639,7 @@ TEST_CASE("invalid signal sample options are rejected before the observer is att
 TEST_CASE("a failed controller start delivers nothing and releases the observer") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage inner{pixels};
+  replay::LocalArgbOutputStage inner{pixels, clock};
   FailingTickStage stage{inner};
   RecordingObserver observer;
   replay::ReplayController controller{rpm_then_left_turn(), clock, stage, {&observer}};
@@ -657,7 +657,7 @@ TEST_CASE("a failed controller start delivers nothing and releases the observer"
 TEST_CASE("a stopped controller releases the observer and delivers nothing more") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingObserver observer;
   replay::ReplayController controller{rpm_then_left_turn(), clock, stage, {&observer}};
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -675,7 +675,7 @@ TEST_CASE("a stopped controller releases the observer and delivers nothing more"
 TEST_CASE("a polled signal without frames becomes unavailable on the production path") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink ignored{clock};
-  replay::LocalArgbOutputStage stage{ignored};
+  replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
   const auto result = replay::run_replay({rpm_3250(0)}, clock, stage, {&observer}, {1'500'000});
@@ -695,7 +695,7 @@ TEST_CASE("a polled signal without frames becomes unavailable on the production 
 TEST_CASE("a zero signal sample period is rejected even without observers") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayScheduleOptions zero{500'000};
   zero.signal_sample_period_us = 0;
 
@@ -707,7 +707,7 @@ TEST_CASE("a zero signal sample period is rejected even without observers") {
 TEST_CASE("a null observer fails controller configuration") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   const auto result = replay::run_replay({}, clock, stage, {nullptr}, {100'000});
 
@@ -718,7 +718,7 @@ TEST_CASE("a null observer fails controller configuration") {
 TEST_CASE("sampling signals before start is an invalid state") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingObserver observer;
   replay::ReplayController controller{{}, clock, stage, {&observer}};
 

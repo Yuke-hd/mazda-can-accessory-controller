@@ -82,7 +82,7 @@ TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
   static_assert(local_argb::kLedCount == 100);
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   const auto result =
       replay::run_replay({rpm(0, 6500), rpm(100'000, 13'000)}, clock, stage, {110'000});
@@ -99,7 +99,7 @@ TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
 TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and baseline output") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const std::vector<gvret::TimedCanFrame> input{
       rpm(0, 6'500),        // 1,625 RPM: 24 full cyan + two half-bright pixels.
       rpm(50'000, 10'000),  // 2,500 RPM: intermediate ramp point.
@@ -183,7 +183,7 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
 TEST_CASE("turn-only stale replay fails off after the inclusive freshness boundary") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   constexpr auto kStaleCheckTimeUs = mazda::kTurnFreshnessTimeoutUs + local_argb::kSupervisorPollUs;
   const auto result = replay::run_replay({turn(0, 0x20)}, clock, stage, {kStaleCheckTimeUs});
@@ -195,7 +195,7 @@ TEST_CASE("turn-only stale replay fails off after the inclusive freshness bounda
 TEST_CASE("transport silence leaves unavailable RPM output black") {
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   const auto result = replay::run_replay({}, clock, stage, {1'000'000});
 
@@ -215,9 +215,9 @@ TEST_CASE("repeated synthetic replay produces byte-identical JSONL output") {
   replay::ReplayClock first_clock;
   replay::ReplayClock second_clock;
   replay::JsonlPixelFrameSink first_pixels{first_clock, first_stream};
-  replay::LocalArgbOutputStage first_stage{first_pixels};
+  replay::LocalArgbOutputStage first_stage{first_pixels, first_clock};
   replay::JsonlPixelFrameSink second_pixels{second_clock, second_stream};
-  replay::LocalArgbOutputStage second_stage{second_pixels};
+  replay::LocalArgbOutputStage second_stage{second_pixels, second_clock};
 
   REQUIRE(replay::run_replay(input, first_clock, first_stage, {310'000}).ok());
   REQUIRE(replay::run_replay(input, second_clock, second_stage, {310'000}).ok());
@@ -240,7 +240,7 @@ TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
   const auto fill = output.fill();
   const auto width = output.width();
   replay::JsonlPixelFrameSink pixels{clock, output};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   local_argb::PixelFrame frame = local_argb::kBlackFrame;
   frame[0] = {128, 16, 16};
 
@@ -261,7 +261,7 @@ TEST_CASE("JSONL stream starts with one header and types every record") {
   replay::ReplayClock clock;
   std::ostringstream output;
   replay::JsonlPixelFrameSink pixels{clock, output};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   REQUIRE(pixels.write_header());
   REQUIRE(pixels.write_header());
@@ -285,7 +285,7 @@ TEST_CASE("first pixel write emits the header implicitly") {
   replay::ReplayClock clock;
   std::ostringstream output;
   replay::JsonlPixelFrameSink pixels{clock, output};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   REQUIRE(pixels.write(local_argb::kBlackFrame));
 
@@ -298,7 +298,7 @@ TEST_CASE("JSONL stream ends with a completion marker") {
   replay::ReplayClock clock;
   std::ostringstream output;
   replay::JsonlPixelFrameSink pixels{clock, output};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   REQUIRE(pixels.write(local_argb::kBlackFrame));
   REQUIRE(pixels.write_end());

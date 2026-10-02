@@ -294,6 +294,20 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 check_architecture._check_led_action_adapter(root)
         self.assertIn("OK   local LED action adapter", output.getvalue())
 
+    def test_led_action_adapter_uses_only_value_frame_geometry(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-led-actions-fixture-") as directory:
+            root = Path(directory)
+            write_led_actions_fixture(root)
+            source = root / "components/local_argb_actions/src/led_action_sink.cpp"
+            source.write_text(source.read_text(encoding="utf-8") +
+                              '#include "local_argb/pixel_frame.hpp"\n', encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                check_architecture._check_led_action_adapter(root)
+            source.write_text(source.read_text(encoding="utf-8") +
+                              '#include "local_argb/renderer.hpp"\n', encoding="utf-8")
+            with self.assertRaises(check_architecture.ArchitectureFailure):
+                check_architecture._check_led_action_adapter(root)
+
     def test_led_action_adapter_vehicle_and_provider_access_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-led-fixture-") as directory:
             root = Path(directory)

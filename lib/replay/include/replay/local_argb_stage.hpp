@@ -14,7 +14,7 @@ namespace replay {
 // The sink's write() runs on the controller's host thread.
 class LocalArgbOutputStage final : public OutputStage {
 public:
-  explicit LocalArgbOutputStage(local_argb::PixelFrameSink &pixels);
+  LocalArgbOutputStage(local_argb::PixelFrameSink &pixels, vehicle_core::MonotonicClock &clock);
   ~LocalArgbOutputStage() noexcept;
 
   [[nodiscard]] bool configure(action_engine::ActionEngine &engine) noexcept override;

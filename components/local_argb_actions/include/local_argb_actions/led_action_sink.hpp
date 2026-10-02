@@ -33,17 +33,17 @@ namespace local_argb_actions {
 // Deactivate empties it. Trigger starts/restarts every transient bound to the
 // action without changing its held effects or fills. Other commands leave
 // transients unchanged; commands for unbound actions publish nothing.
-// Latest transient starts remain in every full snapshot so an overwrite queue
-// cannot lose them. Renderer timing expires each start independently and does
-// not replay unchanged sequences after completion, cancellation or failure.
+// Latest starts retain their Trigger clock and sink cancellation epoch in later
+// snapshots. The renderer admits an unseen start only inside its original
+// duration window and current epoch; it never crosses a stall or lifecycle
+// fail-off. Completed starts cannot replay. A rejected publication retires all
+// pending starts; recovery requires a newer Trigger.
 //
 // Precondition: while the engine is attached, this adapter is the lighting
-// sink's only publisher, so start the renderer first. The sink accepts every
-// publish except while the renderer's progress watch has closed it. A
-// rejected publish is not retried, and the engine does not resend a
-// deduplicated level. The next full snapshot retains an unseen start, which
-// begins at its later renderer application time. Already seen sequences
-// cannot replay after renderer cancellation or failure.
+// sink's only publisher, so start the renderer first. The borrowed clock must
+// use the renderer's monotonic microsecond timebase. The sink accepts every
+// publish except while its progress gate is closed. A rejected held level is
+// not retried, and the engine does not resend a deduplicated level.
 //
 // Setup: bind() runs before the engine attaches. execute() then runs on the
 // engine's serialized command context, never blocks, and publishes through
@@ -54,8 +54,9 @@ public:
   static constexpr std::size_t kMaxFillBindings = FillBindings::kCapacity;
   static constexpr std::size_t kMaxTransientBindings = TransientBindings::kCapacity;
 
-  explicit LedActionSink(local_argb::internal::LightingSink &lighting) noexcept
-      : lighting_(&lighting) {}
+  LedActionSink(local_argb::internal::LightingSink &lighting,
+                vehicle_core::MonotonicClock &clock) noexcept
+      : lighting_(&lighting), clock_(&clock) {}
 
   LedActionSink(const LedActionSink &) = delete;
   LedActionSink &operator=(const LedActionSink &) = delete;
@@ -81,6 +82,7 @@ public:
 
 private:
   local_argb::internal::LightingSink *lighting_;
+  vehicle_core::MonotonicClock *clock_;
   EffectBindings bindings_{};
   FillBindings fills_{};
   TransientBindings transients_{};

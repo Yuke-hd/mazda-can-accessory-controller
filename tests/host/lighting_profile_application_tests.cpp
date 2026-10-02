@@ -49,7 +49,12 @@ constexpr SignalMetadata kCatalog[] = {
 constexpr vehicle_signals::SignalCatalogView kView{kCatalog};
 static_assert(kView.well_formed());
 
-class RecordingLightingSink final : public local_argb::internal::LightingSink {
+class RecordingLightingSink final : public local_argb::internal::LightingSink,
+                                    public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return now_us; }
+  vehicle_core::MonotonicTimestamp now_us{0};
+
 public:
   bool publish(const LightingCommand &command) noexcept override {
     commands.push_back(command);
@@ -60,7 +65,7 @@ public:
 };
 
 struct Controller final {
-  Controller() : leds{lighting}, engine{provider} {}
+  Controller() : leds{lighting, lighting}, engine{provider} {}
 
   test_support::FakeSignalProvider provider{kView};
   RecordingLightingSink lighting{};

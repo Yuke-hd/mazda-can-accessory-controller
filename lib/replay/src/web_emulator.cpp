@@ -725,7 +725,7 @@ ReplayPass stream_replay_pass(const SocketHandle socket,
     return ReplayPass::Failed;
   pacer.begin_replay();
 
-  LocalArgbOutputStage output{pixels};
+  LocalArgbOutputStage output{pixels, clock};
   ReplayScheduleOptions schedule = options.schedule;
   schedule.end_time_us = frames.empty() ? 0 : frames.back().relative_time_us;
   const ReplayScheduleResult replay = run_replay(frames, clock, output, schedule, nullptr, &pacer);

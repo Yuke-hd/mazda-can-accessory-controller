@@ -3,7 +3,10 @@
 This document specifies the current output adapter in
 `components/local_argb_actions`. It implements `action_engine::ActionSink` and
 publishes the renderer's private `local_argb::internal::LightingCommand`
-through a borrowed `local_argb::internal::LightingSink`.
+through a borrowed `local_argb::internal::LightingSink`. Construction also
+borrows a `vehicle_core::MonotonicClock` using the renderer's monotonic
+microsecond timebase; firmware adapts `esp_timer_get_time`, and replay shares
+its existing replay clock.
 
 ```text
 composition root   binds ActionIds to LED effects and wires the parts
@@ -44,20 +47,26 @@ multiple transient zones alongside held or fill bindings.
 
 The fixed capacity is `LedActionSink::kMaxTransientBindings` (8).
 `InvalidAction` means action zero; `DuplicateBinding` means the same action
-already drives the same zone, regardless of colour or duration. Excess
-bindings return `CapacityExceeded`. As with fills, setup accepts the effect
-value; the renderer draws nothing for an invalid zone or zero duration.
+already drives the same physical zone (start and length), regardless of
+fill direction, colour or duration. Excess bindings return `CapacityExceeded`.
+`InvalidEffect` rejects an empty, out-of-range or unknown-direction zone,
+zero duration, or duration above the shared five-second maximum
+(`kMaxTransientDurationUs`). Invalid registration does not consume capacity.
 
 Each binding owns a stable renderer slot and a nonzero sequence changed only
-on Trigger. Every later publication retains the latest starts, including after
-renderer expiry. This full snapshot survives the one-slot overwrite queue:
-a held update cannot erase a pending start. Repeated snapshots preserve the
-renderer clock and cannot replay a completed or cancelled run. A rejected
-publish is not retried, but its latest start remains in the next snapshot.
-If the renderer never saw that start, a later accepted snapshot starts it at
-that later application time. There is no automatic publish while a gate is
-closed or after it resumes; recovery needs a subsequent bound action command.
-A previously seen sequence cannot replay after renderer cancellation or fault.
+on Trigger. The adapter stamps the Trigger's monotonic origin and the sink's
+cancellation epoch once. Later snapshots preserve those values so a held
+update cannot erase a pending start through the one-slot overwrite queue.
+The renderer admits an unseen start only while its origin is no older than
+its duration (strictly less than the duration) and its epoch is current.
+An admitted start runs for its configured duration from application time.
+Stale unseen starts are dropped; repeating snapshots cannot replay completed
+or cancelled runs. Rejected publication retires pending starts instead of
+carrying them into a later snapshot. Stall, resume and lifecycle fail-off
+invalidate the cancellation epoch, including starts accepted then overwritten
+before the worker consumes them. A provider restart therefore cannot replay
+a previous event: recovery needs a newer Trigger. No automatic publication
+occurs while a gate is closed or after it resumes.
 See [renderer runtime](renderer-runtime.md) for timing, overlap and fail-off.
 
 ### Fill effects
@@ -190,8 +199,9 @@ and is visible to the user.
   on/off effects, and the fill binding errors. It also covers default and
   configured binding priorities and the highest active priority of an effect.
   Transient coverage includes full state preservation, multiple zones per
-  action, stable identities and changed restart sequences, held updates,
-  ignored level commands, registration errors and rejected publications.
+  action, stable identities, changed restart sequences, clock/epoch stamping,
+  held updates, ignored levels, finite duration and zone validation, physical
+  duplicate zones and retired rejected starts.
 - `components/local_argb/tests/rendering_tests.cpp` covers a fill under the
   brightness ceiling, the generic colour without fills, and the bounded fill
   list. For priority it covers the gauge and turn example in both binding
@@ -206,7 +216,11 @@ and is visible to the user.
   plus recovery and the latched write fault. Event-rule coverage starts a
   finite transient, restarts it without queueing, restores an underlying fill
   on completion, prevents completed replay and preserves a start overwritten
-  by a held update. It also renders a fill in every
+  by a held update inside its admission window. It pins all-Deactivate black
+  output after a completed Trigger, drops expired unseen starts, and exercises
+  the real stall gate and fail-off with both running and accepted-but-unseen
+  transients, including lifecycle mailbox overwrite and a later held update.
+  It also renders a fill in every
   direction at levels 0, 0.25, 0.5 and 1.0, and drives one from an engine
   range rule on a generic numeric signal, which fails off on Stale data, and
   renders a higher-priority turn over a gauge fill and releases it. It stalls a fake dispatcher progress count under a held turn: the engine
