@@ -5,7 +5,7 @@
 # it to the renderer's queue sink.
 if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/effect_bindings.cpp" "src/fill_bindings.cpp"
-                              "src/led_action_sink.cpp"
+                              "src/led_action_sink.cpp" "src/transient_bindings.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES action_engine local_argb_sink_contract vehicle_core)
   return()
@@ -15,6 +15,7 @@ add_library(local_argb_actions STATIC
   src/effect_bindings.cpp
   src/fill_bindings.cpp
   src/led_action_sink.cpp
+  src/transient_bindings.cpp
 )
 target_include_directories(local_argb_actions PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(local_argb_actions PUBLIC action_engine local_argb_sink_contract)

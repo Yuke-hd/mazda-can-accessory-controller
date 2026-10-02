@@ -127,7 +127,12 @@ public:
 
 using Commands = std::vector<ActionCommand>;
 
-class RecordingLightingSink final : public local_argb::internal::LightingSink {
+class RecordingLightingSink final : public local_argb::internal::LightingSink,
+                                    public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return now_us; }
+  vehicle_core::MonotonicTimestamp now_us{0};
+
 public:
   bool publish(const LightingCommand &command) noexcept override {
     commands.push_back(command);
@@ -208,7 +213,7 @@ TEST_CASE("a non-finite threshold is rejected") {
 TEST_CASE("apply binds the red zone to the LED warning effect, independently of the RPM level "
           "fill") {
   RecordingLightingSink lighting{};
-  LedActionSink leds{lighting};
+  LedActionSink leds{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   REQUIRE(engine.add_sink(leds) == ConfigStatus::Ok);
@@ -246,7 +251,7 @@ TEST_CASE("apply binds the red zone to the LED warning effect, independently of 
 
 TEST_CASE("the red zone cannot share the RPM level fill's action") {
   RecordingLightingSink lighting{};
-  LedActionSink leds{lighting};
+  LedActionSink leds{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   controller_config::RpmLevelFillConfig level_fill{};
@@ -263,7 +268,7 @@ TEST_CASE("the red zone cannot share the RPM level fill's action") {
 
 TEST_CASE("a failed warning binding adds no threshold rule") {
   RecordingLightingSink lighting{};
-  LedActionSink leds{lighting};
+  LedActionSink leds{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   REQUIRE(engine.add_sink(leds) == ConfigStatus::Ok);

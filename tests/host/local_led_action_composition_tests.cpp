@@ -13,6 +13,7 @@
 #include "local_argb/renderer.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
+#include "support/fake_clock.hpp"
 #include "support/fake_signal_provider.hpp"
 #include "vehicle_signals/signal_catalog.hpp"
 #include "vehicle_signals/signal_contracts.hpp"
@@ -96,16 +97,21 @@ public:
 
 // Stands in for the ESP-IDF queue worker: applies each command to the renderer
 // at the current fake time.
-class RendererLightingSink final : public local_argb::internal::LightingSink {
+class RendererLightingSink final : public local_argb::internal::LightingSink,
+                                   public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return now_us; }
+
 public:
   explicit RendererLightingSink(local_argb::internal::RendererController &renderer) noexcept
       : renderer_(&renderer) {}
 
   bool publish(const local_argb::internal::LightingCommand &command) noexcept override {
-    return renderer_->apply(command, now_us);
+    return accept && renderer_->apply(command, now_us);
   }
 
   vehicle_core::MonotonicTimestamp now_us{0};
+  bool accept{true};
 
 private:
   local_argb::internal::RendererController *renderer_;
@@ -183,7 +189,7 @@ struct Harness final {
   RecordingPixelSink pixels{};
   local_argb::internal::RendererController renderer{pixels};
   RendererLightingSink lighting{renderer};
-  LedActionSink led{lighting};
+  LedActionSink led{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
 };
@@ -383,7 +389,7 @@ struct StallHarness final {
   RendererLightingSink lighting{renderer};
   local_argb::internal::StallGatedSink gate{lighting};
   local_argb::internal::ProgressFailOff fail_off{gate, lighting};
-  LedActionSink led{gate};
+  LedActionSink led{gate, lighting};
   RecordingActionSink commands{};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
@@ -475,7 +481,7 @@ struct FillHarness final {
   RecordingPixelSink pixels{};
   local_argb::internal::RendererController renderer{pixels};
   RendererLightingSink lighting{renderer};
-  LedActionSink led{lighting};
+  LedActionSink led{lighting, lighting};
 };
 
 action_engine::ActionCommand set_level(float level) {
@@ -534,7 +540,7 @@ TEST_CASE("an engine range rule drives a fill end to end and fails off without d
   RecordingPixelSink pixels{};
   local_argb::internal::RendererController renderer{pixels};
   RendererLightingSink lighting{renderer};
-  LedActionSink led{lighting};
+  LedActionSink led{lighting, lighting};
   test_support::FakeSignalProvider provider{kView};
   ActionEngine engine{provider};
   REQUIRE(renderer.start());
@@ -567,7 +573,7 @@ TEST_CASE("a higher-priority turn owns its overlap with a gauge fill") {
   RecordingPixelSink pixels{};
   local_argb::internal::RendererController renderer{pixels};
   RendererLightingSink lighting{renderer};
-  LedActionSink led{lighting};
+  LedActionSink led{lighting, lighting};
   REQUIRE(renderer.start());
   REQUIRE(led.bind(kGaugeAction, FillEffect{LedZone{20, 60, FillDirection::StartToEnd}, kFillColor,
                                             EffectPriority{50}}) == BindingStatus::Ok);
@@ -583,4 +589,223 @@ TEST_CASE("a higher-priority turn owns its overlap with a gauge fill") {
   led.execute({kTurnRightAction, action_engine::ActionCommandKind::Deactivate});
   REQUIRE(renderer.tick(0));
   CHECK(pixels.frames.back() == lit_between(20, 79));
+}
+
+namespace {
+constexpr ActionId kEventAction{5};
+constexpr local_argb::internal::LightingTransient kEventEffect{
+    LedZone{kFillStart, kFillLength, FillDirection::StartToEnd}, LightingRgb{16, 0, 0},
+    EffectPriority{150}, 100'000};
+
+PixelFrame transient_over_fill() {
+  PixelFrame frame = local_argb::kBlackFrame;
+  for (std::size_t index = kFillStart; index < kFillStart + kFillLength; ++index)
+    frame[index] = local_argb::Rgb{16, 0, 0};
+  return frame;
+}
+
+// Production one-slot overwrite semantics, with a consumer advanced explicitly.
+class MailboxLightingSink final : public local_argb::internal::LightingSink,
+                                  public vehicle_core::MonotonicClock {
+public:
+  vehicle_core::MonotonicTimestamp now() const noexcept override { return 0; }
+
+public:
+  bool publish(const local_argb::internal::LightingCommand &command) noexcept override {
+    mailbox.submit(command);
+    return true;
+  }
+  local_argb::internal::Mailbox mailbox{};
+};
+} // namespace
+
+TEST_CASE("an engine event edge starts a finite effect and repeats restart it without queuing") {
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  RendererLightingSink lighting{renderer};
+  LedActionSink led{lighting, lighting};
+  test_support::FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+  REQUIRE(renderer.start());
+  REQUIRE(led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+  REQUIRE(engine.add_sink(led) == ConfigStatus::Ok);
+  REQUIRE(engine.add_event_rule(action_engine::EventRuleConfig{
+              SignalCondition{"lamps.turn_state", Comparison::Equal, RuleOperand::choice("hazard")},
+              action_engine::EventEdge::BecomesTrue, kEventAction}) == ConfigStatus::Ok);
+  REQUIRE(engine.attach() == SignalStatus::Ok);
+  provider.start();
+  REQUIRE(provider.publish(initial(turn(kOff))) == 1);
+  lighting.now_us = 1'000;
+  REQUIRE(provider.publish(turn(kHazard)) == 1);
+  CHECK(pixels.frames.back() == transient_over_fill());
+  REQUIRE(renderer.tick(49'999));
+  CHECK(pixels.frames.back() == transient_over_fill());
+
+  // A second edge restarts the same effect, rather than extending a queue.
+  lighting.now_us = 50'000;
+  REQUIRE(provider.publish(turn(kOff)) == 1);
+  REQUIRE(provider.publish(turn(kHazard)) == 1);
+  REQUIRE(renderer.tick(149'999));
+  CHECK(pixels.frames.back() == transient_over_fill());
+  REQUIRE(renderer.tick(150'000));
+  CHECK(pixels.frames.back() == local_argb::kBlackFrame);
+  REQUIRE(renderer.tick(250'000));
+  CHECK(pixels.frames.back() == local_argb::kBlackFrame);
+  provider.stop();
+  CHECK(engine.detach() == SignalStatus::Ok);
+}
+
+TEST_CASE("transient completion restores a held fill and later updates do not replay it") {
+  FillHarness harness{FillDirection::StartToEnd};
+  REQUIRE(harness.led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+  REQUIRE(harness.frame_after(set_level(0.5F)) == lit_between(40, 43));
+  harness.lighting.now_us = 1'000;
+  harness.led.execute({kEventAction, action_engine::ActionCommandKind::Trigger});
+  CHECK(harness.pixels.frames.back() == transient_over_fill());
+  harness.lighting.now_us = 50'000;
+  harness.led.execute(set_level(1.0F));
+  REQUIRE(harness.renderer.tick(100'999));
+  CHECK(harness.pixels.frames.back() == transient_over_fill());
+  REQUIRE(harness.renderer.tick(101'000));
+  CHECK(harness.pixels.frames.back() == lit_between(40, 47));
+
+  harness.lighting.now_us = 102'000;
+  harness.led.execute(set_level(0.25F));
+  CHECK(harness.pixels.frames.back() == lit_between(40, 41));
+}
+
+TEST_CASE("an overwritten Trigger remains in the next held state mailbox snapshot") {
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  MailboxLightingSink lighting{};
+  LedActionSink led{lighting, lighting};
+  REQUIRE(renderer.start());
+  REQUIRE(led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+  REQUIRE(led.bind(kGaugeAction, FillEffect{kEventEffect.zone, kFillColor}) == BindingStatus::Ok);
+  led.execute({kEventAction, action_engine::ActionCommandKind::Trigger});
+  led.execute(set_level(0.5F));
+  local_argb::internal::LightingCommand command{};
+  REQUIRE(lighting.mailbox.take(command));
+  REQUIRE(renderer.apply(command, 1'000));
+  CHECK(pixels.frames.back() == transient_over_fill());
+  REQUIRE(renderer.tick(101'000));
+  CHECK(pixels.frames.back() == lit_between(40, 43));
+}
+
+TEST_CASE("a later accepted held update never replays a rejected unseen start") {
+  FillHarness harness{FillDirection::StartToEnd};
+  REQUIRE(harness.led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+  harness.lighting.accept = false;
+  harness.led.execute({kEventAction, action_engine::ActionCommandKind::Trigger});
+  REQUIRE(harness.renderer.tick(50'000));
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+
+  harness.lighting.accept = true;
+  harness.lighting.now_us = 200'000;
+  harness.led.execute(set_level(0.5F));
+  CHECK(harness.pixels.frames.back() == lit_between(40, 43));
+  REQUIRE(harness.renderer.tick(299'999));
+  CHECK(harness.pixels.frames.back() == lit_between(40, 43));
+  REQUIRE(harness.renderer.tick(300'000));
+  CHECK(harness.pixels.frames.back() == lit_between(40, 43));
+}
+
+namespace {
+struct TransientSafetyHarness {
+  TransientSafetyHarness() {
+    REQUIRE(renderer.start());
+    REQUIRE(led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+    REQUIRE(led.bind(kGaugeAction, FillEffect{kEventEffect.zone, kFillColor}) == BindingStatus::Ok);
+  }
+
+  void consume() {
+    local_argb::internal::LightingCommand command{};
+    REQUIRE(lighting.mailbox.take(command));
+    REQUIRE(renderer.apply(command, clock.now(), gate.transient_epoch()));
+  }
+
+  void trigger_at(vehicle_core::MonotonicTimestamp now_us) {
+    clock.set(now_us);
+    led.execute({kEventAction, action_engine::ActionCommandKind::Trigger});
+  }
+
+  void held_at(vehicle_core::MonotonicTimestamp now_us) {
+    clock.set(now_us);
+    led.execute(set_level(0.5F));
+    consume();
+    CHECK(pixels.frames.back() == lit_between(40, 43));
+  }
+
+  RecordingPixelSink pixels{};
+  local_argb::internal::RendererController renderer{pixels};
+  MailboxLightingSink lighting{};
+  local_argb::internal::StallGatedSink gate{lighting};
+  local_argb::internal::ProgressFailOff fail_off{gate, lighting};
+  test_support::FakeClock clock{};
+  LedActionSink led{gate, clock};
+};
+} // namespace
+
+TEST_CASE("a Trigger during a closed stall gate cannot replay on resumed held state") {
+  TransientSafetyHarness harness{};
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Stalled);
+  harness.consume();
+  harness.trigger_at(1'000);
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Resumed);
+  harness.held_at(2'000);
+  harness.trigger_at(3'000);
+  harness.consume();
+  CHECK(harness.pixels.frames.back() == transient_over_fill());
+}
+
+TEST_CASE(
+    "stall black overwrites an accepted unseen Trigger and later held state cannot replay it") {
+  TransientSafetyHarness harness{};
+  harness.trigger_at(1'000);
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Stalled);
+  harness.consume();
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Resumed);
+  harness.held_at(2'000);
+}
+
+TEST_CASE(
+    "lifecycle fail off invalidates an accepted unseen Trigger before the worker consumes it") {
+  TransientSafetyHarness harness{};
+  harness.trigger_at(1'000);
+  harness.gate.invalidate_transients();
+  REQUIRE(harness.lighting.publish(local_argb::internal::LightingCommand{}));
+  harness.consume();
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+  harness.held_at(2'000);
+}
+
+TEST_CASE("stall fail off cancels a running transient and held recovery never replays it") {
+  TransientSafetyHarness harness{};
+  harness.trigger_at(1'000);
+  harness.consume();
+  CHECK(harness.pixels.frames.back() == transient_over_fill());
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Stalled);
+  harness.consume();
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+  harness.fail_off.apply(local_argb::internal::ProgressTransition::Resumed);
+  harness.held_at(2'000);
+  harness.held_at(20'000'000);
+}
+
+TEST_CASE("an accepted unseen Trigger cannot start once its origin window expires") {
+  TransientSafetyHarness harness{};
+  harness.trigger_at(1'000);
+  harness.held_at(101'000);
+}
+
+TEST_CASE("all Deactivate after a completed Trigger remains a black snapshot and frame") {
+  FillHarness harness{FillDirection::StartToEnd};
+  REQUIRE(harness.led.bind(kEventAction, kEventEffect) == BindingStatus::Ok);
+  harness.led.execute({kEventAction, action_engine::ActionCommandKind::Trigger});
+  REQUIRE(harness.renderer.tick(100'000));
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
+  harness.lighting.now_us = 101'000;
+  harness.led.execute({kGaugeAction, action_engine::ActionCommandKind::Deactivate});
+  CHECK(harness.pixels.frames.back() == local_argb::kBlackFrame);
 }

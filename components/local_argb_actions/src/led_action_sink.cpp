@@ -15,7 +15,9 @@ constexpr vehicle_core::MonotonicTimestamp kHeldUntilUs =
 using local_argb::internal::FillFraction;
 
 local_argb::internal::LightingCommand held_command(const EffectBindings &bindings,
-                                                   const FillBindings &fill_bindings) noexcept {
+                                                   const FillBindings &fill_bindings,
+                                                   const TransientBindings &transients,
+                                                   const std::uint32_t epoch) noexcept {
   const LedEffects effects = bindings.lit();
   const local_argb::internal::LightingFills fills = fill_bindings.lit();
   local_argb::internal::LightingCommand command{};
@@ -24,7 +26,8 @@ local_argb::internal::LightingCommand held_command(const EffectBindings &binding
   command.right_turn = effects.right_turn;
   command.brake = effects.brake;
   command.fills = fills;
-  command.actionable = effects.any() || !fills.empty();
+  command.transients = transients.latest(epoch);
+  command.actionable = effects.any() || !fills.empty() || !command.transients.empty();
   command.valid_until_us = command.actionable ? kHeldUntilUs : 0;
   return command;
 }
@@ -61,16 +64,20 @@ std::optional<FillFraction> commanded_level(const action_engine::ActionCommand &
 } // namespace
 
 void LedActionSink::execute(const action_engine::ActionCommand &command) noexcept {
+  const std::uint32_t epoch = lighting_->transient_epoch();
   const auto active = on_off_level(command.kind);
   const auto level = commanded_level(command);
   // Both are evaluated so that one action can drive a fill and an effect.
   const bool effect_bound = active && bindings_.hold(command.action, *active);
   const bool fill_bound = level && fills_.hold(command.action, *level);
-  if (!effect_bound && !fill_bound)
+  const bool transient_bound = command.kind == action_engine::ActionCommandKind::Trigger &&
+                               transients_.trigger(command.action, clock_->now(), epoch);
+  if (!effect_bound && !fill_bound && !transient_bound)
     return;
   // A rejected publish is not retried; see the LightingSink precondition in
   // the header.
-  (void)lighting_->publish(held_command(bindings_, fills_));
+  if (!lighting_->publish(held_command(bindings_, fills_, transients_, epoch)))
+    transients_.discard_starts();
 }
 
 } // namespace local_argb_actions

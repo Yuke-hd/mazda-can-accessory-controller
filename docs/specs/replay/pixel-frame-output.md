@@ -71,7 +71,8 @@ stage only through `action_engine::ActionSink`. When `--output-tick-us` is
 omitted, the scheduler uses the stage's `tick_period_us()`.
 
 `replay::LocalArgbOutputStage` (`replay/local_argb_stage.hpp`) is the only
-stage that wires the default lighting profile, `LedActionSink`, and the
+stage that borrows the controller's replay clock and wires the default
+lighting profile, `LedActionSink`, and the
 private renderer. The CLI composes it with the JSONL pixel sink; host tests
 compose it with the in-memory timestamped sink. A fake stage in
 `tests/host/replay_output_stage_tests.cpp` checks the lifecycle sequence

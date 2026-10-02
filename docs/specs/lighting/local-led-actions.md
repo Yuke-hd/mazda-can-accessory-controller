@@ -3,7 +3,10 @@
 This document specifies the current output adapter in
 `components/local_argb_actions`. It implements `action_engine::ActionSink` and
 publishes the renderer's private `local_argb::internal::LightingCommand`
-through a borrowed `local_argb::internal::LightingSink`.
+through a borrowed `local_argb::internal::LightingSink`. Construction also
+borrows a `vehicle_core::MonotonicClock` using the renderer's monotonic
+microsecond timebase; firmware adapts `esp_timer_get_time`, and replay shares
+its existing replay clock.
 
 ```text
 composition root   binds ActionIds to LED effects and wires the parts
@@ -32,6 +35,39 @@ regions. `bind()` returns:
 | `InvalidAction` | The `ActionId` is zero. |
 | `DuplicateBinding` | The same action already drives this effect. |
 | `CapacityExceeded` | `LedActionSink::kMaxBindings` (8) bindings exist. |
+
+### Transient effects
+
+`LedActionSink::bind(ActionId, LightingTransient)` binds an action to a solid
+zone with a colour, priority and duration in monotonic microseconds. Each
+`Trigger` starts every transient bound to that action. A repeated `Trigger`
+restarts them at renderer application time; it never queues another run.
+Other command kinds leave these bindings unchanged. One action may drive
+multiple transient zones alongside held or fill bindings.
+
+The fixed capacity is `LedActionSink::kMaxTransientBindings` (8).
+`InvalidAction` means action zero; `DuplicateBinding` means the same action
+already drives the same physical zone (start and length), regardless of
+fill direction, colour or duration. Excess bindings return `CapacityExceeded`.
+`InvalidEffect` rejects an empty, out-of-range or unknown-direction zone,
+zero duration, or duration above the shared five-second maximum
+(`kMaxTransientDurationUs`). Invalid registration does not consume capacity.
+
+Each binding owns a stable renderer slot and a nonzero sequence changed only
+on Trigger. The adapter stamps the Trigger's monotonic origin and the sink's
+cancellation epoch once. Later snapshots preserve those values so a held
+update cannot erase a pending start through the one-slot overwrite queue.
+The renderer admits an unseen start only while its origin is no older than
+its duration (strictly less than the duration) and its epoch is current.
+An admitted start runs for its configured duration from application time.
+Stale unseen starts are dropped; repeating snapshots cannot replay completed
+or cancelled runs. Rejected publication retires pending starts instead of
+carrying them into a later snapshot. Stall, resume and lifecycle fail-off
+invalidate the cancellation epoch, including starts accepted then overwritten
+before the worker consumes them. A provider restart therefore cannot replay
+a previous event: recovery needs a newer Trigger. No automatic publication
+occurs while a gate is closed or after it resumes.
+See [renderer runtime](renderer-runtime.md) for timing, overlap and fail-off.
 
 ### Fill effects
 
@@ -64,7 +100,9 @@ the physical installation; the current mapping is shown in the
   - a level at or below 0.0, and NaN, is empty (fail-off);
   - a level at or above 1.0, including +infinity, is full;
   - a level in between is rounded to the nearest 1/65536.
-- `Trigger` is ignored. It carries no level.
+- `Trigger` starts/restarts the action's bound transients. It leaves held
+  on/off effects and fill levels unchanged. A Trigger with no transient binding
+  publishes nothing, even if the action has held or fill bindings.
 - Commands for unbound actions are ignored and publish nothing.
 
 A command lists every non-empty fill in binding order, up to
@@ -74,8 +112,8 @@ not paint the generic compatibility colour. The fill list makes
 `LightingCommand` larger, and the renderer queue still copies it by value; a
 `static_assert` keeps it trivially copyable.
 
-The engine's explicit initial `Deactivate` therefore publishes a black
-baseline on each provider start.
+Before any transient has started, the engine's explicit initial `Deactivate`
+therefore publishes a black baseline on each provider start.
 
 While the engine is attached, the adapter must be the lighting sink's only
 publisher. The production sink is a one-slot overwrite queue that accepts
@@ -93,6 +131,7 @@ where higher wins. It is set per binding, never by effect type or signal:
   binding. When several active bindings light one effect, the effect takes
   the highest of their priorities.
 - `FillEffect::priority` sets the priority of a fill binding.
+- `LightingTransient::priority` sets the priority of a transient binding.
 - An unset priority is `EffectPriority::kDefault` (100) for every binding, so
   a configuration that sets none keeps the drawing order below.
 
@@ -104,10 +143,11 @@ Pixels that no other effect covers render exactly as they would alone.
 
 Equal priorities resolve by drawing order, and the later effect wins: fills
 in binding order (a later fill beats an earlier one, even on the same zone),
-then brake, then the left turn, then the right turn. With the defaults a
+then brake, then the left turn, then the right turn, then active transients
+in binding order. With the defaults a
 fixed effect therefore wins over a fill it overlaps, and it also blanks the
 fill's pixels its animation leaves dark. An empty fill, or one with an invalid
-zone, owns nothing.
+zone, owns nothing. A transient releases its owned pixels when it completes.
 
 For example, a gauge fill over `20..79` at priority 50 and the right turn
 (`65..99`) at the default priority: while the turn is lit it owns `65..79`,
@@ -118,9 +158,13 @@ more and it owns `65..79` instead, while the turn keeps animating on
 ## Fail-off policy: held level
 
 Engine levels carry no deadline and are deduplicated, so the adapter publishes
-every lit command as *held*: `valid_until_us` is the maximum timestamp and the
-renderer keeps animating until a later command turns the effect off. A command
-with no lit effect and no fill is non-actionable and renders black.
+commands containing held levels or latest transient starts with
+`valid_until_us` set to the maximum timestamp. The renderer keeps held effects animating until a later command turns them off.
+Transient duration belongs to the renderer and expires independently; a held
+Deactivate neither extends nor cancels it. A command with no held effect, fill
+or latest transient start is non-actionable and renders black. A snapshot
+retaining only completed starts remains actionable but renders black; later
+held updates do not replay those starts.
 
 Loss of data fails off through the engine, not through a renderer deadline.
 Every NoData, Stale or Unavailable reading becomes `Deactivate` (see
@@ -148,12 +192,16 @@ and is visible to the user.
 ## Evidence
 
 - `tests/host/local_led_action_sink_tests.cpp` covers bindings, OR-ed effects,
-  the explicit black baseline, ignored Trigger/SetLevel/unbound commands, a
+  the explicit black baseline, ignored unbound Trigger/SetLevel commands, a
   rejected publish, and the binding errors. For fills it covers levels 0,
   0.25, 0.5 and 1.0, clamping of out-of-range and infinite levels, NaN
   fail-off, Deactivate, Activate, Trigger, fills published together with
   on/off effects, and the fill binding errors. It also covers default and
   configured binding priorities and the highest active priority of an effect.
+  Transient coverage includes full state preservation, multiple zones per
+  action, stable identities, changed restart sequences, clock/epoch stamping,
+  held updates, ignored levels, finite duration and zone validation, physical
+  duplicate zones and retired rejected starts.
 - `components/local_argb/tests/rendering_tests.cpp` covers a fill under the
   brightness ceiling, the generic colour without fills, and the bounded fill
   list. For priority it covers the gauge and turn example in both binding
@@ -165,7 +213,14 @@ and is visible to the user.
   `RendererController` into a fake `PixelFrameSink`. It shows left, right and
   hazard turn states rendered as pixels, a held effect with no deadline, and
   black for off, NoData, Stale, Unavailable and rejected unverified readings,
-  plus recovery and the latched write fault. It also renders a fill in every
+  plus recovery and the latched write fault. Event-rule coverage starts a
+  finite transient, restarts it without queueing, restores an underlying fill
+  on completion, prevents completed replay and preserves a start overwritten
+  by a held update inside its admission window. It pins all-Deactivate black
+  output after a completed Trigger, drops expired unseen starts, and exercises
+  the real stall gate and fail-off with both running and accepted-but-unseen
+  transients, including lifecycle mailbox overwrite and a later held update.
+  It also renders a fill in every
   direction at levels 0, 0.25, 0.5 and 1.0, and drives one from an engine
   range rule on a generic numeric signal, which fails off on Stale data, and
   renders a higher-priority turn over a gauge fill and releases it. It stalls a fake dispatcher progress count under a held turn: the engine

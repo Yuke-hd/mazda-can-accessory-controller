@@ -275,7 +275,7 @@ int main(const int argc, char **argv) {
 
   replay::ReplayClock clock;
   replay::JsonlPixelFrameSink pixels{clock, std::cout};
-  replay::LocalArgbOutputStage output{pixels};
+  replay::LocalArgbOutputStage output{pixels, clock};
   HeaderedSignalRecords signal_records{pixels, std::cout};
   replay::SignalObservers observers{};
   if (arguments.emit_signals)

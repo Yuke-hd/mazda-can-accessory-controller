@@ -115,7 +115,7 @@ std::size_t colored_pixels(const local_argb::PixelFrame &frame) {
 TEST_CASE("held turn animates at output-stage ticks without new CAN frames") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const auto result = replay::run_replay({left_turn(0)}, clock, stage, {40'000});
 
   REQUIRE(result.ok());
@@ -138,7 +138,7 @@ TEST_CASE("held turn animates at output-stage ticks without new CAN frames") {
 TEST_CASE("RPM frame takes effect at the next 100 ms sample") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const auto result =
       replay::run_replay({timed_frame(0, 0x777, {0}), half_rpm(1)}, clock, stage, {110'000});
 
@@ -155,7 +155,7 @@ TEST_CASE("RPM frame takes effect at the next 100 ms sample") {
 TEST_CASE("equal-time rows precede timeout, poll, and output tick in source order") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingEvents events;
   const auto result =
       replay::run_replay({left_turn(0), turn_off(0)}, clock, stage, {10'000}, &events);
@@ -177,7 +177,7 @@ TEST_CASE("equal-time rows precede timeout, poll, and output tick in source orde
 TEST_CASE("frame, EOF, timeout, poll, and output tick ties follow the documented order") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingEvents events;
   const replay::ReplayScheduleOptions options{10'000, 10'000, 10'000, 10'000};
 
@@ -201,9 +201,9 @@ TEST_CASE("repeated replay produces identical event and pixel traces") {
   replay::ReplayClock first_clock;
   replay::ReplayClock second_clock;
   RecordingPixels first_pixels{first_clock};
-  replay::LocalArgbOutputStage first_stage{first_pixels};
+  replay::LocalArgbOutputStage first_stage{first_pixels, first_clock};
   RecordingPixels second_pixels{second_clock};
-  replay::LocalArgbOutputStage second_stage{second_pixels};
+  replay::LocalArgbOutputStage second_stage{second_pixels, second_clock};
   RecordingEvents first_events;
   RecordingEvents second_events;
 
@@ -228,7 +228,7 @@ TEST_CASE("repeated replay produces identical event and pixel traces") {
 TEST_CASE("timeout publications stale a sparse turn after EOF") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const auto result = replay::run_replay({left_turn(0)}, clock, stage, {260'000});
 
   REQUIRE(result.ok());
@@ -245,7 +245,7 @@ TEST_CASE("timeout publications stale a sparse turn after EOF") {
 TEST_CASE("empty replay reports EOF and runs inclusive tail cadence") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingEvents events;
   const auto result = replay::run_replay({}, clock, stage, {20'000}, &events);
 
@@ -269,7 +269,7 @@ TEST_CASE("default cadences follow the firmware poll and local ARGB output stage
 
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  const replay::LocalArgbOutputStage stage{pixels};
+  const replay::LocalArgbOutputStage stage{pixels, clock};
   CHECK(stage.tick_period_us() == local_argb::kSupervisorPollUs);
   CHECK(stage.tick_period_us() == 10'000);
 }
@@ -277,7 +277,7 @@ TEST_CASE("default cadences follow the firmware poll and local ARGB output stage
 TEST_CASE("an end between cadence ticks still ends at the exact replay horizon") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
 
   const auto result = replay::run_replay({}, clock, stage, {10'001});
 
@@ -293,7 +293,7 @@ TEST_CASE("invalid input and options fail before touching the sink or clock") {
                                 const replay::ReplayScheduleStatus expected) {
     replay::ReplayClock clock;
     RecordingPixels pixels{clock};
-    replay::LocalArgbOutputStage stage{pixels};
+    replay::LocalArgbOutputStage stage{pixels, clock};
     const auto result = replay::run_replay(std::move(input), clock, stage, options);
     CHECK(result.status == expected);
     CHECK(pixels.frames().empty());
@@ -316,7 +316,7 @@ TEST_CASE("invalid input and options fail before touching the sink or clock") {
 
   replay::ReplayClock nonzero_clock{1};
   RecordingPixels pixels{nonzero_clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, nonzero_clock};
   const auto nonzero = replay::run_replay({}, nonzero_clock, stage, {1});
   CHECK(nonzero.status == replay::ReplayScheduleStatus::InvalidOptions);
   CHECK(pixels.frames().empty());
@@ -326,7 +326,7 @@ TEST_CASE("invalid input and options fail before touching the sink or clock") {
 TEST_CASE("renderer failure stops and attempts a final black frame") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   pixels.fail_write_number(2);
 
   const auto result = replay::run_replay({left_turn(0)}, clock, stage, {10'000});
@@ -341,7 +341,7 @@ TEST_CASE("renderer failure stops and attempts a final black frame") {
 TEST_CASE("maximum timestamp with sparse cadence completes without deadline wrap") {
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   const auto largest = std::numeric_limits<std::uint64_t>::max();
   const replay::ReplayScheduleOptions options{largest, largest, largest, largest};
 
@@ -358,7 +358,7 @@ TEST_CASE("a gate is asked before the replay clock advances to each due time") {
   const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingEvents events;
   RecordingGate gate{events, std::numeric_limits<std::uint64_t>::max()};
 
@@ -383,8 +383,8 @@ TEST_CASE("a gated replay is identical to an ungated replay") {
   replay::ReplayClock free_clock;
   RecordingPixels gated_pixels{gated_clock};
   RecordingPixels free_pixels{free_clock};
-  replay::LocalArgbOutputStage gated_stage{gated_pixels};
-  replay::LocalArgbOutputStage free_stage{free_pixels};
+  replay::LocalArgbOutputStage gated_stage{gated_pixels, gated_clock};
+  replay::LocalArgbOutputStage free_stage{free_pixels, free_clock};
   RecordingEvents gated_events;
   RecordingEvents free_events;
   RecordingGate gate{gated_events, std::numeric_limits<std::uint64_t>::max()};
@@ -409,7 +409,7 @@ TEST_CASE("a refused due time interrupts the replay without advancing to it") {
   const std::vector<gvret::TimedCanFrame> input{left_turn(0), half_rpm(20'000), turn_off(40'000)};
   replay::ReplayClock clock;
   RecordingPixels pixels{clock};
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   RecordingEvents events;
   RecordingGate gate{events, 20'000};
 

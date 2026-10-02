@@ -5,6 +5,7 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
 #include "local_argb/renderer.hpp"
+#include "local_argb/stall_gated_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
 
 namespace replay {
@@ -29,8 +30,8 @@ private:
 
 class LocalArgbOutputStage::Implementation final {
 public:
-  explicit Implementation(local_argb::PixelFrameSink &pixels)
-      : mailbox_sink_(mailbox_), led_actions_(mailbox_sink_),
+  Implementation(local_argb::PixelFrameSink &pixels, vehicle_core::MonotonicClock &clock)
+      : mailbox_sink_(mailbox_), gate_(mailbox_sink_), led_actions_(gate_, clock),
         renderer_(pixels, local_argb::internal::kCenterOutFillAnimation) {}
 
   [[nodiscard]] bool configure(action_engine::ActionEngine &engine) noexcept {
@@ -45,22 +46,29 @@ public:
   // tick, or advances the current animation.
   [[nodiscard]] bool tick(const vehicle_core::MonotonicTimestamp now_us) noexcept {
     local_argb::internal::LightingCommand command{};
-    return mailbox_.take(command) ? renderer_.apply(command, now_us) : renderer_.tick(now_us);
+    return mailbox_.take(command) ? renderer_.apply(command, now_us, gate_.transient_epoch())
+                                  : renderer_.tick(now_us);
   }
 
   [[nodiscard]] bool fail_off(const vehicle_core::MonotonicTimestamp now_us) noexcept {
-    return renderer_.apply(local_argb::internal::LightingCommand{}, now_us);
+    gate_.invalidate_transients();
+    local_argb::internal::LightingCommand discarded{};
+    (void)mailbox_.take(discarded);
+    return renderer_.apply(local_argb::internal::LightingCommand{}, now_us,
+                           gate_.transient_epoch());
   }
 
 private:
   local_argb::internal::Mailbox mailbox_{};
   MailboxLightingSink mailbox_sink_;
+  local_argb::internal::StallGatedSink gate_;
   local_argb_actions::LedActionSink led_actions_;
   local_argb::internal::RendererController renderer_;
 };
 
-LocalArgbOutputStage::LocalArgbOutputStage(local_argb::PixelFrameSink &pixels)
-    : implementation_(std::make_unique<Implementation>(pixels)) {}
+LocalArgbOutputStage::LocalArgbOutputStage(local_argb::PixelFrameSink &pixels,
+                                           vehicle_core::MonotonicClock &clock)
+    : implementation_(std::make_unique<Implementation>(pixels, clock)) {}
 
 LocalArgbOutputStage::~LocalArgbOutputStage() noexcept = default;
 

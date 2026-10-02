@@ -385,7 +385,7 @@ def main() -> int:
         ("static mazda::MazdaSignalProvider signal_provider{telemetry}",
          "static generic provider over the facade"),
         ("static action_engine::ActionEngine engine{signal_provider}", "static action engine"),
-        ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink()}",
+        ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(), application_clock}",
          "static LED action sink bound to the renderer queue"),
         ("static controller_config::persisted::ControllerConfig active_configuration{}",
          "static owning active configuration"),
@@ -408,7 +408,7 @@ def main() -> int:
         ("local_argb::watch_progress(&notification_dispatch_progress, &telemetry)",
          "dispatcher progress watch"),
     ):
-        if needle not in structure:
+        if re.sub(r"\s+", "", needle) not in re.sub(r"\s+", "", structure):
             failures.append(f"{label} is missing from vehicle integration: {needle}")
 
     # Startup order is checked inside app_main only, and fails closed: a call

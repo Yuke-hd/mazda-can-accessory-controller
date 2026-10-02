@@ -405,6 +405,13 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         self.edit(PROJECT_CMAKE, '    "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"\n', "")
         self.assert_rejected("vehicle project does not select the lib/action_engine component")
 
+    def test_led_action_sink_without_monotonic_clock_is_rejected(self) -> None:
+        path = self.root / MAIN
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("application_clock};", "};", 1)
+        path.write_text(text, encoding="utf-8")
+        self.assert_rejected("static LED action sink bound to the renderer queue is missing")
+
     def test_missing_led_actions_requirement_is_rejected(self) -> None:
         self.edit(MAIN_CMAKE, " local_argb_actions", "")
         self.assert_rejected(

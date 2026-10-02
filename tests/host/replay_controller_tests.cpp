@@ -87,7 +87,7 @@ TEST_CASE(
     "timestamp-zero turn replay preserves startup black then renders production turn output") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn()}, clock, stage};
 
   CHECK(controller.next_frame_time() == std::optional<vehicle_core::MonotonicTimestamp>{0});
@@ -112,7 +112,7 @@ TEST_CASE(
 TEST_CASE("a frame scheduled in the future is rejected without consuming or rendering it") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn(100)}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -137,7 +137,7 @@ TEST_CASE("a frame scheduled in the future is rejected without consuming or rend
 TEST_CASE("sequential replay frames each publish once without drifting the barrier epoch") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn(0), half_rpm(1'000)}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -163,7 +163,7 @@ TEST_CASE("sequential replay frames each publish once without drifting the barri
 TEST_CASE("destroying a running replay controller fails the output off") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   {
     replay::ReplayController controller{{left_turn()}, clock, stage};
     REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -181,7 +181,7 @@ TEST_CASE("zero and maximum synchronization timeouts fail configuration before s
        {vehicle_core::Microseconds{0}, std::numeric_limits<vehicle_core::Microseconds>::max()}) {
     replay::ReplayClock clock;
     RecordingPixelSink pixels;
-    replay::LocalArgbOutputStage stage{pixels};
+    replay::LocalArgbOutputStage stage{pixels, clock};
     replay::ReplayController controller{{left_turn()}, clock, stage, timeout};
 
     CHECK(controller.start() == replay::ReplayControllerStatus::ConfigurationFailed);
@@ -195,7 +195,7 @@ TEST_CASE("largest chrono microseconds timeout permits immediate timeout publica
       static_cast<vehicle_core::Microseconds>(std::numeric_limits<TimeoutRep>::max());
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{}, clock, stage, timeout};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -208,7 +208,7 @@ TEST_CASE("largest chrono microseconds timeout permits immediate timeout publica
 TEST_CASE("production RPM range rule emits a half-strip SetLevel through the real renderer") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{half_rpm()}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -223,7 +223,7 @@ TEST_CASE("production RPM range rule emits a half-strip SetLevel through the rea
 TEST_CASE("an explicit timeout publication makes a held turn stale and renders black") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn()}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -244,7 +244,7 @@ TEST_CASE("an explicit timeout publication makes a held turn stale and renders b
 TEST_CASE("empty replay supports timeout work and remains one-shot after clean stop") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -260,7 +260,7 @@ TEST_CASE("empty replay supports timeout work and remains one-shot after clean s
 TEST_CASE("stop releases the Runtime waiting at the input gate with a frozen clock") {
   replay::ReplayClock clock{9'000'000};
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -273,7 +273,7 @@ TEST_CASE("stop releases the Runtime waiting at the input gate with a frozen clo
 TEST_CASE("renderer failure attempts black and stop keeps the host output failed off") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn()}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
@@ -289,7 +289,7 @@ TEST_CASE("renderer failure attempts black and stop keeps the host output failed
 TEST_CASE("source fault publication completes before faulted telemetry stops") {
   replay::ReplayClock clock;
   RecordingPixelSink pixels;
-  replay::LocalArgbOutputStage stage{pixels};
+  replay::LocalArgbOutputStage stage{pixels, clock};
   replay::ReplayController controller{{left_turn()}, clock, stage};
 
   REQUIRE(controller.start() == replay::ReplayControllerStatus::Ok);
