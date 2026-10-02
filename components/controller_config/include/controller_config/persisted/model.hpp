@@ -139,6 +139,9 @@ struct LedFillBinding {
 };
 
 // Persisted milliseconds share the renderer contract's bounded lifetime.
+static_assert(local_argb::internal::kMaxTransientDurationUs >= 1000 &&
+                  local_argb::internal::kMaxTransientDurationUs % 1000 == 0,
+              "Transient duration maximum must be at least one whole millisecond");
 inline constexpr Integer kMaxTransientDurationMs =
     static_cast<Integer>(local_argb::internal::kMaxTransientDurationUs / 1000);
 
