@@ -11,6 +11,7 @@ current requirements unless a task explicitly references them.
 | [Specs](specs/) | Current component and feature semantics, formats, lifecycle, edge cases and constraints. |
 | [Protocol](protocol/) | Mazda CAN/DBC mappings, signal evidence, provenance and verification. |
 | [Development](development/) | Build, test, toolchain and validation procedures. |
+| [Decisions](decisions/) | Architecture decision records: why a significant choice was made and what it rules out. |
 | [Work items](work-items/) | Historical implementation, milestone and superseded design records. |
 
 ## Find context by task
@@ -24,7 +25,7 @@ current requirements unless a task explicitly references them.
 | DBC/provenance verification | [DBC metadata verification](protocol/dbc-metadata-verification.md), [opendbc provenance](protocol/opendbc-provenance.md). |
 | Generic rules or local lighting | [Action engine](specs/action-engine.md), [local LED actions](specs/lighting/local-led-actions.md), [renderer runtime](specs/lighting/renderer-runtime.md). |
 | Configuration formats/loaders or lighting profile | [Controller configuration](specs/configuration/controller-config.md), [lighting profile application and RPM features](specs/configuration/lighting-profile.md), [YAML and JSON examples](specs/configuration/examples/). |
-| Companion app BLE link | [Companion BLE protocol](specs/companion/ble-protocol.md), [config transfer](specs/companion/config-transfer.md), [live signals](specs/companion/live-signals.md), [controller configuration](specs/configuration/controller-config.md), [signal evidence](protocol/signal-evidence.md). |
+| Companion app BLE link | [ADR-0001 to ADR-0003](decisions/), [companion BLE protocol](specs/companion/ble-protocol.md), [config transfer](specs/companion/config-transfer.md), [live signals](specs/companion/live-signals.md), [controller configuration](specs/configuration/controller-config.md), [signal evidence](protocol/signal-evidence.md). |
 | Firmware wiring or startup | [Firmware composition](architecture/firmware-composition.md), [WeAct hardware record](architecture/hardware/weact-can485-v1.1.md). |
 | Host ingestion or replay output | [GVRET ingestion](specs/replay/gvret-ingestion.md), [pixel-frame output](specs/replay/pixel-frame-output.md), [signal observers](specs/replay/signal-observers.md). |
 | Browser emulator or playback | [Web emulator](specs/replay/web-emulator.md), [browser renderer](specs/replay/browser-renderer.md), [playback](specs/replay/playback.md). |
