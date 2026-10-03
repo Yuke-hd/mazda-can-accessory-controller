@@ -12,7 +12,7 @@
 namespace controller_config::persisted {
 
 // New overrides reserve room for both slots and an in-flight replacement in
-// the default 24 KiB NVS partition. Other namespaces can still exhaust NVS.
+// the 64 KiB NVS partition. Other namespaces can still exhaust NVS.
 inline constexpr std::size_t kMaxStoredControllerConfigJsonBytes = 4U * 1024U;
 
 // A raw storage adapter owns the platform-specific persistence details. Its

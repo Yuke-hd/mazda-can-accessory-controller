@@ -92,8 +92,11 @@ implementation.
 
 ## Partition and NVS headroom
 
-The default single-app table provides a 24 KiB `nvs` partition, a 4 KiB
-`phy_init` partition and a 1 MiB `factory` application.
+The measurements below used the ESP-IDF default single-app table: a 24 KiB
+`nvs` partition, a 4 KiB `phy_init` partition and a 1 MiB `factory`
+application. The firmware has since adopted the recommended layout below
+(64 KiB `nvs`, 1,920 KiB `factory`); see
+[firmware builds](firmware-build.md#partition-layout).
 
 **Application.** The NimBLE stub leaves 35% (370,272 B) of the 1 MiB
 `factory` partition free. This is enough for the companion GATT work, but the
@@ -127,8 +130,8 @@ This leaves little room for page fragmentation, garbage collection, or a
 future namespace. When NVS is exhausted, a configuration commit fails with
 `ESP_ERR_NVS_NOT_ENOUGH_SPACE`. This estimate is not a measured fill test.
 
-**Recommendation.** Grow `nvs` in place before companion BLE ships. The
-layout below keeps `nvs` at its default `0x9000` offset and only extends it:
+**Recommendation (adopted).** Grow `nvs` in place before companion BLE ships.
+The layout below keeps `nvs` at its default `0x9000` offset and only extends it:
 
 ```csv
 # Name,   Type, SubType, Offset,   Size
@@ -137,7 +140,8 @@ phy_init, data, phy,     0x19000,  0x1000
 factory,  app,  factory, 0x20000,  0x1E0000
 ```
 
-This gives 64 KiB of NVS and a 1,920 KiB application. It stays inside 4 MB
+This gives 64 KiB of NVS (15 usable pages, about 1,890 entries, against the
+~560–580 estimate above) and a 1,920 KiB application. It stays inside 4 MB
 and leaves 0x200000–0x3FFFFF free for a later OTA layout without moving
 `nvs`. Any OTA mechanism needs its own decision; ADR-0001 excludes Wi-Fi.
 

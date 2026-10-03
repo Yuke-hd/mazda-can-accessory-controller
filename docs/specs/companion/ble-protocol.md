@@ -255,7 +255,7 @@ still pair; that remains an accepted exposure of protocol version 1.
 - Bonds are stored in NVS by the BLE host's own store, in a namespace separate
   from the config store's `mazda_config` namespace. Bond storage must never read,
   write or erase `mazda_config`, and clearing bonds must not erase the NVS
-  partition. Bonds share the default 24 KiB NVS partition with the config
+  partition. Bonds share the 64 KiB NVS partition with the config
   store, so the bond capacity must be budgeted against it (see
   [boot-time override storage](../configuration/controller-config.md#boot-time-override-storage)).
 - The controller stores up to **4 bonds**. When a new pairing inside the window
