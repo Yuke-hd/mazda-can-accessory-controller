@@ -37,7 +37,10 @@ hardware changes, consult `docs/architecture/hardware/weact-can485-v1.1.md`.
   driver-failure fail-off, bounded retries/watchdogs, and recovery only after
   a newer valid observation where required.
 - Brake freshness is intentionally unset pending reviewed timing evidence.
-  Do not invent a timeout or enable brake output from merely decoded data.
+  Do not invent a timeout or promote brake observations to `Fresh`. Brake
+  output is enabled only through the owner-approved `fresh_or_unverified`
+  opt-in on `vehicle.brake_pressed` (the factory `brake` action); keep other
+  brake paths requiring `Fresh`.
 - Preserve the reviewed WeAct CAN485 V1.1 hardware capabilities; use the
   hardware record above for pin assignments and validation requirements.
 - Keep CAN acquisition, Mazda decoding, telemetry/publication, lighting
