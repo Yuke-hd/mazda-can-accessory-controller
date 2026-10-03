@@ -63,8 +63,9 @@ the git-ignored `sdkconfig` does not already set, so a checkout configured
 before this layout keeps the old default table. Run `idf.py set-target esp32`
 (or delete `firmware/weact-can485-v1.1/sdkconfig`) once after pulling, then
 confirm that `idf.py partition-table` shows the 64 KiB `nvs` before flashing.
-The firmware configure step fails if `CONFIG_PARTITION_TABLE_CUSTOM` is not
-set to `partitions.csv`, so a stale configuration cannot build silently.
+The firmware configure step fails unless `CONFIG_PARTITION_TABLE_CUSTOM` is
+set and `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` is `partitions.csv`, so a stale
+configuration cannot build silently.
 
 `nvs` keeps the ESP-IDF default offset and only grows from the default
 24 KiB, so a board flashed with the default table upgrades in place:
