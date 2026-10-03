@@ -20,6 +20,10 @@ cannot be met.
 The iOS app must also reconnect to a bonded controller in the background,
 which needs the controller to keep advertising.
 
+Many vehicles switch accessory power with the ignition. A pairing window that
+opened at power-up would therefore open at every ignition cycle, usually when
+the owner has no intention of pairing.
+
 ## Decision
 
 - The controller supports LE Secure Connections only, declares
@@ -28,12 +32,16 @@ which needs the controller to keep advertising.
 - The controller **always advertises** while no central is connected, so
   CoreBluetooth can reconnect bonded phones in the background.
 - **New pairings are accepted only inside a 120 s pairing window.** The window
-  opens after a power-on reset and after a debounced press of the user key
-  (GPIO0). On the ESP32 an EN-pin reset, from the RST button or a USB serial
-  auto-reset circuit, also counts as a power-on reset and opens it; both need
-  access to the board or its USB port. Controlled restarts, software resets,
-  panics, watchdog and brownout resets do not open it. It closes when the
-  period expires or after one new bond is stored.
+  opens only after a debounced press of the user key (GPIO0), and closes when
+  the period expires or after one new bond is stored.
+- **No reset opens the window.** This mitigates the main security risk of Just
+  Works pairing. Opening the window at power-up would give an active attacker
+  in radio range a chance to pair, or to sit between the owner's phone and the
+  controller, at every ignition cycle. Requiring a key press limits each window
+  to a deliberate action by someone with access to the board. Power-on and
+  EN-pin resets (the RST button or a USB serial auto-reset), controlled
+  restarts, software resets, panics, watchdog and brownout resets therefore
+  never open it.
 - Outside the window every pairing request is rejected, and a rejected or
   failed pairing never modifies, evicts or deletes an existing bond. Bonded
   centrals re-encrypt at any time without a window.
@@ -47,16 +55,18 @@ fallback and bond capacity, are in the
 Easier:
 
 - No passkey or other secret has to be provisioned or managed.
-- Physical presence, by power-cycling the controller or pressing the key,
-  stands in for MITM protection.
+- Physical presence, by pressing the key, stands in for MITM protection.
+- Starting the car never opens a pairing window, so the controller does not
+  accept new pairings during ordinary use.
 - Background reconnection works for bonded phones while driving.
 
 Harder:
 
-- An active attacker in radio range during an open window can pair. Because
-  accessory power usually follows the ignition, the power-up window typically
-  opens at every ignition cycle. This is an accepted exposure of protocol
-  version 1.
+- Every new pairing needs the user key: the first pairing, a phone that lost
+  its keys, and re-pairing after Clear bonds. The installation must keep the
+  key reachable, or the board must be accessed to pair.
+- An active attacker in radio range during a window the owner opened can still
+  pair. This is an accepted exposure of protocol version 1.
 - The controller is always discoverable, and protocol version 1 uses no
   resolvable private address, so its advertisement can be tracked. Address
   privacy is deferred.
@@ -71,6 +81,10 @@ Harder:
   manage.
 - **Defer the IO capability to #164:** leaves the security model unspecified
   in the protocol.
+- **Also open the window after a power-on reset:** first pairing would need
+  only a power cycle, not access to the key. Not chosen, because accessory
+  power usually follows the ignition, so the window would open at every
+  ignition cycle without the owner's intent.
 - **Advertise only during the window:** smaller exposure, but it breaks
   automatic background reconnection while driving.
 - **Always advertise with open pairing:** anyone nearby could bond.
