@@ -68,7 +68,9 @@ Rate rules:
 - The controller samples at most every 100 ms and sends a frame when any field
   other than `sequence` differs from the last frame the BLE stack accepted
   for queueing, so a change in a frame the stack could not queue is sent
-  again at the next opportunity.
+  again at the next opportunity. That baseline is cleared whenever
+  `sequence` restarts, so the first frame is retried until the stack accepts
+  one.
 - A **heartbeat** frame goes out when 1 s has passed since the last frame
   attempt, so the app can tell a quiet vehicle from a stalled link.
 - The first frame goes out within 100 ms each time all the conditions above
