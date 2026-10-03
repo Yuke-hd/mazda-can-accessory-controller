@@ -176,6 +176,25 @@ SignalNotification turn(const std::uint16_t value,
       false};
 }
 
+SignalNotification brake(const bool pressed,
+                         const Availability availability = Availability::Fresh) {
+  return SignalNotification{
+      kBrakePressed,
+      SignalReading{SignalValue::boolean(pressed), availability, ValidationStatus::Confirmed},
+      false,
+      false,
+      false,
+      false};
+}
+
+void start_factory(Controller &controller) {
+  REQUIRE(controller_config::persisted::apply_controller_config(loaded_factory_config(),
+                                                                controller.leds, controller.engine)
+              .ok());
+  REQUIRE(controller.engine.attach() == vehicle_signals::SignalStatus::Ok);
+  controller.provider.start();
+}
+
 } // namespace
 
 TEST_CASE("generated factory YAML matches the production profile field by field") {
@@ -297,6 +316,79 @@ TEST_CASE("generated factory YAML keeps mirrored turn and RPM behavior with fail
   controller.provider.set_reading(kEngineRpm, SignalReading{});
   REQUIRE(controller.engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
   CHECK(controller.lighting.commands.back().fills.empty());
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+
+  controller.provider.stop();
+  CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
+}
+
+TEST_CASE("generated factory YAML lights the brake region only while the pedal is pressed") {
+  Controller controller{};
+  start_factory(controller);
+
+  REQUIRE(controller.provider.publish(brake(false)) == 1);
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+
+  REQUIRE(controller.provider.publish(brake(true)) == 1);
+  CHECK(controller.lighting.commands.back().brake);
+  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+
+  REQUIRE(controller.provider.publish(brake(false)) == 1);
+  CHECK_FALSE(controller.lighting.commands.back().brake);
+
+  // The owner-approved opt-in accepts an unverified pressed observation.
+  REQUIRE(controller.provider.publish(brake(true, Availability::FreshnessUnverified)) == 1);
+  CHECK(controller.lighting.commands.back().brake);
+
+  controller.provider.stop();
+  CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
+}
+
+TEST_CASE("generated factory YAML fails the brake region off without a usable observation") {
+  for (const auto availability :
+       {Availability::NoData, Availability::Stale, Availability::Unavailable}) {
+    CAPTURE(static_cast<int>(availability));
+    Controller controller{};
+    start_factory(controller);
+    REQUIRE(controller.provider.publish(brake(true)) == 1);
+    REQUIRE(controller.lighting.commands.back().brake);
+
+    REQUIRE(controller.provider.publish(brake(true, availability)) == 1);
+    CHECK_FALSE(controller.lighting.commands.back().brake);
+
+    controller.provider.stop();
+    CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
+  }
+}
+
+TEST_CASE("generated factory YAML ranks the brake pedal above the RPM red zone") {
+  Controller controller{};
+  start_factory(controller);
+  const auto sample_rpm = [&](float value) {
+    controller.provider.set_reading(kEngineRpm, SignalReading{SignalValue::number(value),
+                                                              Availability::FreshnessUnverified,
+                                                              ValidationStatus::Reference});
+    REQUIRE(controller.engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
+  };
+
+  sample_rpm(6500.0F);
+  CHECK(controller.lighting.commands.back().brake);
+  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 150);
+
+  REQUIRE(controller.provider.publish(brake(true)) == 1);
+  CHECK(controller.lighting.commands.back().brake);
+  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+
+  sample_rpm(3250.0F);
+  CHECK(controller.lighting.commands.back().brake);
+  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+
+  sample_rpm(6500.0F);
+  REQUIRE(controller.provider.publish(brake(false)) == 1);
+  CHECK(controller.lighting.commands.back().brake);
+  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 150);
+
+  sample_rpm(3250.0F);
   CHECK_FALSE(controller.lighting.commands.back().brake);
 
   controller.provider.stop();
