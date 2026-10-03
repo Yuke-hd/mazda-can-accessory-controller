@@ -542,3 +542,19 @@ target_link_libraries(controller_config_door_actions_tests PRIVATE controller_co
   vehicle_signals_test_support action_engine_test_support doctest::doctest)
 target_compile_features(controller_config_door_actions_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_door_actions_tests)
+
+# The reviewed lock-state example is not part of the factory profile; load its
+# committed canonical JSON through the persisted application path and the real
+# Mazda catalog.
+set(_lock_state_example_json
+  "${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/lock-state-actions-v1.json")
+add_executable(controller_config_lock_state_tests controller_config_lock_state_tests.cpp)
+target_compile_definitions(controller_config_lock_state_tests PRIVATE
+  CONTROLLER_CONFIG_LOCK_STATE_JSON_PATH="${_lock_state_example_json}")
+target_link_libraries(controller_config_lock_state_tests PRIVATE controller_config
+                                                                 vehicle_signals_test_support
+                                                                 doctest::doctest)
+target_compile_features(controller_config_lock_state_tests PRIVATE cxx_std_17)
+doctest_discover_tests(controller_config_lock_state_tests)
+add_test(NAME controller_config_lock_state_example_loads
+  COMMAND controller_config_json_check ${_lock_state_example_json})
