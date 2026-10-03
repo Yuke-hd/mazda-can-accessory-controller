@@ -16,6 +16,8 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 COMPILER = REPOSITORY / "tools" / "compile_controller_config.py"
 PRODUCTION_YAML = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "controller-config-v1.yaml"
 PRODUCTION_JSON = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "controller-config-v1.json"
+SPEED_LEVEL_EXAMPLE_YAML = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "speed-level-example.yaml"
+SPEED_LEVEL_EXAMPLE_JSON = REPOSITORY / "docs" / "specs" / "configuration" / "examples" / "speed-level-example.json"
 SIGNAL_CATALOG = REPOSITORY / "tools" / "controller_signal_catalog.json"
 SIGNAL_CATALOG_HEADER = (
     REPOSITORY / "components" / "mazda_telemetry" / "private_include" / "mazda" / "signal_catalog.hpp"
@@ -1172,6 +1174,16 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 output_path.read_bytes(),
                 (examples / "indicator-lamp-actions.json").read_bytes(),
             )
+
+    def test_speed_level_example_yaml_matches_canonical_json_example(self) -> None:
+        result, output = self.run_compiler(SPEED_LEVEL_EXAMPLE_YAML.read_text(encoding="utf-8"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(output)
+        self.assertEqual(
+            json.loads(output.decode("utf-8")),
+            json.loads(SPEED_LEVEL_EXAMPLE_JSON.read_text(encoding="utf-8")),
+        )
 
 
 if __name__ == "__main__":

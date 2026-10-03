@@ -1,0 +1,26 @@
+# Reviewed example, not part of the factory profile: maps vehicle.speed_kph
+# onto SetLevel(speed_level) through the existing range rule. The 0..120 km/h
+# input range is an EXAMPLE only, not a vehicle maximum or an agreed factory
+# range; config/default.yaml does not enable this action. No output is bound.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/speed-level-example.yaml \
+#     /tmp/speed-level-example.json
+version: 1
+
+actions:
+  - name: speed_level
+
+rules:
+  # Speed freshness is unverified; no freshness timeout is invented here.
+  # NoData, Stale and Unavailable still fail the level off.
+  - type: range
+    action: speed_level
+    signal_key: vehicle.speed_kph
+    input:
+      from: 0
+      to: 120
+    output:
+      from: 0
+      to: 1
+    freshness: fresh_or_unverified

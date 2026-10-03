@@ -1,0 +1,1 @@
+{"actions":[{"name":"speed_level"}],"outputs":[],"rules":[{"action":"speed_level","freshness":"fresh_or_unverified","input":{"from":0,"to":120},"output":{"from":0,"to":1},"signal_key":"vehicle.speed_kph","type":"range"}],"version":1}
