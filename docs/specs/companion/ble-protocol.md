@@ -160,19 +160,17 @@ information.
 
 The controller accepts a **new** pairing only while the pairing window is open.
 
-- The window opens for **120 s** when the BLE stack becomes ready after a
-  **power-on reset** (`ESP_RST_POWERON`), and for 120 s after a debounced press
-  of the user key (GPIO0; see the
+- The window opens for **120 s** only after a debounced press of the user key
+  (GPIO0; see the
   [hardware record](../../architecture/hardware/weact-can485-v1.1.md)). A press
-  while the window is open restarts the 120 s period. On the ESP32, a reset
-  through the EN pin (the RST button, or a USB serial auto-reset circuit if one
-  is fitted) also reports `ESP_RST_POWERON` and opens the window. This fits the
-  physical-presence model, because both need access to the board or its USB
-  port.
-- Any other reset does not open the window. This includes the controlled
-  restarts this protocol triggers (revert to factory and config commit), a
-  software restart, a panic, a watchdog reset and a brownout reset. A
-  remotely triggered restart or crash therefore never opens the window.
+  while the window is open restarts the 120 s period.
+- No reset opens the window. This includes a power-on reset
+  (`ESP_RST_POWERON`), an EN-pin reset from the RST button or a USB serial
+  auto-reset circuit, the controlled restarts this protocol triggers (revert to
+  factory and config commit), a software restart, a panic, a watchdog reset and
+  a brownout reset. Power-up and remotely triggered restarts or crashes
+  therefore never open the window (see
+  [power-up exposure](#power-up-exposure)).
 - The window closes when the period expires or after one new bond is stored.
 - Outside the window, the controller rejects **every** pairing request. Where
   the host supports it, the rejection uses SMP reason `Pairing Not Supported`
@@ -235,9 +233,21 @@ GPIO0 is also an ESP32 boot strapping pin. Holding the key during reset enters
 the ROM serial bootloader instead of the application, so the firmware sees only
 presses that start after boot.
 
-Because many vehicles switch accessory power with the ignition, the power-up
-window typically opens at every ignition cycle. This is an accepted exposure of
-protocol version 1.
+#### Power-up exposure
+
+The window deliberately does not open at power-up. This mitigates the main
+risk of Just Works pairing. Many vehicles switch accessory power with the
+ignition, so a window that opened at power-up would open at every ignition
+cycle, usually without the owner intending to pair. An active attacker in
+radio range could then pair, or sit between the owner's phone and the
+controller, at each ignition cycle. Requiring a key press limits every window
+to a deliberate action by someone with access to the board.
+
+The cost is that every new pairing needs the user key: the first pairing, a
+phone that lost its keys, and re-pairing after Clear bonds. An installation
+must therefore keep the user key reachable, or the board must be accessed to
+pair. An active attacker in radio range during a window the owner opened can
+still pair; that remains an accepted exposure of protocol version 1.
 
 ### Bond storage
 
@@ -448,7 +458,7 @@ Clearing deactivates the override but does not erase the stored slots; see
    the user to Settings. If re-encryption succeeds, the clear did not happen.
 
 Clearing bonds does not open the pairing window. To pair again, the user
-presses the user key or power-cycles the controller.
+presses the user key.
 
 ## Versioning and compatibility
 
