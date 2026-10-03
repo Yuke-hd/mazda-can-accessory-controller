@@ -390,6 +390,31 @@ loads the JSON through the canonical parser, applies it against the production
 signal catalog, and checks the per-choice rules, the park, reverse, neutral,
 drive and shifting transitions, the unverified opt-in and fail-off.
 
+## Actual-gear action example
+
+`examples/actual-gear-actions-v1.yaml` is a reviewed example that is available
+but not enabled in the factory profile; `config/default.yaml` and
+`production_lighting_config()` do not include it. It declares one action
+`gear_<choice>` for every semantic `vehicle.actual_gear` catalog choice
+(`park_or_neutral`, `park`, `neutral`, `reverse`, `first` through `sixth`, and
+`shifting`), each driven by a `state` rule equal to that choice. The catalog's
+`unknown` choice has no action, so unknown or invalid gear values leave every
+gear action off. Selector-position behaviour is unchanged.
+
+Every rule opts in to `fresh_or_unverified` explicitly: actual gear has no
+evidence-backed freshness timeout and none is invented, so an unverified
+observation activates its action, while `NoData`, `Stale` and `Unavailable`
+fail it off until a newer usable observation arrives. The example binds no
+outputs. Its eleven rules plus the six factory rules would exceed the action
+engine's 16-rule capacity, so factory enablement needs a separate decision.
+
+`examples/actual-gear-actions-v1.json` is the compiler's canonical output for
+the YAML; `tests/tools/compile_controller_config_test.py` checks their parity
+and the `controller_config_yaml_loader` CTest resolves the YAML against the
+real Mazda catalog. `tests/host/controller_config_actual_gear_tests.cpp`
+applies the JSON through the persisted configuration path and checks gear
+transitions, the unverified opt-in, fail-off and recovery.
+
 ## Boot-time override storage
 
 The firmware exposes a configuration storage boundary with `load_override()`,

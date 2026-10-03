@@ -1,0 +1,107 @@
+# Reviewed example: one named action per semantic vehicle.actual_gear choice.
+# It is not part of the factory profile (config/default.yaml) and binds no
+# outputs; a sink or a later output binding decides what each action means.
+# The catalog's `unknown` choice has no action: unknown or invalid gear values
+# match no rule, so every gear action stays off.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/actual-gear-actions-v1.yaml \
+#     /tmp/actual-gear-actions-v1.json
+version: 1
+
+actions:
+  - name: gear_park_or_neutral
+  - name: gear_park
+  - name: gear_neutral
+  - name: gear_reverse
+  - name: gear_first
+  - name: gear_second
+  - name: gear_third
+  - name: gear_fourth
+  - name: gear_fifth
+  - name: gear_sixth
+  - name: gear_shifting
+
+# Actual gear has no evidence-backed freshness timeout and none is invented
+# here. Each rule explicitly opts in to fresh_or_unverified, which accepts an
+# unverified observation without promoting it to fresh; NoData, Stale and
+# Unavailable still fail every gear action off.
+rules:
+  - type: state
+    action: gear_park_or_neutral
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: park_or_neutral}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_park
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: park}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_neutral
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: neutral}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_reverse
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: reverse}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_first
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: first}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_second
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: second}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_third
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: third}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_fourth
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: fourth}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_fifth
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: fifth}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_sixth
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: sixth}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: gear_shifting
+    signal_key: vehicle.actual_gear
+    comparison: equal
+    operand: {choice: shifting}
+    freshness: fresh_or_unverified
+
+outputs: []

@@ -59,6 +59,18 @@ def main() -> int:
                 json.loads(SIGNAL_CATALOG.read_text(encoding="utf-8"))["signals"],
             )
 
+        def test_actual_gear_example_loads_in_canonical_cpp_loader(self) -> None:
+            example = (
+                REPOSITORY
+                / "docs"
+                / "specs"
+                / "configuration"
+                / "examples"
+                / "actual-gear-actions-v1.yaml"
+            )
+            result, _ = self.run_compiler(example.read_text(encoding="utf-8"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     result = unittest.TextTestRunner(verbosity=2).run(
         unittest.defaultTestLoader.loadTestsFromTestCase(CanonicalLoaderTests)
     )
