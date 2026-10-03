@@ -14,6 +14,7 @@
 #include "local_argb_actions/led_action_sink.hpp"
 #include "mazda/signal_provider.hpp"
 #include "mazda/vehicle_telemetry.hpp"
+#include "spike.h"
 
 #include <cstdint>
 #include <memory>
@@ -200,6 +201,9 @@ extern "C" void app_main(void) {
   }
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
+  // Issue #161 spike: BLE starts last and a failure never stops CAN or lighting.
+  if (!spike::start_ble_advertiser())
+    ESP_LOGE(kTag, "spike BLE advertiser failed; continuing without BLE");
   for (;;) {
     const auto speed = telemetry.speed_kph();
     const auto engine_rpm = telemetry.engine_rpm();
@@ -210,6 +214,7 @@ extern "C" void app_main(void) {
     // Polled rules, such as the RPM level fill and red zone, are sampled at
     // this cadence; the engine serializes them with the turn notices.
     (void)engine.sample_polled_rules();
+    spike::report_resources_if_due();
     // The application chooses its own observation cadence. CAN receive,
     // decoding, freshness servicing, notification dispatch, and LED updates
     // remain owned by their background service tasks.

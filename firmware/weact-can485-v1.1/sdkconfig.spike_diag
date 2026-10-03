@@ -1,0 +1,4 @@
+# Issue #161 spike: enables the heap and task report for bench reads. Apply
+# to both the baseline and the NimBLE build so heap figures compare like for
+# like. Not part of the size comparison.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
