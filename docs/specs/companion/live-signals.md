@@ -66,12 +66,16 @@ Rate rules:
 - **Rate cap: 10 Hz.** Consecutive frames on a connection are at least
   100 ms apart.
 - The controller samples at most every 100 ms and sends a frame when any field
-  other than `sequence` differs from the last frame it attempted to send.
+  other than `sequence` differs from the last frame the BLE stack accepted
+  for queueing, so a change in a frame the stack could not queue is sent
+  again at the next opportunity.
 - A **heartbeat** frame goes out when 1 s has passed since the last frame
   attempt, so the app can tell a quiet vehicle from a stalled link.
-- The first frame goes out within 100 ms after all the conditions above first
-  hold on the connection, including when the BLE stack restores a bonded
-  peer's notification setting at re-encryption without a descriptor write.
+- The first frame goes out within 100 ms each time all the conditions above
+  become true, whether for the first time on the connection or after
+  notifications are enabled again. This includes the BLE stack restoring a
+  bonded peer's notification setting at re-encryption without a descriptor
+  write. That first frame is sent even if it matches a frame sent earlier.
 - If the BLE stack cannot queue a frame, the controller drops it and sends the
   latest state at the next opportunity. Frames are never queued behind each
   other, so a slow link sees fewer, current frames rather than old ones.
@@ -201,7 +205,7 @@ The high nibble of the last byte, for the unused index 19, is zero.
 | 3 | `FreshnessUnverified` | The reading is valid, but no freshness timeout is configured for the signal. |
 | 4 | `Unavailable` | The provider reports the reading unavailable, for example after a fault or loss of transport health. |
 | 5 | Read failed | `read()` returned a request failure, such as `Faulted` or `Timeout`. No value is sent. |
-| 6 | Not supported | This build's catalog has no such signal, or it is not Read-capable. No value is sent. |
+| 6 | Not supported | This build cannot read the signal as specified; see the outcome table below. No value is sent. |
 | 7 | Reserved | Not sent in layout version 1. The app treats it as unknown. |
 
 - Codes 0–4 are `vehicle_signals::Availability` copied through an explicit
@@ -277,6 +281,7 @@ least cover:
 
 - every `Availability` value maps to its code, and no input other than a
   `Fresh` reading produces code 1;
+- every row of the read-outcome table maps to its code 5 or 6;
 - `vehicle.brake_pressed` and `vehicle.engine_rpm` readings from the
   production provider policy never encode as `Fresh`;
 - read failures, unsupported signals, non-finite, negative and out-of-range
@@ -284,7 +289,8 @@ least cover:
   value-present bit, and an unencodable value keeps its provider availability;
 - every catalog choice has a code, and the choice-code tables match this
   document;
-- the 100 ms rate cap, the 1 s heartbeat and the first-frame timing.
+- the 100 ms rate cap, the 1 s heartbeat, the first-frame timing, and
+  re-sending a change whose frame the stack could not queue.
 
 ## Out of scope
 
