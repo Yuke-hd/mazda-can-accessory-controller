@@ -24,7 +24,11 @@ until it is reverted, and before BLE the only repair was a reflash.
 
 - A commit runs, in order: the transfer checks, `parse_controller_config()`
   with `validate()`, a **dry-run apply**, and `save_override()`. The first
-  failure rejects the commit, and a rejected commit writes nothing to storage.
+  failure ends the commit. A failure before `save_override()` writes nothing
+  to storage. A storage failure inside `save_override()` leaves the running
+  config unchanged and does not restart, but the selection persisted for the
+  next boot is uncertain, so the app resolves it in the same session by
+  uploading again or reverting to factory.
 - The dry run calls `apply_controller_config()` against scratch action-engine
   and LED-sink instances with the same catalog, capacities and types as the
   boot path. It never subscribes to, starts or stops the signal provider, and

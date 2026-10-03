@@ -29,9 +29,11 @@ which needs the controller to keep advertising.
   CoreBluetooth can reconnect bonded phones in the background.
 - **New pairings are accepted only inside a 120 s pairing window.** The window
   opens after a power-on reset and after a debounced press of the user key
-  (GPIO0). Controlled restarts, software resets, panics, watchdog and brownout
-  resets do not open it. It closes when the period expires or after one new
-  bond is stored.
+  (GPIO0). On the ESP32 an EN-pin reset, from the RST button or a USB serial
+  auto-reset circuit, also counts as a power-on reset and opens it; both need
+  access to the board or its USB port. Controlled restarts, software resets,
+  panics, watchdog and brownout resets do not open it. It closes when the
+  period expires or after one new bond is stored.
 - Outside the window every pairing request is rejected, and a rejected or
   failed pairing never modifies, evicts or deletes an existing bond. Bonded
   centrals re-encrypt at any time without a window.
@@ -77,5 +79,8 @@ Harder:
 
 - [#160](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/160),
   [#164](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/164).
-- [Companion BLE protocol: advertising, pairing and bonding, access control](../specs/companion/ble-protocol.md#pairing-window).
+- Companion BLE protocol:
+  [advertising](../specs/companion/ble-protocol.md#advertising),
+  [pairing and bonding](../specs/companion/ble-protocol.md#pairing-and-bonding),
+  [access control](../specs/companion/ble-protocol.md#access-control).
 - [WeAct CAN485 V1.1 hardware record](../architecture/hardware/weact-can485-v1.1.md).
