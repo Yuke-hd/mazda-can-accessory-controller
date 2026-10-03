@@ -515,7 +515,8 @@ oversized result returns `InvalidCandidate` with an `InputTooLarge` diagnostic
 before writing. The NVS adapter enforces the same write bound. The existing
 16 KiB read bound is retained so previously stored documents can still load.
 
-The default ESP-IDF single-app partition table provides a 24 KiB `nvs`
+The firmware's custom partition table
+(`firmware/weact-can485-v1.1/partitions.csv`) provides a 64 KiB `nvs`
 partition. A 4 KiB write limit leaves conservative room for the two slot blobs,
 an in-flight replacement of the inactive slot, NVS metadata and garbage
 collection. This is a software storage bound, not an on-target capacity or

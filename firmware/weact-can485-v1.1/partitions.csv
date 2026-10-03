@@ -1,0 +1,8 @@
+# WeAct CAN485 V1.1 single-app layout for 4 MB flash.
+# nvs keeps the ESP-IDF default 0x9000 offset and grows in place from 24 KiB,
+# so a serial flash without an erase keeps existing NVS entries. Never move
+# nvs. 0x200000-0x3FFFFF is intentionally unallocated.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x10000
+phy_init, data, phy,     0x19000,  0x1000
+factory,  app,  factory, 0x20000,  0x1E0000
