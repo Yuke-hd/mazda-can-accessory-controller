@@ -43,6 +43,8 @@ enum class ValidationError : std::uint8_t {
   InvalidPriority,       // The priority is outside 0..255.
   DuplicateBinding,      // The same action already drives this effect or zone.
   InvalidDuration,       // Duration is outside 1..kMaxTransientDurationMs.
+  // A range or event rule drives an led_solid action.
+  IncompatibleActionKind,
 };
 
 // The first error found, checking the version, then actions, rules and

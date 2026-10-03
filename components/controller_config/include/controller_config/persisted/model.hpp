@@ -154,15 +154,27 @@ struct LedTransientBinding {
   Integer priority{kDefaultPriority};
 };
 
-using OutputBinding = std::variant<LedEffectBinding, LedFillBinding, LedTransientBinding>;
+// Binds a state action to a solid local LED zone: Activate lights the whole
+// zone in `color`; Deactivate and fail-off clear it. Only state and sampled
+// state rules may drive the action. The zone direction does not affect drawing.
+struct LedSolidBinding {
+  std::string action{};
+  LedZone zone{};
+  Rgb color{};
+  Integer priority{kDefaultPriority};
+};
+
+using OutputBinding =
+    std::variant<LedEffectBinding, LedFillBinding, LedTransientBinding, LedSolidBinding>;
 
 // The persisted `type` of an output binding; the enumerator order is the
 // OutputBinding alternative order.
-enum class OutputType : std::uint8_t { LedEffect, LedFill, LedTransient };
+enum class OutputType : std::uint8_t { LedEffect, LedFill, LedTransient, LedSolid };
 
 static_assert(std::is_same_v<std::variant_alternative_t<0, OutputBinding>, LedEffectBinding>);
 static_assert(std::is_same_v<std::variant_alternative_t<1, OutputBinding>, LedFillBinding>);
 static_assert(std::is_same_v<std::variant_alternative_t<2, OutputBinding>, LedTransientBinding>);
+static_assert(std::is_same_v<std::variant_alternative_t<3, OutputBinding>, LedSolidBinding>);
 
 [[nodiscard]] constexpr OutputType type_of(const OutputBinding &binding) noexcept {
   return static_cast<OutputType>(binding.index());

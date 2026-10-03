@@ -62,6 +62,8 @@ ENUMS = {
         "LedFill": "led_fill",
         "led_transient": "led_transient",
         "LedTransient": "led_transient",
+        "led_solid": "led_solid",
+        "LedSolid": "led_solid",
     },
     "comparison": {
         "equal": "equal",
@@ -522,11 +524,31 @@ def _normalize_color(value: Any, path: str) -> dict[str, int]:
     return channels
 
 
-def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[str, Any], tuple[Any, ...]]:
+def _output_targets(output: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
+    """Return the physical targets an output occupies, mirroring the C++ validator.
+
+    Solid zones are bound as fills, so a solid shares the fill identity (direction
+    included) while solids compare among themselves by action and zone alone.
+    """
+    output_type = output["type"]
+    action = output["action"]
+    if output_type == "led_effect":
+        return ((output_type, action, output["effect"]),)
+    zone = output["zone"]
+    placement = (action, zone["start"], zone["length"])
+    fill_slot = ("fill_slot",) + placement + (zone["direction"],)
+    if output_type == "led_fill":
+        return (fill_slot,)
+    if output_type == "led_solid":
+        return ((output_type,) + placement, fill_slot)
+    return ((output_type,) + placement,)
+
+
+def _normalize_output(value: Any, path: str, actions: set[str], non_state_actions: set[str]) -> dict[str, Any]:
     output = _mapping(value, path)
     _fields(output, path, ("type", "action"), ("effect", "zone", "color", "priority", "duration_ms"))
     output_type = _enum(output["type"], _path(path, "type"), "type")
-    if output_type not in {"led_effect", "led_fill", "led_transient"}:
+    if output_type not in {"led_effect", "led_fill", "led_transient", "led_solid"}:
         raise CompileError(_path(path, "type"), f"unsupported output type '{output_type}'")
     action = _non_blank_string(output["action"], _path(path, "action"), "action reference")
     if action not in actions:
@@ -538,10 +560,7 @@ def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[st
     if output_type == "led_effect":
         _fields(output, path, ("type", "action", "effect"), ("priority",))
         effect = _enum(output["effect"], _path(path, "effect"), "effect")
-        return (
-            {"type": output_type, "action": action, "effect": effect, "priority": priority},
-            (output_type, action, effect),
-        )
+        return {"type": output_type, "action": action, "effect": effect, "priority": priority}
 
     required = ("type", "action", "zone", "color")
     if output_type == "led_transient":
@@ -553,11 +572,11 @@ def _normalize_output(value: Any, path: str, actions: set[str]) -> tuple[dict[st
     if output_type == "led_transient":
         duration_path = _path(path, "duration_ms")
         normalized["duration_ms"] = _normalize_duration(output["duration_ms"], duration_path)
-    return (
-        normalized,
-        (output_type, action, zone["start"], zone["length"])
-        + ((zone["direction"],) if output_type == "led_fill" else ()),
-    )
+    if output_type == "led_solid" and action in non_state_actions:
+        raise CompileError(
+            _path(path, "action"), "led_solid action must be driven by a state or sampled_state rule"
+        )
+    return normalized
 
 
 def normalize_document(document: Any) -> dict[str, Any]:
@@ -572,6 +591,7 @@ def normalize_document(document: Any) -> dict[str, Any]:
     signal_catalog = _load_signal_catalog()
     rules: list[dict[str, Any]] = []
     level_actions: set[str] = set()
+    non_state_actions: set[str] = set()
     for index, raw_rule in enumerate(_sequence(root.get("rules", []), "rules")):
         path = _index("rules", index)
         rule, is_level = _normalize_rule(raw_rule, path, action_names)
@@ -580,16 +600,19 @@ def normalize_document(document: Any) -> dict[str, Any]:
             raise CompileError(_path(path, "action"), "an action may have only one level rule")
         if is_level:
             level_actions.add(rule["action"])
+        if rule["type"] in {"range", "event"}:
+            non_state_actions.add(rule["action"])
         rules.append(rule)
 
     outputs: list[dict[str, Any]] = []
     output_targets: set[tuple[Any, ...]] = set()
     for index, raw_output in enumerate(_sequence(root.get("outputs", []), "outputs")):
         path = _index("outputs", index)
-        output, target = _normalize_output(raw_output, path, action_names)
-        if target in output_targets:
+        output = _normalize_output(raw_output, path, action_names, non_state_actions)
+        targets = _output_targets(output)
+        if any(target in output_targets for target in targets):
             raise CompileError(path, "output binding target must be unique")
-        output_targets.add(target)
+        output_targets.update(targets)
         outputs.append(output)
 
     return {"version": version, "actions": actions, "rules": rules, "outputs": outputs}

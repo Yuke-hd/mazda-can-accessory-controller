@@ -66,11 +66,15 @@ bind_output(const OutputBinding &output, const ControllerConfig &config,
         using Binding = std::decay_t<decltype(binding)>;
         if constexpr (std::is_same_v<Binding, LedEffectBinding>)
           return leds.bind(*id, binding.effect, priority(binding.priority));
-        else if constexpr (std::is_same_v<Binding, LedFillBinding>)
+        else if constexpr (std::is_same_v<Binding, LedFillBinding> ||
+                           std::is_same_v<Binding, LedSolidBinding>)
+          // A solid zone is a fill held only full (Activate) or empty
+          // (Deactivate and fail-off), so its direction never shows.
           return leds.bind(*id,
                            local_argb_actions::FillEffect{zone(binding.zone), color(binding.color),
                                                           priority(binding.priority)});
         else {
+          static_assert(std::is_same_v<Binding, LedTransientBinding>);
           // validate() precedes application: this checked persisted bound makes
           // conversion to unsigned microseconds lossless and non-overflowing.
           static_assert(static_cast<std::uint64_t>(kMaxTransientDurationMs) <=

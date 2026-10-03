@@ -13,6 +13,12 @@ constexpr const char *kTurnStateSignal = "vehicle.turn_state";
 constexpr const char *kEngineRpmSignal = "vehicle.engine_rpm";
 constexpr const char *kBrakePressedSignal = "vehicle.brake_pressed";
 
+// The legacy brake effect's region and colour. They mirror
+// local_argb::kBrakeLedStart, kBrakeLedCount and kBrightnessCeiling, which this
+// component cannot include; host tests pin the two in step.
+constexpr LedZone kBrakeRegion{35, 30, FillDirection::StartToEnd};
+constexpr Rgb kBrakeRed{16, 0, 0};
+
 StateRule turn_rule(const char *action, const char *choice) {
   return StateRule{action, Condition{kTurnStateSignal, Comparison::Equal, ChoiceOperand{choice}},
                    FreshnessRequirement::Fresh};
@@ -46,8 +52,8 @@ ControllerConfig production_lighting_config() {
       LedEffectBinding{"hazard", LedEffect::LeftTurn, 100},
       LedEffectBinding{"hazard", LedEffect::RightTurn, 100},
       LedFillBinding{"rpm_fill", LedZone{0, 100, FillDirection::CenterOut}, Rgb{0, 16, 32}, 50},
-      LedEffectBinding{"red_zone", LedEffect::Brake, 150},
-      LedEffectBinding{"brake", LedEffect::Brake, 200},
+      LedSolidBinding{"red_zone", kBrakeRegion, kBrakeRed, 150},
+      LedSolidBinding{"brake", kBrakeRegion, kBrakeRed, 200},
   };
   return config;
 }

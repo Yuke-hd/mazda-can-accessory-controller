@@ -91,11 +91,25 @@ outputs:
       green: 16
       blue: 32
     priority: 50
-  - type: led_effect
+  - type: led_solid
     action: red_zone
-    effect: brake
+    zone:
+      start: 35
+      length: 30
+      direction: start_to_end
+    color:
+      red: 16
+      green: 0
+      blue: 0
     priority: 150
-  - type: led_effect
+  - type: led_solid
     action: brake
-    effect: brake
+    zone:
+      start: 35
+      length: 30
+      direction: start_to_end
+    color:
+      red: 16
+      green: 0
+      blue: 0
     priority: 200
