@@ -575,3 +575,18 @@ else()
   target_compile_options(indicator_lamp_actions_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 doctest_discover_tests(indicator_lamp_actions_tests)
+
+# Reviewed speed level example (#152): canonical JSON applied through the
+# persisted configuration path; YAML parity is checked by the compiler tests.
+add_executable(speed_level_example_tests speed_level_example_tests.cpp)
+target_compile_definitions(speed_level_example_tests PRIVATE
+  CONTROLLER_CONFIG_SPEED_LEVEL_EXAMPLE_JSON_PATH="${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/speed-level-example.json")
+target_link_libraries(speed_level_example_tests PRIVATE controller_config
+  vehicle_signals_test_support doctest::doctest)
+target_compile_features(speed_level_example_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(speed_level_example_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(speed_level_example_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(speed_level_example_tests)

@@ -471,6 +471,33 @@ through the persisted loader and application path to cover left-only,
 right-only, both, off, unverified, NoData/Stale/Unavailable fail-off and
 independence from turn-state and turn-request signals.
 
+## Speed level example
+
+`examples/speed-level-example.yaml` and its canonical
+`examples/speed-level-example.json` declare a `speed_level` action driven by a
+`range` rule on `vehicle.speed_kph`. The action is available as a reviewed
+example but is **not enabled in the factory profile**: `config/default.yaml`
+and `production_lighting_config()` do not contain it, because no factory
+speed range has been agreed. The example input range of 0 to 120 km/h is an
+illustration only, not a vehicle maximum; the decoder's 655.35 km/h encoding
+ceiling is not a speed limit. A profile that adopts the action chooses its own
+input range through the ordinary `input` fields.
+
+The rule maps the input range onto the 0 to 1 level convention with the range
+rule's existing clamping, so speeds at or beyond the configured endpoints give
+exactly the output endpoints. It uses `fresh_or_unverified` explicitly because
+speed freshness is unverified; no telemetry freshness timeout is configured or
+invented. NoData, Stale and Unavailable readings fail the level off with
+`Deactivate`, as for every range rule. The example binds no LED or other
+output; the action engine has no speed-specific behaviour.
+
+`tests/tools/compile_controller_config_test.py` checks YAML and canonical
+JSON parity, and `controller_config_yaml_loader` loads the compiled bytes
+through the canonical C++ loader and Mazda catalog.
+`tests/host/speed_level_example_tests.cpp` applies the canonical JSON through
+the persisted configuration path and checks the endpoints, midpoint, clamping,
+unverified observations and NoData/Stale/Unavailable fail-off.
+
 ## Boot-time override storage
 
 The firmware exposes a configuration storage boundary with `load_override()`,
