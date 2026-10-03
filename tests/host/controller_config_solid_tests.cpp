@@ -408,6 +408,44 @@ TEST_CASE("factory brake via led_solid renders pixel-identical to the legacy bra
   CHECK(solid.pixels.frame == legacy.pixels.frame);
 }
 
+TEST_CASE("factory rpm fill red zone and brake via led_solid render pixel-identical to legacy") {
+  RenderedController solid{persisted::production_lighting_config()};
+  RenderedController legacy{legacy_brake_profile()};
+  const auto rpm = [](float value) {
+    return SignalReading{SignalValue::number(value), Availability::FreshnessUnverified,
+                         ValidationStatus::Reference};
+  };
+  const local_argb::Rgb brake_red{local_argb::kBrightnessCeiling, 0, 0};
+
+  for (const float engine_rpm : {3000.0F, 6200.0F, 6500.0F, 3000.0F}) {
+    for (const bool pressed : {false, true, false}) {
+      solid.sample_rpm(rpm(engine_rpm));
+      legacy.sample_rpm(rpm(engine_rpm));
+      solid.publish(kBrakePressed, pressed);
+      legacy.publish(kBrakePressed, pressed);
+      CAPTURE(engine_rpm);
+      CAPTURE(pressed);
+      CHECK(solid.pixels.frame == legacy.pixels.frame);
+      CHECK(region_is(solid.pixels.frame, local_argb::kBrakeLedStart, local_argb::kBrakeLedCount,
+                      brake_red) == (pressed || engine_rpm > 6000.0F));
+    }
+  }
+}
+
+TEST_CASE("factory led_solid zones mirror the legacy brake region and colour") {
+  for (const auto &output : persisted::production_lighting_config().outputs) {
+    const auto *solid = std::get_if<persisted::LedSolidBinding>(&output);
+    if (solid == nullptr)
+      continue;
+    CAPTURE(solid->action);
+    CHECK(solid->zone.start == local_argb::kBrakeLedStart);
+    CHECK(solid->zone.length == local_argb::kBrakeLedCount);
+    CHECK(solid->color.red == local_argb::kBrightnessCeiling);
+    CHECK(solid->color.green == 0);
+    CHECK(solid->color.blue == 0);
+  }
+}
+
 TEST_CASE("factory brake via led_solid keeps the onboard brake status pixel") {
   RenderedController controller{persisted::production_lighting_config()};
   CHECK(local_argb::internal::onboard_status_color(controller.pixels.frame) == local_argb::kBlack);

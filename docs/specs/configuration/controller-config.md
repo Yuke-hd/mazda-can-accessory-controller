@@ -174,10 +174,19 @@ outputs:
 
 The adapter installs a solid as a full-or-empty fill through `LedActionSink`,
 so it uses one of the 8 fill bindings and no new renderer layer. Overlapping
-solids and fills draw in priority order, highest on top. Solid targets compare
+solids and fills draw in priority order, highest on top; at equal priority the
+binding later in `outputs` draws on top. The legacy `brake` effect is a
+separate layer that drew over every fill at equal priority, so a migrated brake
+solid that must win a tie needs a higher priority than the fills it overlaps.
+Solid targets compare
 action, zone start, and length; direction is ignored between solids. A solid
 and a fill share the fill slot, so a solid and fill with the same action,
 start, length, and direction are duplicates.
+
+Solids and fills together may use at most 8 fill slots; the factory profile uses
+3. As with other runtime capacities, validation does not count slots: an
+override that exceeds them fails at apply, and the firmware then fails off to
+black with no factory fallback.
 
 ### Persisted names
 
