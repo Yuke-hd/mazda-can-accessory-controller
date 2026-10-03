@@ -532,3 +532,13 @@ else()
   target_compile_options(controller_config_actual_gear_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 doctest_discover_tests(controller_config_actual_gear_tests)
+
+# Reviewed door/liftgate open-action example (#149), outside the factory
+# profile. The compiler tests keep its YAML and canonical JSON in parity.
+add_executable(controller_config_door_actions_tests controller_config_door_actions_tests.cpp)
+target_compile_definitions(controller_config_door_actions_tests PRIVATE
+  CONTROLLER_CONFIG_DOOR_EXAMPLE_JSON_PATH="${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/door-liftgate-open-actions-v1.json")
+target_link_libraries(controller_config_door_actions_tests PRIVATE controller_config
+  vehicle_signals_test_support action_engine_test_support doctest::doctest)
+target_compile_features(controller_config_door_actions_tests PRIVATE cxx_std_17)
+doctest_discover_tests(controller_config_door_actions_tests)

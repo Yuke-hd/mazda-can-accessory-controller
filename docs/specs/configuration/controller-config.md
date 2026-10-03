@@ -578,3 +578,36 @@ can set `CONTROLLER_CONFIG_CJSON_SOURCE_DIR` to a source checkout containing
 catalog compatibility, runtime capacities and numeric action ID assignment
 remain the application step's responsibility, as specified by the persisted
 model. The loader does not apply a profile to firmware or perform driver work.
+
+## Door and liftgate open actions example
+
+`examples/door-liftgate-open-actions-v1.yaml` and its canonical
+`examples/door-liftgate-open-actions-v1.json` define five actions that are
+available but not factory-enabled. They are not part of `config/default.yaml`
+or `production_lighting_config()`, and enabling them in the factory profile is
+deferred by owner decision. Each action is a `state` rule that is active while
+its source signal equals `true`:
+
+| Action | Signal |
+| --- | --- |
+| `door_front_left_open` | `vehicle.door.front_left_rhd` |
+| `door_front_right_open` | `vehicle.door.front_right_rhd` |
+| `door_rear_left_open` | `vehicle.door.rear_left` |
+| `door_rear_right_open` | `vehicle.door.rear_right` |
+| `liftgate_open` | `vehicle.liftgate_open` |
+
+The front-door signal keys keep their right-hand-drive catalog names. The
+action names do not. No door or liftgate freshness timeout is defined, so every
+rule sets `freshness: fresh_or_unverified` explicitly. An unverified observation
+activates the action without being promoted to fresh. `NoData`, `Stale` and
+`Unavailable` observations fail that action off, and only a newer valid
+observation activates it again. The example declares no output bindings, so
+it drives no LED effect.
+
+`tests/tools/compile_controller_config_test.py` checks that the YAML compiles
+to the committed JSON. `tests/host/controller_config_yaml_tests.py` loads the
+compiled YAML through the C++ loader against the Mazda signal catalog.
+`tests/host/controller_config_door_actions_tests.cpp` applies the JSON through
+the persisted application path. It checks that each door and the liftgate
+control only their own action, that simultaneous opens are independent, that
+unverified observations activate, and that each action fails off and recovers.
