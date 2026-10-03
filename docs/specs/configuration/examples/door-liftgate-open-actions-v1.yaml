@@ -1,0 +1,54 @@
+# Reviewed example: door and liftgate open actions (#149).
+# Not part of the factory profile; factory enablement is deferred by owner
+# decision. The actions declare no LED outputs.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/door-liftgate-open-actions-v1.yaml \
+#     /tmp/door-liftgate-open-actions-v1.json
+version: 1
+
+actions:
+  - name: door_front_left_open
+  - name: door_front_right_open
+  - name: door_rear_left_open
+  - name: door_rear_right_open
+  - name: liftgate_open
+
+# No door or liftgate freshness timeout is invented: each rule opts in to
+# fresh_or_unverified, which accepts an unverified observation without
+# promoting it to fresh. NoData, stale, and unavailable observations fail off.
+rules:
+  - type: state
+    action: door_front_left_open
+    signal_key: vehicle.door.front_left_rhd
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: door_front_right_open
+    signal_key: vehicle.door.front_right_rhd
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: door_rear_left_open
+    signal_key: vehicle.door.rear_left
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: door_rear_right_open
+    signal_key: vehicle.door.rear_right
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: liftgate_open
+    signal_key: vehicle.liftgate_open
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified

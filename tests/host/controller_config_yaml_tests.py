@@ -49,6 +49,18 @@ def main() -> int:
             result, _ = self.run_compiler(PRODUCTION_YAML.read_text(encoding="utf-8"))
             self.assertEqual(result.returncode, 0, result.stderr)
 
+        def test_door_liftgate_example_loads_in_canonical_cpp_loader(self) -> None:
+            example = (
+                REPOSITORY
+                / "docs"
+                / "specs"
+                / "configuration"
+                / "examples"
+                / "door-liftgate-open-actions-v1.yaml"
+            )
+            result, _ = self.run_compiler(example.read_text(encoding="utf-8"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
         def test_manifest_matches_full_cpp_catalog_metadata(self) -> None:
             result = subprocess.run(
                 [str(args.loader), "--catalog"], capture_output=True, text=True, check=False
