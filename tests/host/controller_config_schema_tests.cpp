@@ -89,6 +89,15 @@ const T *find_by_action(const std::vector<Variant> &entries, std::string_view ac
   return nullptr;
 }
 
+// Pixels 35..64 in the brake effect's red after the 16-level brightness clamp.
+void check_brake_region_solid(const persisted::LedSolidBinding &binding) {
+  CHECK(binding.zone.start == 35);
+  CHECK(binding.zone.length == 30);
+  CHECK(binding.color.red == 16);
+  CHECK(binding.color.green == 0);
+  CHECK(binding.color.blue == 0);
+}
+
 // --- Production example --------------------------------------------------
 
 TEST_CASE("the production example is a valid version 1 configuration") {
@@ -193,9 +202,11 @@ TEST_CASE("the production example RPM outputs match the default lighting profile
   CHECK(fill_binding->color.blue == expected_fill.color.blue);
   CHECK(fill_binding->priority == expected_fill.priority.rank());
 
-  const auto *red_zone = find_by_action<persisted::LedEffectBinding>(config.outputs, "red_zone");
+  // The red zone is a solid over the legacy brake region in the clamped brake red.
+  const auto *red_zone = find_by_action<persisted::LedSolidBinding>(config.outputs, "red_zone");
   REQUIRE(red_zone != nullptr);
-  CHECK(red_zone->effect == profile.rpm_red_zone.effect);
+  CHECK(profile.rpm_red_zone.effect == LedEffect::Brake);
+  check_brake_region_solid(*red_zone);
   CHECK(red_zone->priority == profile.rpm_red_zone.priority.rank());
 }
 
@@ -217,11 +228,11 @@ TEST_CASE("the production example holds the brake action while the pedal is pres
 TEST_CASE("the production example binds the brake action above the RPM red zone") {
   const persisted::ControllerConfig config = persisted::production_lighting_config();
 
-  const auto *brake = find_by_action<persisted::LedEffectBinding>(config.outputs, "brake");
+  const auto *brake = find_by_action<persisted::LedSolidBinding>(config.outputs, "brake");
   REQUIRE(brake != nullptr);
-  CHECK(brake->effect == LedEffect::Brake);
+  check_brake_region_solid(*brake);
   CHECK(brake->priority == 200);
-  const auto *red_zone = find_by_action<persisted::LedEffectBinding>(config.outputs, "red_zone");
+  const auto *red_zone = find_by_action<persisted::LedSolidBinding>(config.outputs, "red_zone");
   REQUIRE(red_zone != nullptr);
   CHECK(red_zone->priority < brake->priority);
 }

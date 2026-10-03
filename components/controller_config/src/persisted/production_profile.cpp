@@ -46,8 +46,8 @@ ControllerConfig production_lighting_config() {
       LedEffectBinding{"hazard", LedEffect::LeftTurn, 100},
       LedEffectBinding{"hazard", LedEffect::RightTurn, 100},
       LedFillBinding{"rpm_fill", LedZone{0, 100, FillDirection::CenterOut}, Rgb{0, 16, 32}, 50},
-      LedEffectBinding{"red_zone", LedEffect::Brake, 150},
-      LedEffectBinding{"brake", LedEffect::Brake, 200},
+      LedSolidBinding{"red_zone", LedZone{35, 30, FillDirection::StartToEnd}, Rgb{16, 0, 0}, 150},
+      LedSolidBinding{"brake", LedZone{35, 30, FillDirection::StartToEnd}, Rgb{16, 0, 0}, 200},
   };
   return config;
 }

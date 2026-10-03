@@ -519,6 +519,14 @@ template <typename Binding>
     if (!parse_binding_body(object, path, binding, error))
       return false;
     output = std::move(binding);
+  } else if (kind == OutputType::LedSolid) {
+    if (!reject_unknown_fields(object, path, {"type", "action", "zone", "color", "priority"},
+                               error))
+      return false;
+    LedSolidBinding binding{};
+    if (!parse_binding_body(object, path, binding, error))
+      return false;
+    output = std::move(binding);
   } else {
     if (!reject_unknown_fields(
             object, path, {"type", "action", "zone", "color", "duration_ms", "priority"}, error))
@@ -616,6 +624,8 @@ template <typename Entry, typename Parser>
     return "output binding target must be unique";
   case ValidationError::InvalidDuration:
     return "transient duration_ms must be in 1.." + std::to_string(kMaxTransientDurationMs);
+  case ValidationError::IncompatibleActionKind:
+    return "led_solid action must be driven by a state or sampled_state rule";
   case ValidationError::None:
     return "configuration is valid";
   }
@@ -900,6 +910,8 @@ void append_output_binding(std::string &output, const persisted::OutputBinding &
         } else {
           if constexpr (std::is_same_v<Binding, persisted::LedTransientBinding>)
             output += "\"led_transient\",\"action\":";
+          else if constexpr (std::is_same_v<Binding, persisted::LedSolidBinding>)
+            output += "\"led_solid\",\"action\":";
           else
             output += "\"led_fill\",\"action\":";
           append_json_string(output, value.action);

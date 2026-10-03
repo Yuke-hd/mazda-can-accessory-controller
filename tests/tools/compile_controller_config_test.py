@@ -954,6 +954,124 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIn("outputs[1]", result.stderr)
         self.assertIsNone(output_path)
 
+    SOLID_RULES = {
+        "state": {
+            "type": "state",
+            "action": "action",
+            "signal_key": "vehicle.liftgate_open",
+            "comparison": "equal",
+            "operand": {"boolean": True},
+        },
+        "sampled_state": {
+            "type": "sampled_state",
+            "action": "action",
+            "signal_key": "vehicle.engine_rpm",
+            "comparison": "greater",
+            "operand": {"number": 6000},
+        },
+        "event": {
+            "type": "event",
+            "action": "action",
+            "signal_key": "vehicle.liftgate_open",
+            "comparison": "equal",
+            "operand": {"boolean": True},
+            "edge": "becomes_true",
+        },
+        "range": {
+            "type": "range",
+            "action": "action",
+            "signal_key": "vehicle.engine_rpm",
+            "input": {"from": 0, "to": 6500},
+            "output": {"from": 0, "to": 1},
+        },
+    }
+
+    def solid_output(self, **overrides: object) -> dict:
+        return {
+            "type": "led_solid",
+            "action": "action",
+            "zone": {"start": 35, "length": 30, "direction": "start_to_end"},
+            "color": {"red": 16, "green": 0, "blue": 0},
+            **overrides,
+        }
+
+    def solid_source(self, rule_type: str, *outputs: dict) -> str:
+        return json.dumps(
+            {
+                "version": 1,
+                "actions": [{"name": "action"}],
+                "rules": [self.SOLID_RULES[rule_type]],
+                "outputs": list(outputs) or [self.solid_output()],
+            }
+        )
+
+    def test_solid_output_compiles_for_state_rules_with_default_priority(self) -> None:
+        for rule_type in ("state", "sampled_state"):
+            with self.subTest(rule_type=rule_type):
+                result, canonical = self.run_compiler(
+                    self.solid_source(rule_type, self.solid_output(type="LedSolid"))
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    json.loads(canonical)["outputs"],
+                    [
+                        {
+                            "type": "led_solid",
+                            "action": "action",
+                            "zone": {"start": 35, "length": 30, "direction": "start_to_end"},
+                            "color": {"red": 16, "green": 0, "blue": 0},
+                            "priority": 100,
+                        }
+                    ],
+                )
+
+    def test_solid_output_rejects_range_and_event_actions(self) -> None:
+        for rule_type in ("range", "event"):
+            with self.subTest(rule_type=rule_type):
+                result, canonical = self.run_compiler(self.solid_source(rule_type))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("outputs[0].action", result.stderr)
+                self.assertIn("state or sampled_state", result.stderr)
+                self.assertIsNone(canonical)
+
+    def test_solid_output_rejects_unknown_and_missing_fields(self) -> None:
+        cases = (
+            ("outputs[0]", self.solid_output(duration_ms=500)),
+            ("outputs[0]", self.solid_output(effect="brake")),
+            ("outputs[0].zone", self.solid_output(zone={"start": 35, "length": 66, "direction": "start_to_end"})),
+            ("outputs[0].color.red", self.solid_output(color={"red": 256, "green": 0, "blue": 0})),
+        )
+        for path, output in cases:
+            with self.subTest(path=path, output=output):
+                result, canonical = self.run_compiler(self.solid_source("state", output))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn(path, result.stderr)
+                self.assertIsNone(canonical)
+        missing = self.solid_output()
+        del missing["color"]
+        result, canonical = self.run_compiler(self.solid_source("state", missing))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIsNone(canonical)
+
+    def test_solid_duplicate_targets_ignore_direction_but_share_the_fill_slot(self) -> None:
+        reversed_zone = {"start": 35, "length": 30, "direction": "end_to_start"}
+        fill = {**self.solid_output(), "type": "led_fill"}
+        cases = (
+            (False, (self.solid_output(), self.solid_output(zone={**reversed_zone, "start": 0}))),
+            (False, (self.solid_output(), {**fill, "zone": reversed_zone})),
+            (True, (self.solid_output(), self.solid_output(zone=reversed_zone, priority=1))),
+            (True, (self.solid_output(), fill)),
+            (True, (fill, self.solid_output())),
+        )
+        for duplicate, outputs in cases:
+            with self.subTest(outputs=outputs):
+                result, canonical = self.run_compiler(self.solid_source("state", *outputs))
+                self.assertEqual(result.returncode, 2 if duplicate else 0, result.stderr)
+                if duplicate:
+                    self.assertIn("outputs[1]", result.stderr)
+                    self.assertIn("output binding target must be unique", result.stderr)
+                    self.assertIsNone(canonical)
+
     def test_production_yaml_matches_canonical_json_example(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "controller-config.json"

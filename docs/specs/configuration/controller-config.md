@@ -154,6 +154,31 @@ explicit fail-off cancel active layers. Applying a configuration installs
 bindings through `LedActionSink`; it does not bypass trigger/fail-off behavior. No transient
 rule is added to the factory configuration.
 
+`led_solid` binds an action's on/off state to a solid zone of one colour. It
+takes the same `action`, `zone`, `color`, and `priority` fields as `led_fill`
+and no others. `zone.direction` is required for schema uniformity but does not
+change the drawing: `Activate` lights the whole zone, and `Deactivate` or
+fail-off clears it. Only an action driven by a `state` or `sampled_state` rule
+may be bound; an action driven by a `range` or `event` rule is rejected with
+`IncompatibleActionKind`, because `SetLevel` would draw a partial fill and
+`Trigger` has no hold time.
+
+```yaml
+outputs:
+  - type: led_solid
+    action: brake # Driven by a state or sampled_state rule.
+    zone: {start: 35, length: 30, direction: start_to_end}
+    color: {red: 16, green: 0, blue: 0}
+    priority: 200
+```
+
+The adapter installs a solid as a full-or-empty fill through `LedActionSink`,
+so it uses one of the 8 fill bindings and no new renderer layer. Overlapping
+solids and fills draw in priority order, highest on top. Solid targets compare
+action, zone start, and length; direction is ignored between solids. A solid
+and a fill share the fill slot, so a solid and fill with the same action,
+start, length, and direction are duplicates.
+
 ### Persisted names
 
 Names are snake_case and case-sensitive. `names.hpp` holds the single table
@@ -163,7 +188,7 @@ persisted.
 | Value | Names |
 | --- | --- |
 | rule `type` | `state`, `sampled_state`, `event`, `range` |
-| output `type` | `led_effect`, `led_fill`, `led_transient` |
+| output `type` | `led_effect`, `led_fill`, `led_transient`, `led_solid` |
 | `comparison` | `equal`, `not_equal`, `less`, `less_or_equal`, `greater`, `greater_or_equal` |
 | `freshness` | `fresh`, `fresh_or_unverified` |
 | `edge` | `becomes_true`, `becomes_false` |
@@ -205,8 +230,9 @@ same name and meaning.
 | `ZoneOutOfRange` | The zone does not fit the 100-pixel logical strip (`local_argb::kLedCount`), or has a negative start or length. |
 | `InvalidColor` | A colour channel is outside 0..255. |
 | `InvalidPriority` | A priority is outside 0..255. |
-| `DuplicateBinding` | The same binding kind and action already drive this effect or zone. Fill zones include start, length and direction; solid transient zones include only start and length. |
+| `DuplicateBinding` | The same binding kind and action already drive this effect or zone. Fill zones include start, length and direction; transient and solid zones include only start and length. A solid and a fill with the same action, start, length and direction share one fill slot and are also duplicates. |
 | `InvalidDuration` | Transient `duration_ms` is outside `1..5000`, derived from the renderer contract maximum. |
+| `IncompatibleActionKind` | A `led_solid` binding names an action driven by a `range` or `event` rule. |
 
 A validated configuration can still fail when the runtime applies it. These
 checks need the provider's signal catalog or the runtime's fixed capacities,
@@ -310,9 +336,15 @@ example in `examples/controller-config-v1.yaml` documents the same profile.
 It covers the mirrored turn signals, the hazard, the RPM level fill, the
 RPM red zone and the brake pedal. The `brake` action is a `state` rule on
 `vehicle.brake_pressed` equal to `true` with `fresh_or_unverified` freshness
-and no telemetry timeout; it is bound to the `brake` LED effect at priority
-200. The RPM red zone binds the same effect at priority 150, so the region is
-lit while either action is active and takes the higher active priority.
+and no telemetry timeout; it is bound to an `led_solid` output on pixels
+35..64 in `{16, 0, 0}` at priority 200. The RPM red zone binds an identical
+solid at priority 150, so the region is lit while either action is active and
+takes the higher active priority. `{16, 0, 0}` is the brake effect's red after
+the renderer's brightness clamp, so the factory frame is pixel-identical to the
+earlier `brake` LED effect binding. The `brake` effect name stays valid for
+`led_effect`, but the factory profile no longer uses it. The onboard status
+pixel still derives from the rendered frame: any lit pixel in 35..64 shows the
+brake status colour, whichever output lit it.
 `production_lighting_config()` builds the same document in C++ for host
 parity tests; firmware loads this YAML's generated JSON through the canonical
 persisted configuration loader.
@@ -445,9 +477,10 @@ outputs:
     zone: {start: 0, length: 100, direction: center_out}
     color: {red: 0, green: 16, blue: 32}
     priority: 50
-  - type: led_effect
+  - type: led_solid
     action: red_zone
-    effect: brake
+    zone: {start: 35, length: 30, direction: start_to_end}
+    color: {red: 16, green: 0, blue: 0}
     priority: 150
 ```
 

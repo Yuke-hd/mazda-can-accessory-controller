@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <variant>
@@ -187,6 +188,29 @@ SignalNotification brake(const bool pressed,
       false};
 }
 
+// The factory brake and RPM red zone are led_solid outputs on pixels 35..64.
+// Returns the winning priority of that region while it is lit.
+std::optional<std::uint8_t> red_region_rank(const LightingCommand &command) {
+  std::optional<std::uint8_t> rank{};
+  for (const auto &fill : command.fills) {
+    if (fill.zone.start == 35U && fill.zone.length == 30U &&
+        fill.level == local_argb::internal::FillFraction::full() &&
+        (!rank.has_value() || fill.priority.rank() > *rank))
+      rank = fill.priority.rank();
+  }
+  return rank;
+}
+
+bool red_region_lit(const LightingCommand &command) { return red_region_rank(command).has_value(); }
+
+const local_argb::internal::LightingFill *rpm_fill(const LightingCommand &command) {
+  for (const auto &fill : command.fills) {
+    if (fill.zone.start == 0U && fill.zone.length == 100U)
+      return &fill;
+  }
+  return nullptr;
+}
+
 void start_factory(Controller &controller) {
   REQUIRE(controller_config::persisted::apply_controller_config(loaded_factory_config(),
                                                                 controller.leds, controller.engine)
@@ -297,26 +321,27 @@ TEST_CASE("generated factory YAML keeps mirrored turn and RPM behavior with fail
   };
   sample_rpm(0.0F);
   CHECK(controller.lighting.commands.back().fills.empty());
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
   sample_rpm(3250.0F);
   REQUIRE(controller.lighting.commands.back().fills.size() == 1);
-  CHECK(controller.lighting.commands.back().fills.begin()->level ==
+  REQUIRE(rpm_fill(controller.lighting.commands.back()) != nullptr);
+  CHECK(rpm_fill(controller.lighting.commands.back())->level ==
         local_argb::internal::FillFraction::of(32768, 65536));
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
   sample_rpm(6000.0F);
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
   sample_rpm(6001.0F);
-  CHECK(controller.lighting.commands.back().brake);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
   sample_rpm(6500.0F);
-  REQUIRE(controller.lighting.commands.back().fills.size() == 1);
-  CHECK(controller.lighting.commands.back().fills.begin()->level ==
+  REQUIRE(rpm_fill(controller.lighting.commands.back()) != nullptr);
+  CHECK(rpm_fill(controller.lighting.commands.back())->level ==
         local_argb::internal::FillFraction::full());
-  CHECK(controller.lighting.commands.back().brake);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
 
   controller.provider.set_reading(kEngineRpm, SignalReading{});
   REQUIRE(controller.engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
   CHECK(controller.lighting.commands.back().fills.empty());
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
 
   controller.provider.stop();
   CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
@@ -327,18 +352,19 @@ TEST_CASE("generated factory YAML lights the brake region only while the pedal i
   start_factory(controller);
 
   REQUIRE(controller.provider.publish(brake(false)) == 1);
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
 
   REQUIRE(controller.provider.publish(brake(true)) == 1);
-  CHECK(controller.lighting.commands.back().brake);
-  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
+  CHECK(red_region_rank(controller.lighting.commands.back()) == 200);
+  CHECK_FALSE(controller.lighting.commands.back().brake);
 
   REQUIRE(controller.provider.publish(brake(false)) == 1);
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
 
   // The owner-approved opt-in accepts an unverified pressed observation.
   REQUIRE(controller.provider.publish(brake(true, Availability::FreshnessUnverified)) == 1);
-  CHECK(controller.lighting.commands.back().brake);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
 
   controller.provider.stop();
   CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
@@ -351,10 +377,10 @@ TEST_CASE("generated factory YAML fails the brake region off without a usable ob
     Controller controller{};
     start_factory(controller);
     REQUIRE(controller.provider.publish(brake(true)) == 1);
-    REQUIRE(controller.lighting.commands.back().brake);
+    REQUIRE(red_region_lit(controller.lighting.commands.back()));
 
     REQUIRE(controller.provider.publish(brake(true, availability)) == 1);
-    CHECK_FALSE(controller.lighting.commands.back().brake);
+    CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
 
     controller.provider.stop();
     CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);
@@ -372,24 +398,24 @@ TEST_CASE("generated factory YAML ranks the brake pedal above the RPM red zone")
   };
 
   sample_rpm(6500.0F);
-  CHECK(controller.lighting.commands.back().brake);
-  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 150);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
+  CHECK(red_region_rank(controller.lighting.commands.back()) == 150);
 
   REQUIRE(controller.provider.publish(brake(true)) == 1);
-  CHECK(controller.lighting.commands.back().brake);
-  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
+  CHECK(red_region_rank(controller.lighting.commands.back()) == 200);
 
   sample_rpm(3250.0F);
-  CHECK(controller.lighting.commands.back().brake);
-  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 200);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
+  CHECK(red_region_rank(controller.lighting.commands.back()) == 200);
 
   sample_rpm(6500.0F);
   REQUIRE(controller.provider.publish(brake(false)) == 1);
-  CHECK(controller.lighting.commands.back().brake);
-  CHECK(controller.lighting.commands.back().priorities.brake.rank() == 150);
+  CHECK(red_region_lit(controller.lighting.commands.back()));
+  CHECK(red_region_rank(controller.lighting.commands.back()) == 150);
 
   sample_rpm(3250.0F);
-  CHECK_FALSE(controller.lighting.commands.back().brake);
+  CHECK_FALSE(red_region_lit(controller.lighting.commands.back()));
 
   controller.provider.stop();
   CHECK(controller.engine.detach() == vehicle_signals::SignalStatus::Ok);

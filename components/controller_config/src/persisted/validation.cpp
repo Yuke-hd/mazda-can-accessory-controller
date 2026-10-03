@@ -220,8 +220,36 @@ template <typename Binding>
   return ValidationError::None;
 }
 
+[[nodiscard]] ValidationError body_error(const LedSolidBinding &binding) noexcept {
+  return zone_binding_error(binding);
+}
+
+// A solid zone is only on or off, so its action must come from state or
+// sampled state rules: a range level or an event pulse has no solid meaning.
+[[nodiscard]] bool drives_state_only(const std::vector<Rule> &rules,
+                                     const std::string_view action) noexcept {
+  for (const Rule &rule : rules) {
+    const RuleType type = type_of(rule);
+    if (action_of(rule) == action && (type == RuleType::Range || type == RuleType::Event))
+      return false;
+  }
+  return true;
+}
+
+template <typename Binding>
+[[nodiscard]] ValidationError action_kind_error(const std::vector<Rule> &,
+                                                const Binding &) noexcept {
+  return ValidationError::None;
+}
+
+[[nodiscard]] ValidationError action_kind_error(const std::vector<Rule> &rules,
+                                                const LedSolidBinding &binding) noexcept {
+  return drives_state_only(rules, binding.action) ? ValidationError::None
+                                                  : ValidationError::IncompatibleActionKind;
+}
+
 // As local_argb_actions: one binding per kind, action and effect or zone
-// (fill direction included). Solid transient direction does not change its
+// (fill direction included). Transient and solid direction does not change the
 // physical target. Appearance, priority and duration do not change a target.
 [[nodiscard]] bool same_target(const LedEffectBinding &left,
                                const LedEffectBinding &right) noexcept {
@@ -234,18 +262,38 @@ template <typename Binding>
          left.zone.length == right.zone.length;
 }
 
-template <typename Binding>
-[[nodiscard]] bool same_target(const Binding &left, const Binding &right) noexcept {
+[[nodiscard]] bool same_target(const LedSolidBinding &left, const LedSolidBinding &right) noexcept {
+  return left.action == right.action && left.zone.start == right.zone.start &&
+         left.zone.length == right.zone.length;
+}
+
+[[nodiscard]] bool same_target(const LedFillBinding &left, const LedFillBinding &right) noexcept {
   return left.action == right.action && left.zone.start == right.zone.start &&
          left.zone.length == right.zone.length && left.zone.direction == right.zone.direction;
+}
+
+// Solid zones are bound as fills, so the fill identity applies across both kinds.
+[[nodiscard]] bool same_target(const LedFillBinding &left, const LedSolidBinding &right) noexcept {
+  return left.action == right.action && left.zone.start == right.zone.start &&
+         left.zone.length == right.zone.length && left.zone.direction == right.zone.direction;
+}
+
+[[nodiscard]] bool same_target(const LedSolidBinding &left, const LedFillBinding &right) noexcept {
+  return same_target(right, left);
+}
+
+template <typename Left, typename Right>
+[[nodiscard]] bool same_target(const Left &, const Right &) noexcept {
+  return false;
 }
 
 template <typename Binding>
 [[nodiscard]] bool has_earlier_binding(const std::vector<OutputBinding> &outputs,
                                        const std::size_t index, const Binding &binding) noexcept {
   for (std::size_t earlier = 0; earlier < index; ++earlier) {
-    const auto *other = std::get_if<Binding>(&outputs[earlier]);
-    if (other != nullptr && same_target(*other, binding))
+    const bool duplicate = std::visit(
+        [&binding](const auto &other) { return same_target(other, binding); }, outputs[earlier]);
+    if (duplicate)
       return true;
   }
   return false;
@@ -258,6 +306,9 @@ template <typename Binding>
         if (!is_declared(config.actions, binding.action))
           return ValidationError::UndeclaredAction;
         if (const ValidationError error = body_error(binding); error != ValidationError::None)
+          return error;
+        if (const ValidationError error = action_kind_error(config.rules, binding);
+            error != ValidationError::None)
           return error;
         if (has_earlier_binding(config.outputs, index, binding))
           return ValidationError::DuplicateBinding;
