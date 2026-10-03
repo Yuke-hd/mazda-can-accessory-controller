@@ -58,12 +58,33 @@ central and GATT client.
 
 - The controller accepts **one connection at a time**. While a central is
   connected, the controller does not advertise.
+- A link that is not encrypted within **30 s** of connecting is disconnected
+  by the controller, and advertising resumes. This bounds how long an
+  unbonded central can hold the only connection slot. 30 s also covers a
+  pairing in progress inside the pairing window, because the SMP procedure
+  has its own 30 s timeout.
 - All multi-byte integers are little-endian. Strings are UTF-8 without a
   terminator and are prefixed by a one-byte length.
 - The controller exposes the Generic Attribute service (`0x1801`) with the
   Service Changed characteristic. A firmware update that changes the attribute
   table must indicate Service Changed to each bonded client on its next
   connection, because iOS caches the attribute table of bonded peripherals.
+
+### Startup and NVS dependency
+
+The BLE stack starts only after the board safe defaults and startup black
+(`local_argb::start()`) are complete, and only after NVS initialization has
+been attempted. The config component currently owns the global
+`nvs_flash_init()` call; BLE must reuse that initialization through a shared
+NVS owner and must never initialize, erase or repair the partition itself (see
+[boot-time override storage](../configuration/controller-config.md#boot-time-override-storage)).
+
+If NVS initialization failed during this boot:
+
+- the controller can store no bonds, so it rejects every new pairing and
+  allows no encrypted link;
+- consequently no protected characteristic or command is reachable during that
+  boot. Device info remains readable.
 
 ## Advertising
 
@@ -110,17 +131,37 @@ information.
 
 The controller accepts a **new** pairing only while the pairing window is open.
 
-- The window opens for **120 s** when the BLE stack becomes ready after
-  power-up, and for 120 s after a debounced press of the user key (GPIO0; see
-  the [hardware record](../../architecture/hardware/weact-can485-v1.1.md)). A
-  press while the window is open restarts the 120 s period.
+- The window opens for **120 s** when the BLE stack becomes ready after a
+  **power-on reset** (`ESP_RST_POWERON`), and for 120 s after a debounced press
+  of the user key (GPIO0; see the
+  [hardware record](../../architecture/hardware/weact-can485-v1.1.md)). A press
+  while the window is open restarts the 120 s period.
+- Any other reset does not open the window. This includes the controlled
+  restarts this protocol triggers (revert to factory and config commit), a
+  software restart, a panic, a watchdog reset and a brownout reset. A
+  remotely triggered restart or crash therefore never opens the window.
 - The window closes when the period expires or after one new bond is stored.
-- Outside the window, the controller rejects a pairing request from a central
-  it has no bond for with SMP reason `Pairing Not Supported` (`0x05`).
-- A bonded central can re-encrypt with its stored keys at any time.
+- Outside the window, the controller rejects **every** pairing request with
+  SMP reason `Pairing Not Supported` (`0x05`). This includes a repeated
+  pairing from a central it already has a bond for; NimBLE reports that case
+  as `BLE_GAP_EVENT_REPEAT_PAIRING`, and outside the window the controller
+  keeps the existing bond and rejects the new pairing.
+- A bonded central can re-encrypt with its stored long-term key at any time.
+  Re-encryption is not pairing and needs no window.
 - A central that already has a bond but lost its keys (for example after
-  "Forget This Device" in iOS) must pair again inside a window. The new bond
-  replaces the old bond for that identity.
+  "Forget This Device" in iOS) must pair again inside a window. Inside the
+  window, the new bond replaces the old bond for that identity.
+
+#### Enforcement fallback
+
+Rejecting a pairing request before key exchange depends on the BLE host
+offering a hook for it. Where it does not, the controller enforces the same
+outcome after pairing completes. If pairing completed outside the window,
+without bonding, or without the bond being stored (for example because NVS is
+full), the controller deletes any keys from that pairing and disconnects. A
+link is never treated as encrypted and bonded for access control until its bond
+is stored. The SMP reason above is the preferred behaviour; the app must not
+depend on receiving it.
 
 GPIO0 is also an ESP32 boot strapping pin. Holding the key during reset enters
 the ROM serial bootloader instead of the application, so the firmware sees only
@@ -197,9 +238,11 @@ belongs to the Generic Attribute service.
   because Just Works keys are unauthenticated. Requiring authentication would
   reject every bond this profile creates.
 - On an unencrypted link, a protected access fails with ATT error
-  `Insufficient Encryption` (`0x0F`) or `Insufficient Authentication` (`0x05`).
-  iOS starts pairing when it receives one of these errors; outside the pairing
-  window that pairing is rejected and the access keeps failing.
+  `Insufficient Authentication` (`0x05`) when the controller has no bond for
+  the central, and `Insufficient Encryption` (`0x0F`) when it has one, so the
+  central re-encrypts with its stored key. The app must handle both. iOS starts
+  pairing or re-encryption when it receives one of these errors; outside the
+  pairing window a new pairing is rejected and the access keeps failing.
 
 ### Application error codes
 
@@ -236,7 +279,11 @@ which CoreBluetooth does automatically.
 | 5 | 1 | `flags` (u8) | Bit 0: pairing window open. Other bits are zero. |
 | 6 | 2 | `max_config_bytes` (u16) | `4096` |
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |
-| 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 32 bytes. |
+| 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 31 bytes. |
+
+Both strings are at most 31 bytes, matching the 32-byte, NUL-terminated
+`esp_app_desc_t` version field. The version 1 value is therefore at most 72
+bytes.
 
 - `protocol_major` and `protocol_minor` stay at offsets 0 and 1 in every
   protocol version.
@@ -248,6 +295,9 @@ which CoreBluetooth does automatically.
 - `firmware_version` is the ESP-IDF application version string. It is
   informational; the app must not parse it for compatibility.
 - `hardware_id` identifies the board record. It is informational.
+- `flags` bit 0 is readable before pairing, so any central in range can learn
+  whether the window is open. This is accepted: the window relies on the
+  owner's physical presence, not on secrecy. The advertisement still omits it.
 
 A later minor version may append fields and define more flag bits. The app
 ignores bytes after the fields it knows and ignores unknown flag bits.
@@ -261,19 +311,32 @@ The Command characteristic accepts a two-byte write:
 | 0 | 1 | `opcode` (u8) |
 | 1 | 1 | `check` (u8): `opcode XOR 0xFF` |
 
-The check byte guards against an accidental single-byte write. A write of any
-other length fails with `Invalid Attribute Value Length`. A wrong check byte
-fails with `InvalidPdu`, and an unknown opcode fails with
-`UnsupportedOperation`. While a config transfer, commit or restart is in
-progress, every command fails with `Busy`.
+The check byte guards against an accidental single-byte write. The controller
+checks a write in this order and returns the first failure:
 
-A successful write response means the controller accepted the command and will
-perform the action described below.
+1. Any length other than 2 fails with `Invalid Attribute Value Length`.
+2. A wrong check byte fails with `InvalidPdu`.
+3. An unknown opcode fails with `UnsupportedOperation`.
+4. While a config transfer, commit or restart is in progress, the command
+   fails with `Busy`.
+
+A successful write response means the controller accepted and performed the
+command's storage change, and will perform the follow-up action described
+below.
 
 | Opcode | Name | Behaviour |
 | --- | --- | --- |
 | `0x01` | Revert to factory | Clears the persisted config override, then restarts. |
 | `0x02` | Clear bonds | Deletes every stored bond, then disconnects. |
+
+### Disconnect and restart sequence
+
+A GATT server cannot observe that the central received a write response. When
+a command ends in a disconnect or restart, the controller sends the write
+response, then terminates the connection, waiting at most **1 s** for the
+disconnection to complete, and then performs the follow-up action. The app
+treats a disconnect without a write response as an **unknown outcome**: it
+reconnects and re-reads state instead of assuming success or failure.
 
 ### Revert to factory
 
@@ -283,9 +346,11 @@ perform the action described below.
    restart, and the active config is unchanged. The clear operation attempts to
    restore the previous active marker, but the persisted selection after a
    failed clear is not guaranteed.
-3. On success the controller sends the write response, then performs a
-   controlled restart once the response has been sent. The restart follows the
-   normal boot path: startup black, then the embedded factory config.
+3. On success the controller sends the write response, disconnects and
+   performs a controlled restart, as described in the
+   [disconnect and restart sequence](#disconnect-and-restart-sequence). The
+   restart follows the normal boot path: startup black, then the embedded
+   factory config. It does not open the pairing window.
 
 Clearing deactivates the override but does not erase the stored slots; see
 [boot-time override storage](../configuration/controller-config.md#boot-time-override-storage).
@@ -295,7 +360,9 @@ Clearing deactivates the override but does not erase the stored slots; see
 1. The controller deletes every stored bond, including the bond of the
    connected central.
 2. On failure the write fails with `StorageFailure`, and some bonds may remain.
-3. On success the controller sends the write response and then disconnects.
+3. On success the controller sends the write response and then disconnects,
+   as described in the
+   [disconnect and restart sequence](#disconnect-and-restart-sequence).
    The app must also remove the controller from its own records. On iOS the
    user removes the pairing in Settings, because an app cannot delete a system
    bond.
@@ -330,6 +397,10 @@ The app must enforce this compatibility rule:
    version only as opaque JSON.
 5. The app decodes live signals only for a `live_signal_layout_version` it
    supports. Otherwise it does not subscribe.
+
+A later minor version may append a lowest accepted schema version to device
+info if the firmware gains schema migrations. Version 1 accepts exactly one
+schema version.
 
 The firmware enforces its side independently: it rejects unknown opcodes and
 malformed PDUs, and `validate()` rejects a config whose `version` is not
