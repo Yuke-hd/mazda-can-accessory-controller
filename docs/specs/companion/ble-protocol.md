@@ -7,12 +7,13 @@ and characteristic table, the device info and command payloads, versioning and
 ATT MTU assumptions.
 
 The config transfer protocol and the live-signal frame are specified in their
-own companion documents, which are added under the same issue:
+own companion documents:
 
-- `config-transfer.md`: the Config and Config status payloads, chunked transfer,
-  commit, read-back, size limits and failure behaviour.
+- [`config-transfer.md`](config-transfer.md): the Config and Config status
+  payloads, chunked transfer, commit, read-back, size limits and failure
+  behaviour.
 - `live-signals.md`: the Live signals frame layout, availability encoding and
-  rate cap.
+  rate cap. It is added under the same issue.
 
 This is a specification only. No firmware or app implementation exists yet, and
 nothing here has been validated on hardware, on a phone, or in a vehicle.
@@ -293,8 +294,8 @@ are reserved for later characteristics.
 | Characteristic | Properties | Security | Payload |
 | --- | --- | --- | --- |
 | Device info | Read | None (readable before pairing) | [Device info](#device-info) |
-| Config | Read, Write | Encrypted, bonded | `config-transfer.md` |
-| Config status | Read, Notify | Encrypted, bonded | `config-transfer.md` |
+| Config | Read, Write | Encrypted, bonded | [Config transfer](config-transfer.md#config-characteristic) |
+| Config status | Read, Notify | Encrypted, bonded | [Config transfer](config-transfer.md#config-status-characteristic) |
 | Live signals | Notify | Encrypted, bonded | `live-signals.md` |
 | Command | Write | Encrypted, bonded | [Command](#command) |
 
@@ -340,8 +341,10 @@ application error range:
 | `0x84` | `StorageFailure` | Persistent storage could not be updated. The operation's section states the resulting state. |
 | `0x85` | `MtuTooSmall` | The negotiated ATT MTU is below the minimum the operation needs. |
 
-Codes `0x86`–`0x9F` are reserved for later protocol versions and the
-companion documents. The app treats an unknown application error code as a
+Codes `0x86`–`0x8B` are defined in
+[config transfer](config-transfer.md#application-error-codes). Codes
+`0x8C`–`0x9F` are reserved for later protocol versions and the companion
+documents. The app treats an unknown application error code as a
 generic failure of that operation.
 
 ## Device info
@@ -371,8 +374,8 @@ protocol constant with the same cap. The version 1 value is therefore at most
 - `config_schema_version` is the persisted config schema version the firmware
   accepts; see [versioning](../configuration/controller-config.md#versioning).
 - `max_config_bytes` is the largest config the controller accepts over BLE.
-  `config-transfer.md` specifies how it applies. Version 1 firmware reports the
-  4 KiB canonical-JSON storage limit.
+  [Config transfer](config-transfer.md#size-limits) specifies how it
+  applies. Version 1 firmware reports the 4 KiB canonical-JSON storage limit.
 - `firmware_version` is the ESP-IDF application version string. It is
   informational; the app must not parse it for compatibility.
 - `hardware_id` identifies the board record. It is informational.
@@ -505,7 +508,7 @@ malformed PDUs, and `validate()` rejects a config whose `version` is not
   **64**. Below that, the controller rejects a config transfer with
   `MtuTooSmall` and sends no live-signal notifications.
 - A notification never exceeds `MTU - 3` bytes. The protocol never splits one
-  PDU across notifications, except where `config-transfer.md` defines chunking.
+  PDU across notifications.
 
 ## Out of scope
 
