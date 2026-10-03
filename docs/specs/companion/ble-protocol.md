@@ -58,13 +58,24 @@ central and GATT client.
 
 - The controller accepts **one connection at a time**. While a central is
   connected, the controller does not advertise.
-- The controller disconnects a link that is still not encrypted **30 s** after
-  the later of the connection and the most recent Security Manager Protocol
-  (SMP) PDU on that link, and advertising resumes. This bounds how long an
-  unbonded central can hold the only connection slot. Measuring from the last
-  SMP PDU keeps a pairing in progress alive while the user answers the iOS
-  pairing alert; the SMP procedure's own 30 s timeout bounds each step of that
-  pairing.
+- The controller bounds how long a link that is not yet encrypted with an
+  accepted, stored bond can hold the only connection slot. It disconnects such
+  a link, and advertising resumes, at whichever deadline comes first:
+  - **30 s** after the latest of the connection, the first protected-attribute
+    rejection on the link, and the most recent Security Manager Protocol (SMP)
+    PDU **received** as part of a pairing the controller accepted inside the
+    pairing window. The controller's own SMP PDUs (for example a Security
+    Request or Pairing Failed) and PDUs of a rejected pairing do not restart
+    this period.
+  - **90 s** after the connection, regardless of SMP activity. Nothing extends
+    this absolute cap.
+
+  Restarting the period on accepted pairing PDUs keeps a pairing in progress
+  alive while the user answers the iOS pairing alert, and restarting it on the
+  first protected-attribute rejection covers the alert that iOS may show before
+  it sends its first SMP PDU. The SMP procedure's own 30 s timeout bounds each
+  step of the pairing. Whether these values suit the iOS pairing flow must be
+  checked in a bench trace under issue #164.
 - When a connected central's identity resolves to a stored bond, the
   controller sends a Security Request, so a bonded central re-encrypts
   promptly instead of waiting until it touches a protected attribute.
@@ -86,8 +97,8 @@ NVS owner and must never initialize, erase or repair the partition itself (see
 
 If NVS initialization failed during this boot:
 
-- the controller can store no bonds, so it rejects every new pairing and
-  allows no encrypted link;
+- the controller can store no bonds, so it rejects every new pairing, and no
+  link can have the accepted, stored bond that protected access requires;
 - the pairing window does not open, and device info `flags` bit 0 stays `0`,
   so the app does not ask the user to pair when pairing cannot succeed;
 - consequently no protected characteristic or command is reachable during that
@@ -154,8 +165,8 @@ The controller accepts a **new** pairing only while the pairing window is open.
   of the user key (GPIO0; see the
   [hardware record](../../architecture/hardware/weact-can485-v1.1.md)). A press
   while the window is open restarts the 120 s period. On the ESP32, a reset
-  through the EN pin (the RST button, or the USB serial bridge's auto-reset)
-  also reports `ESP_RST_POWERON` and opens the window. This fits the
+  through the EN pin (the RST button, or a USB serial auto-reset circuit if one
+  is fitted) also reports `ESP_RST_POWERON` and opens the window. This fits the
   physical-presence model, because both need access to the board or its USB
   port.
 - Any other reset does not open the window. This includes the controlled
@@ -170,13 +181,18 @@ The controller accepts a **new** pairing only while the pairing window is open.
   new pairing. On NimBLE that case raises `BLE_GAP_EVENT_REPEAT_PAIRING`, and
   returning `BLE_GAP_REPEAT_PAIRING_IGNORE` drops the request without an SMP
   response, so the central fails at its own SMP timeout.
-- A pairing that is rejected, ignored or fails never modifies, evicts or
-  deletes an existing bond.
+- A pairing attempted outside the window, whether rejected, ignored or failed,
+  never modifies, evicts or deletes an existing bond.
 - A bonded central can re-encrypt with its stored long-term key at any time.
   Re-encryption is not pairing and needs no window.
 - A central that already has a bond but lost its keys (for example after
   "Forget This Device" in iOS) must pair again inside a window. Inside the
-  window, the new bond replaces the old bond for that identity.
+  window, a repeated pairing deletes the old bond for that identity **before**
+  key exchange, and the new bond replaces it. If the new pairing then fails or
+  times out, the old bond stays deleted and the central must pair again while
+  the window is still open. On NimBLE this is the
+  `BLE_GAP_EVENT_REPEAT_PAIRING` handler deleting the old bond and returning
+  `BLE_GAP_REPEAT_PAIRING_RETRY`.
 
 #### Enforcement fallback
 
@@ -187,6 +203,12 @@ without LE Secure Connections, without bonding, or without the bond being
 stored (for example because NVS is full), the controller deletes any keys from
 that pairing and disconnects. The SMP reason above is the preferred behaviour;
 the app must not depend on receiving it.
+
+Because the fallback may write keys to NVS and then delete them, the
+controller disconnects a link after its first rejected pairing, so one
+connection cannot drive repeated NVS writes. A nearby device that reconnects
+and retries still causes writes; the unencrypted-link deadlines above bound
+how often that can happen.
 
 The fallback alone does not protect existing bonds, because a host may make
 room for a new bond before key exchange. NimBLE, for example, checks bond
@@ -201,7 +223,10 @@ and the pairing was accepted. A host's stock encryption permission check grants
 access as soon as a link is encrypted, so ATT requests queued just after
 encryption could be served before a rejected link is terminated. The access
 handlers of protected attributes must therefore check the link's accepted bond
-themselves, not only the stock encryption flag.
+themselves, not only the stock encryption flag. When the link is encrypted but
+has no accepted, stored bond, the access fails with ATT error
+`Insufficient Authentication` (`0x05`) and the controller disconnects the link
+immediately.
 
 GPIO0 is also an ESP32 boot strapping pin. Holding the key during reset enters
 the ROM serial bootloader instead of the application, so the firmware sees only
@@ -271,10 +296,10 @@ belongs to the Generic Attribute service.
   compatibility before it pairs. It contains no vehicle data and no config
   state.
 - Every other read, write and Client Characteristic Configuration Descriptor
-  (CCCD) write requires an **encrypted link**. The controller requires the
-  bonding flag for every pairing, so an encrypted link always uses a stored
-  bond. Encryption is required even for reads and notifications, because live
-  signals include door lock state, speed and gear.
+  (CCCD) write requires an **encrypted link with an accepted, stored bond**
+  (see [enforcement fallback](#enforcement-fallback)). Encryption is required
+  even for reads and notifications, because live signals include door lock
+  state, speed and gear.
 - The controller requires encryption but **not an authenticated (MITM) key**,
   because Just Works keys are unauthenticated. Requiring authentication would
   reject every bond this profile creates.
