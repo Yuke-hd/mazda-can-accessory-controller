@@ -31,7 +31,10 @@ These apply in addition to the
    or CAN.
 4. **Config transfer never blocks vehicle work.** Transfer and commit run on
    the BLE host context. They must not run on, or wait for, the CAN
-   acquisition, telemetry or lighting tasks.
+   acquisition, telemetry or lighting tasks. The NVS write of a commit still
+   suspends the flash cache briefly, so CAN reception can drop frames during
+   it unless the TWAI interrupt runs from IRAM; dropped observations age out
+   and fail off as usual, and a successful commit restarts anyway.
 
 ## Document encoding
 
@@ -61,10 +64,11 @@ Canonicalization can expand a document, so an upload within
 `max_config_bytes` can still be rejected at commit with an `InputTooLarge`
 diagnostic.
 
-Only the factory config can produce a read-back larger than
-`max_config_bytes`, because the embedded factory document is not bound by the
-override limit. The version 1 factory profile compiles to about 1.8 KiB. A
-read-back that exceeds `max_config_bytes` cannot be written back unchanged.
+A read-back can be larger than `max_config_bytes` in two cases: the embedded
+factory document is not bound by the override limit, and an override stored
+before the 4 KiB limit can still load within the retained 16 KiB read bound.
+The version 1 factory profile compiles to about 1.8 KiB. A read-back that
+exceeds `max_config_bytes` cannot be written back unchanged.
 
 The receive buffer is statically allocated at `max_config_bytes`. The
 controller holds at most one transfer at a time, across all connections.
@@ -89,7 +93,10 @@ Every write starts with a one-byte opcode.
 
 A chunk carries at most `MTU - 6` data bytes: the ATT Write Request header
 takes 3 bytes and the chunk header 3 more. At the minimum MTU of 64 that is
-58 bytes, and at the preferred MTU of 247 it is 241 bytes.
+58 bytes, and at the preferred MTU of 247 it is 241 bytes. Each PDU is one ATT
+Write Request; a Prepare/Execute long write fails the length check. On iOS,
+`maximumWriteValueLength(for: .withoutResponse)` gives `MTU - 3`, while the
+`.withResponse` value is 512 and must not be used to size chunks.
 
 The controller checks every write in this order and returns the first
 failure:
@@ -122,18 +129,19 @@ provide that.
 | --- | --- |
 | Idle | No transfer is held. |
 | Receiving | A transfer is open and its buffer holds `received_length` bytes. |
-| RestartPending | A commit succeeded. The controller is disconnecting and restarting. |
+| RestartPending | A commit succeeded, or a Revert to factory command was accepted. The controller is disconnecting and restarting. |
 
 The controller discards an open transfer, and returns to Idle, when:
 
 - no Start or accepted Chunk arrives for **10 s** (result `TimedOut`);
 - the connection ends (result `Interrupted`);
 - the app aborts it (result `Aborted`);
-- a commit fails for any reason other than `Incomplete`.
+- a commit fails at step 3 or later of the [commit checks](#commit).
 
-The idle timeout restarts on Start and on each accepted chunk. Rejected chunks
-do not restart it. A 4 KiB upload at the minimum MTU takes 71 chunks, which
-completes well within this timeout at normal connection intervals.
+The idle timeout restarts on Start and on each accepted chunk, so it bounds
+the gap between chunks, not the total upload time. Rejected chunks do not
+restart it. The timer runs on the BLE host context, so it cannot fire while a
+commit is running.
 
 ### Start
 
@@ -177,10 +185,21 @@ finished. The steps run in this order; the first failure ends the commit.
 | 6. `save_override()` returns `Saved`. | `InvalidCandidate`. | `ConfigRejected` | `ConfigRejected` | Discarded |
 | | `Failed`. | `StorageFailure` | `StorageFailed` | Discarded |
 
-A rejected commit leaves the active config unchanged and does not restart. A
-storage failure follows the
-[override storage contract](../configuration/controller-config.md#boot-time-override-storage):
-a failed backend write does not replace the active override.
+A rejected commit leaves the running config unchanged, does not restart and
+writes nothing to storage.
+
+`StorageFailed` also leaves the running config unchanged and does not
+restart, but the persisted selection at the next boot is not guaranteed. The
+NVS backend commits the new active marker before its final read-back check,
+and restoring the previous marker after a failed check can itself fail. The
+next boot then loads either the new override or, if its slot fails
+verification, the factory config, as the
+[override storage contract](../configuration/controller-config.md#boot-time-override-storage)
+specifies; a slot that fails verification is never applied. After a
+`StorageFailed`, the app verifies the outcome after the next restart with
+`active_source` and `active_crc32`. `save_override()` also returns `Failed`
+when the canonical form does not parse again; that is a controller defect,
+reported as `StorageFailed` without diagnostic fields.
 
 When every step succeeds, the controller:
 
@@ -210,6 +229,17 @@ and types as the boot path. The scratch engine only reads the provider's
 catalog during setup. It is never attached, so no rule subscribes, samples or
 fires, and the scratch sink never publishes.
 
+The dry run needs the Mazda provider, the action engine and the renderer sink,
+which only the firmware composition root knows (see
+[firmware composition](../../architecture/firmware-composition.md)). The
+composition root therefore injects the check into the BLE component, for
+example as a callback that takes the parsed model and returns the
+`ApplyStatus`, so the BLE component does not depend on those types.
+`ActionEngine` has no reset, so each commit builds fresh scratch objects. They
+live in heap or static storage, not on the BLE host stack, and the
+implementation sizes the host task stack for the parse, serialization and
+apply that run in the write handler.
+
 The dry run does not cover checks that happen only at attach, such as the
 provider's subscriber slots. An override that passes the dry run can therefore
 still fail at boot; [BLE recovery](#ble-recovery) covers that case.
@@ -218,7 +248,8 @@ still fail at boot; [BLE recovery](#ble-recovery) covers that case.
 
 Abort discards an open transfer and sets result `Aborted`. With no open
 transfer it succeeds and changes nothing, so the app may send it before every
-upload to clear a transfer left from an earlier attempt.
+upload, for example to clear an attempt it abandoned earlier on the same
+connection. A disconnect already discards any open transfer.
 
 ### Read-back
 
@@ -249,6 +280,9 @@ page value, not within the document.
   `offset` equal to `total_length` returns a page with no data. The page
   offset is 0 at the start of each connection.
 - Read-back works in every transfer state and at the default MTU.
+- The app checks that every page repeats the first page's `source`,
+  `total_length` and `crc32`, and that the reassembled document matches
+  `crc32`. On a mismatch it reads the document again from offset 0.
 
 Serializing a stored canonical document again must reproduce it byte for
 byte, so after a restart the active `crc32` equals the `saved_crc32` reported
@@ -294,8 +328,16 @@ Fields that do not apply to the current result are zero.
 | 35 | n | `path`: the `ConfigRejected` diagnostic path, at most 26 bytes |
 
 - The diagnostic fields come from the `ConfigDiagnostic` of the parse or of
-  `save_override()`. The apply fields come from `ApplyStatus`. The boot fields
-  come from `BootConfigurationResult::override_diagnostic`.
+  `save_override()`. The boot fields come from
+  `BootConfigurationResult::override_diagnostic`.
+- The apply fields come from `ApplyStatus`: `apply_stage` from `stage`,
+  `apply_validation` from `validation.error`, `apply_index` from `index`,
+  `apply_binding` from `binding` and `apply_engine` from `engine`.
+  `ApplyStatus` sets `validation.section` only for stage `Validation`, so
+  `apply_section` is derived from the stage instead: `ActionId` gives Actions,
+  `OutputBinding` gives Outputs, `Rule` gives Rules, `Validation` uses
+  `validation.section`, and any other stage gives Document. `apply_index` is
+  the entry's position in that section.
 - Indexes saturate at `0xFFFF`.
 - `path` uses the loader's path format, for example `outputs[3].zone.length`
   or `$`. A longer path keeps its first bytes, cut at a UTF-8 character
@@ -323,7 +365,7 @@ Fields that do not apply to the current result are zero.
 
 | Bit | Meaning |
 | ---: | --- |
-| 0 | A persisted override was present but invalid, and the factory config was selected. `boot_diag_*` give the reason. |
+| 0 | A persisted override was present but invalid, and the controller fell back to the factory config. `boot_diag_*` give the reason. If the factory config also failed, `active_source` is `0xFF`; the factory diagnostic is not reported. |
 | 1 | Reading the persisted override failed, and the factory config was selected. |
 | 2 | No config store is available during this boot, so Start fails with `StorageFailure`. |
 | 3 | Lighting setup failed. The LEDs are failed off and CAN acquisition was not started. |
@@ -420,7 +462,8 @@ The app uploads a config like this:
 1. Read device info and check versions as the core profile requires. Check
    that the document's `version` equals `config_schema_version` and that its
    length is at most `max_config_bytes`.
-2. Subscribe to Config status, then send Abort to clear any stale transfer.
+2. Subscribe to Config status, then send Abort to clear any transfer this
+   connection left open.
 3. Send Start with the length and CRC.
 4. Send chunks in order. Each chunk's offset is the sum of the data already
    accepted. After an `OffsetMismatch`, read `received_length` from Config
@@ -434,8 +477,11 @@ The app uploads a config like this:
 If the connection drops after Commit without a write response, the outcome is
 unknown. The app reconnects and reads Config status. If `active_source` is
 `1` and the app has `saved_crc32` from the `Saved` notification, it compares
-the CRCs. Otherwise it reads back the active config and compares it with the
-uploaded document as JSON values, because the canonical bytes can differ.
+the CRCs. Otherwise it cannot tell reliably whether the upload took effect:
+the canonical form adds defaults and narrows numbers to 32-bit floats, so a
+read-back can differ from the upload in value as well as in bytes. The app
+then uploads the document again. Committing the same document again is
+harmless apart from one more restart.
 
 ## BLE recovery
 

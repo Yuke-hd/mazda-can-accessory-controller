@@ -503,10 +503,11 @@ malformed PDUs, and `validate()` rejects a config whose `version` is not
 
 - The controller's preferred ATT MTU is **247**. iOS normally negotiates a
   larger MTU than the default of 23 after connecting.
-- Device info and the Command characteristic work at the default MTU of 23.
-- Config transfer and live signals need a negotiated ATT MTU of at least
+- Device info, the Command characteristic, Config read-back and Config status
+  reads work at the default MTU of 23.
+- Config uploads and notifications need a negotiated ATT MTU of at least
   **64**. Below that, the controller rejects a config transfer with
-  `MtuTooSmall` and sends no live-signal notifications.
+  `MtuTooSmall` and sends no Config status or Live signals notifications.
 - A notification never exceeds `MTU - 3` bytes. The protocol never splits one
   PDU across notifications.
 
