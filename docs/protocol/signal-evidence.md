@@ -36,8 +36,10 @@ The brake-pedal state is available through the public notification facade and
 the generic provider as `vehicle.brake_pressed` (Boolean, Read and Notify).
 The generic catalog contains nineteen entries. Brake freshness remains unset
 in the default policy: a valid observation is `FreshnessUnverified`, not
-`Fresh`. Confirmed field interpretation does not establish timing evidence or
-enable a brake lighting binding.
+`Fresh`. Confirmed field interpretation does not establish timing evidence.
+The factory controller profile binds a brake lighting action only through the
+owner-approved `fresh_or_unverified` opt-in described in
+[controller configuration](../specs/configuration/controller-config.md).
 
 | Public channel | Mode | DBC source field / derivation | Decoder and source mapping | Evidence status and boundary |
 | --- | --- | --- | --- | --- |

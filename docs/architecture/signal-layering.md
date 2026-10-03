@@ -52,8 +52,8 @@ unverified brake observations. The project owner explicitly approved the
 timeout, the last decoded value can remain eligible when brake frames stop
 arriving while other CAN traffic keeps transport health available; accepting
 this policy does not promote the reading to `Fresh` or establish timing
-evidence. The default controller profile is unchanged and binds no brake-pedal
-action to an LED output. See
+evidence. The factory controller profile uses this opt-in for its `brake`
+action, bound to the LED `Brake` effect above the RPM red zone. See
 [signal evidence](../protocol/signal-evidence.md) for the field mapping and its
 evidence boundary, and [controller configuration](../specs/configuration/controller-config.md#yaml-compiler)
 for the owner-approved opt-in.
