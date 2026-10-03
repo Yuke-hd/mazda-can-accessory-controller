@@ -180,7 +180,9 @@ The controller accepts a **new** pairing only while the pairing window is open.
   bond for: the controller keeps the existing bond and rejects or ignores the
   new pairing. On NimBLE that case raises `BLE_GAP_EVENT_REPEAT_PAIRING`, and
   returning `BLE_GAP_REPEAT_PAIRING_IGNORE` drops the request without an SMP
-  response, so the central fails at its own SMP timeout.
+  response. The controller then disconnects the link (see
+  [enforcement fallback](#enforcement-fallback)), so the central sees a
+  disconnect rather than its own SMP timeout.
 - A pairing attempted outside the window, whether rejected, ignored or failed,
   never modifies, evicts or deletes an existing bond.
 - A bonded central can re-encrypt with its stored long-term key at any time.
@@ -207,8 +209,9 @@ the app must not depend on receiving it.
 Because the fallback may write keys to NVS and then delete them, the
 controller disconnects a link after its first rejected pairing, so one
 connection cannot drive repeated NVS writes. A nearby device that reconnects
-and retries still causes writes; the unencrypted-link deadlines above bound
-how often that can happen.
+and retries still causes writes, and only connection setup and pairing time
+limit how often that can happen. Keeping outside-window pairings from writing
+to NVS at all is an implementation choice for issue #164.
 
 The fallback alone does not protect existing bonds, because a host may make
 room for a new bond before key exchange. NimBLE, for example, checks bond
@@ -308,7 +311,8 @@ belongs to the Generic Attribute service.
   the central, and `Insufficient Encryption` (`0x0F`) when it has one, so the
   central re-encrypts with its stored key. The app must handle both. iOS starts
   pairing or re-encryption when it receives one of these errors; outside the
-  pairing window a new pairing is rejected and the access keeps failing.
+  pairing window a new pairing is rejected and the controller then disconnects
+  (see [enforcement fallback](#enforcement-fallback)).
 
 ### Application error codes
 
