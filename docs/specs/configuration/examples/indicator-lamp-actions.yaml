@@ -1,0 +1,31 @@
+# Reviewed example: physical indicator-lamp state actions (#151).
+# Not part of the factory profile (config/default.yaml) and binds no LED
+# output; a composition that wants these actions adds its own bindings.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/indicator-lamp-actions.yaml \
+#     /tmp/indicator-lamp-actions.json
+version: 1
+
+# Lamp state, distinct from vehicle.turn_state and vehicle.turn_request.*.
+actions:
+  - name: left_indicator_lamp
+  - name: right_indicator_lamp
+
+rules:
+  # Indicator-lamp freshness is unset; no timeout is invented here. This
+  # explicit opt-in accepts an unverified observation without promoting it
+  # to fresh, while NoData, Stale and Unavailable still fail off.
+  - type: state
+    action: left_indicator_lamp
+    signal_key: vehicle.indicator_lamp.left
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: right_indicator_lamp
+    signal_key: vehicle.indicator_lamp.right
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
