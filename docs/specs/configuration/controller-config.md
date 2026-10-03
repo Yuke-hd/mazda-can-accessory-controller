@@ -253,8 +253,8 @@ while other CAN traffic keeps transport health available. This opt-in does not
 turn the observation into `Fresh` or establish brake timing evidence; normal
 malformed, faulted, stopped and unavailable fail-off behavior still applies.
 The schema does not configure telemetry freshness timeouts. Other signals
-retain their existing freshness policies. The production profile is unchanged
-and has no brake-pedal rule or brake-to-LED binding.
+retain their existing freshness policies. The production profile uses this
+opt-in for its `brake` action; see [Production lighting profile](#production-lighting-profile).
 
 Install the host-only dependency and compile a profile with:
 
@@ -307,8 +307,13 @@ schema exposes them:
 
 `config/default.yaml` is the factory profile for the firmware; the version 1
 example in `examples/controller-config-v1.yaml` documents the same profile.
-It covers the mirrored turn signals, the hazard, the RPM level fill and the
-RPM red zone. `production_lighting_config()` builds the same document in C++ for host
+It covers the mirrored turn signals, the hazard, the RPM level fill, the
+RPM red zone and the brake pedal. The `brake` action is a `state` rule on
+`vehicle.brake_pressed` equal to `true` with `fresh_or_unverified` freshness
+and no telemetry timeout; it is bound to the `brake` LED effect at priority
+200. The RPM red zone binds the same effect at priority 150, so the region is
+lit while either action is active and takes the higher active priority.
+`production_lighting_config()` builds the same document in C++ for host
 parity tests; firmware loads this YAML's generated JSON through the canonical
 persisted configuration loader.
 `tests/host/controller_config_schema_tests.cpp` checks that the C++ builder
@@ -316,7 +321,8 @@ validates and matches the default lighting profile field by field.
 `tests/host/controller_config_application_tests.cpp` loads JSON generated from
 the factory YAML at host configure time through the canonical parser, compares
 every persisted field with that C++ builder, and checks full board-strip RPM
-coverage, mirrored turns, the RPM fill range and red-zone threshold, and fail-off.
+coverage, mirrored turns, the RPM fill range and red-zone threshold, the brake
+pedal and its coexistence with the red zone, and fail-off.
 
 ## Boot-time override storage
 

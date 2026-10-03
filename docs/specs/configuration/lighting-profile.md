@@ -88,6 +88,8 @@ LED binding next to the level fill, a shared action and a failed binding.
 `tests/host/lighting_profile_application_tests.cpp` covers profile application,
 turn and RPM behavior, and partial-setup diagnostics.
 `tests/host/controller_config_application_tests.cpp` covers persisted
-application and mirrored turn fail-off behavior. The feature-specific host
+application, mirrored turn fail-off behavior, and the factory brake-pedal
+action, which shares the `Brake` effect with the red zone at a higher priority
+(200 over 150). The feature-specific host
 suites are `tests/host/rpm_level_fill_tests.cpp` and
 `tests/host/rpm_threshold_tests.cpp`.

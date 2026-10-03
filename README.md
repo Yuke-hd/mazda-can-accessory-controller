@@ -44,9 +44,11 @@ required before any installation or release decision.
   mapped to a black LED frame. A decoder error is not cleared by unrelated
   traffic; recovery requires a newer valid observation.
 - Brake decoding is present, but its freshness timeout is intentionally unset
-  until timing evidence is established. The production lighting adapter
-  therefore requires `Fresh` brake availability and fails off for an
-  unverified brake sample.
+  until timing evidence is established. The factory controller profile's
+  `brake` action uses the owner-approved `fresh_or_unverified` opt-in, so an
+  unverified pressed observation lights the brake region. Without a timeout,
+  the last decoded value can remain eligible if brake frames stop while other
+  CAN traffic continues; the observation is never promoted to `Fresh`.
 - This is not a replacement for factory indicators, brake lamps, a dashboard,
   or any certified safety system. Do not use LED output as a safety-critical
   indication.
@@ -214,11 +216,14 @@ See [`docs/specs/lighting/local-led-actions.md`](docs/specs/lighting/local-led-a
   strategy fills each region from the center outward and is the current WeAct
   runtime strategy.
 - **Brake / RPM red zone:** the renderer can light the center 30-pixel region
-  solid red. The firmware binds no brake-pedal action (brake has no freshness
-  timeout). `vehicle.brake_pressed` is a Boolean Read + Notify signal whose
-  default availability remains `FreshnessUnverified`; the region is the RPM
-  red-zone warning, lit while engine speed is above a configurable threshold
-  (6000 rpm by default). See
+  solid red. The factory profile lights it while `vehicle.brake_pressed` is
+  `true` (the `brake` action, priority 200) and while engine speed is above a
+  configurable RPM red-zone threshold (6000 rpm by default, priority 150). The
+  region stays lit while either action is active and takes the higher active
+  priority. `vehicle.brake_pressed` is a Boolean Read + Notify signal whose
+  default availability remains `FreshnessUnverified`; the brake rule accepts it
+  through `fresh_or_unverified`, and unavailable, stale or missing observations
+  fail it off. See
   [lighting profile](docs/specs/configuration/lighting-profile.md#rpm-threshold-red-zone).
 - **Overlap:** turn animation and the brake region may coexist; the single
   GPIO4 status pixel prioritizes red brake status, otherwise amber turn status,
