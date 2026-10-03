@@ -558,3 +558,20 @@ target_compile_features(controller_config_lock_state_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_lock_state_tests)
 add_test(NAME controller_config_lock_state_example_loads
   COMMAND controller_config_json_check ${_lock_state_example_json})
+
+# Reviewed indicator-lamp example (#151): not part of the factory profile. The
+# checked-in canonical JSON is held in parity with its YAML source by the
+# compiler regression tests and applied here through the persisted path.
+add_executable(indicator_lamp_actions_tests indicator_lamp_actions_tests.cpp)
+target_compile_definitions(indicator_lamp_actions_tests PRIVATE
+  INDICATOR_LAMP_EXAMPLE_JSON_PATH="${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/indicator-lamp-actions.json")
+target_link_libraries(indicator_lamp_actions_tests PRIVATE controller_config
+                                                           vehicle_signals_test_support
+                                                           doctest::doctest)
+target_compile_features(indicator_lamp_actions_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(indicator_lamp_actions_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(indicator_lamp_actions_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(indicator_lamp_actions_tests)

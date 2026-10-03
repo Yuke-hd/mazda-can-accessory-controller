@@ -441,6 +441,36 @@ Mazda catalog, and `tests/host/controller_config_lock_state_tests.cpp` applies
 it through the persisted application path to check the true, false,
 transition, unverified and fail-off behaviour.
 
+## Indicator-lamp example actions (not factory-enabled)
+
+`examples/indicator-lamp-actions.yaml` and its canonical
+`examples/indicator-lamp-actions.json` declare two available actions that the
+factory profile does not enable; factory enablement is deferred by owner
+decision:
+
+| Action | Rule |
+| --- | --- |
+| `left_indicator_lamp` | `state`: `vehicle.indicator_lamp.left` equal to `true` |
+| `right_indicator_lamp` | `state`: `vehicle.indicator_lamp.right` equal to `true` |
+
+Each action follows only its physical indicator-lamp signal, using the
+catalog's existing Boolean lamp type. They are distinct from the
+`vehicle.turn_state` actions (`left_turn`, `right_turn`, `hazard`) and from
+`vehicle.turn_request.*`; both can be active together and hazards are not
+special-cased. Both rules use an explicit `fresh_or_unverified` opt-in because
+indicator-lamp freshness is unset; no timeout is invented, an unverified
+observation is not promoted to `Fresh`, and NoData, Stale and Unavailable
+still fail the actions off. The example binds no LED output; a profile that
+adopts it must add its own bindings.
+
+`tests/tools/compile_controller_config_test.py` keeps the YAML and canonical
+JSON in byte parity, the `controller_config_yaml_loader` CTest resolves the
+example against the real Mazda catalog, and
+`tests/host/indicator_lamp_actions_tests.cpp` applies the canonical JSON
+through the persisted loader and application path to cover left-only,
+right-only, both, off, unverified, NoData/Stale/Unavailable fail-off and
+independence from turn-state and turn-request signals.
+
 ## Boot-time override storage
 
 The firmware exposes a configuration storage boundary with `load_override()`,

@@ -1150,6 +1150,29 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 ),
             )
 
+    def test_indicator_lamp_example_yaml_matches_canonical_json(self) -> None:
+        examples = REPOSITORY / "docs" / "specs" / "configuration" / "examples"
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "indicator-lamp-actions.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(COMPILER),
+                    str(examples / "indicator-lamp-actions.yaml"),
+                    str(output_path),
+                ],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                output_path.read_bytes(),
+                (examples / "indicator-lamp-actions.json").read_bytes(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
