@@ -182,7 +182,9 @@ TEST_CASE("the lock-state example declares both actions from the single unlocked
 
   const std::pair<std::string_view, bool> expected[] = {{"doors_unlocked", true},
                                                         {"doors_locked", false}};
-  for (const auto &[action, value] : expected) {
+  for (const auto &entry : expected) {
+    const auto action = entry.first;
+    const bool value = entry.second;
     CAPTURE(action);
     const auto *rule = rule_for(config, action);
     REQUIRE(rule != nullptr);
