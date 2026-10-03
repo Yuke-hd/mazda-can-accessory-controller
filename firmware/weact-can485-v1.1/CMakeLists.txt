@@ -74,3 +74,14 @@ add_custom_target(controller_config_factory_json
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(weact_can485_v11_vehicle_listen_only)
+
+# sdkconfig.defaults does not override an existing sdkconfig. Refuse to build
+# with a stale configuration that would flash the old 24 KiB NVS table and
+# strand entries written to the larger partition.
+if(NOT CONFIG_PARTITION_TABLE_CUSTOM
+   OR NOT CONFIG_PARTITION_TABLE_CUSTOM_FILENAME STREQUAL "partitions.csv")
+  message(FATAL_ERROR
+    "sdkconfig does not select the custom partitions.csv table. Run "
+    "'idf.py set-target esp32' or delete sdkconfig to regenerate it from "
+    "sdkconfig.defaults (see docs/development/firmware-build.md).")
+endif()
