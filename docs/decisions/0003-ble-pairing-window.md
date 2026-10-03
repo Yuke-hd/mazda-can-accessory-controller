@@ -55,7 +55,8 @@ fallback and bond capacity, are in the
 Easier:
 
 - No passkey or other secret has to be provisioned or managed.
-- Physical presence, by pressing the key, stands in for MITM protection.
+- Pairing is possible only in windows the owner opens by pressing the key.
+  This limits exposure but gives no MITM protection inside an open window.
 - Starting the car never opens a pairing window, so the controller does not
   accept new pairings during ordinary use.
 - Background reconnection works for bonded phones while driving.
