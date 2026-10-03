@@ -206,11 +206,17 @@ next boot therefore loads one of:
   [override storage contract](../configuration/controller-config.md#boot-time-override-storage)
   specifies. A slot that fails verification is never applied.
 
-`saved_length` and `saved_crc32` are zero after a `StorageFailed`, so the app
-records `active_source` and `active_crc32` before it commits. After the next
-restart it reads them again. If both are unchanged, the previous config is
-still selected. Otherwise the outcome is unknown and the app follows the
-[unknown-outcome rule](#upload-procedure): it uploads the document again or reverts.
+Config status cannot show which of these the next boot will load: until the
+controller restarts, `active_source` and `active_crc32` describe the running
+config, and `saved_length` and `saved_crc32` are zero. The app therefore
+does not defer the check. It tells the user that the stored config is
+uncertain and resolves it in the same session, either by uploading the
+document again or by sending Revert to factory. On success either one ends
+in a controlled restart whose result the app can verify, as the
+[upload procedure](#upload-procedure) describes. If that also fails with a
+storage error, the app reports that the controller's storage is failing and
+does not retry in a loop.
+
 `save_override()` also returns `Failed`
 when the canonical form does not parse again; that is a controller defect,
 reported as `StorageFailed` without diagnostic fields.
@@ -476,15 +482,14 @@ The app uploads a config like this:
 1. Read device info and check versions as the core profile requires. Check
    that the document's `version` equals `config_schema_version` and that its
    length is at most `max_config_bytes`.
-2. Subscribe to Config status, record its `active_source` and
-   `active_crc32`, then send Abort to clear any transfer this connection left
-   open.
+2. Subscribe to Config status, then send Abort to clear any transfer this
+   connection left open.
 3. Send Start with the length and CRC.
 4. Send chunks in order. Each chunk's offset is the sum of the data already
    accepted. After an `OffsetMismatch`, read `received_length` from Config
    status and continue from there.
 5. Send Commit. On a rejection, show the diagnostic from Config status and
-   stop. On `StorageFailed`, verify after the next restart as
+   stop. On `StorageFailed`, upload again or revert in the same session, as
    [Commit](#commit) describes. On `Saved`, keep `saved_crc32` and expect a
    disconnect.
 6. Reconnect after the restart and read Config status. The upload is active
