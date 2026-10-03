@@ -415,6 +415,32 @@ real Mazda catalog. `tests/host/controller_config_actual_gear_tests.cpp`
 applies the JSON through the persisted configuration path and checks gear
 transitions, the unverified opt-in, fail-off and recovery.
 
+## Lock-state example actions
+
+`examples/lock-state-actions-v1.yaml` and its canonical
+`examples/lock-state-actions-v1.json` are a reviewed example that is available
+but not factory-enabled: neither `config/default.yaml` nor
+`production_lighting_config()` declares these actions. The example declares
+the `doors_unlocked` and `doors_locked` actions as two `state` rules on the
+single `vehicle.doors_unlocked` Boolean signal, equal to `true` and `false`
+respectively. Lock state is never inferred from individual door-open signals,
+ignition or key-fob events.
+
+Both rules opt in to `fresh_or_unverified` explicitly. No lock-state freshness
+timeout is invented, so an unverified observation activates the matching
+action without being promoted to `Fresh`. While the signal is actionable the
+two actions are mutually exclusive; a `NoData`, `Stale` or `Unavailable`
+observation deactivates both rather than assuming the vehicle is locked. The
+example has no LED or WLED output bindings; the actions reach every registered
+`ActionSink`. To use them, merge the actions and rules into a profile.
+
+`tests/tools/lock_state_example_test.py` checks that the YAML compiles to the
+committed canonical JSON. The CTest `controller_config_lock_state_example_loads`
+loads that JSON through the canonical loader and resolves it against the real
+Mazda catalog, and `tests/host/controller_config_lock_state_tests.cpp` applies
+it through the persisted application path to check the true, false,
+transition, unverified and fail-off behaviour.
+
 ## Boot-time override storage
 
 The firmware exposes a configuration storage boundary with `load_override()`,

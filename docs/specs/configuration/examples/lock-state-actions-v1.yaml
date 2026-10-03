@@ -1,0 +1,35 @@
+# Reviewed example: vehicle lock-state actions. Not part of the factory
+# profile (config/default.yaml); merge these entries into a profile to use them.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/lock-state-actions-v1.yaml \
+#     /tmp/lock-state-actions-v1.json
+version: 1
+
+actions:
+  - name: doors_unlocked
+  - name: doors_locked
+
+# Both rules read the single vehicle.doors_unlocked signal, so the actions are
+# mutually exclusive while it is actionable and both fail off otherwise. Lock
+# state is never inferred from individual door-open signals.
+rules:
+  # No lock-state freshness timeout is invented; this explicit opt-in accepts
+  # an unverified observation without promoting it to fresh.
+  - type: state
+    action: doors_unlocked
+    signal_key: vehicle.doors_unlocked
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
+  # Same freshness opt-in as above; no timeout is invented.
+  - type: state
+    action: doors_locked
+    signal_key: vehicle.doors_unlocked
+    comparison: equal
+    operand: {boolean: false}
+    freshness: fresh_or_unverified
+
+# No LED or WLED output bindings: the actions reach every registered ActionSink.
+outputs: []
