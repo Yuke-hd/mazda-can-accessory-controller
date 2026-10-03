@@ -47,9 +47,11 @@ record does not state a flash size, so the budget below assumes 4 MB.
 The DRAM region shrinks because the ESP32 Bluetooth controller reserves
 56,156 B of DRAM at link time when Bluetooth is enabled.
 
-New archives account for most of the increase:
+New archives account for most of the increase. Image bytes count flash
+code and read-only data plus the IRAM code and initialised `.data` that are
+loaded from the image, so they exceed the `.text` + `.rodata` figures above:
 
-| Archive | Flash | Static RAM (of which IRAM) |
+| Archive | Image bytes | Static RAM (of which IRAM) |
 | --- | ---: | ---: |
 | `libbt.a` (NimBLE host and port) | 90,684 B | 7,272 B (1,747 B) |
 | `libbtdm_app.a` (controller) | 75,755 B | 25,921 B (22,299 B) |
@@ -57,8 +59,9 @@ New archives account for most of the increase:
 | `libcoexist.a` | 9,816 B | 3,966 B (3,333 B) |
 | `librtc.a` | 2,016 B | 2,020 B (2,016 B) |
 
-Existing archives also grow by about 40 KB of flash. The largest increases are
-in `libc.a`, `libesp_app_format.a` `.rodata`, `libesp_hw_support.a`,
+The new archives add 221,941 of the 274,092 image bytes. Existing archives
+account for the remaining 52,151 B. The largest increases are in
+`libesp_app_format.a` `.rodata`, `libc.a`, `libesp_hw_support.a`,
 `libesp_timer.a` and `libesp_phy.a`.
 
 Compared with the tuned build, ESP-IDF defaults add 9,584 B of flash and use
@@ -107,8 +110,9 @@ share the 24 KiB partition:
   `CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=y` stores it on first boot; the
   bench log shows it being saved.
 - NimBLE bonds in the `nimble_bond` namespace. Each of the four bonds stores
-  our and peer security records, CCCD records and peer address records as
-  separate blobs.
+  our and peer security records, a peer address record and up to three CCCD
+  records (config status, live signals and Service Changed) as separate
+  blobs.
 
 Estimated against the 630 entries available on five usable 4 KiB pages:
 
@@ -123,10 +127,8 @@ This leaves little room for page fragmentation, garbage collection, or a
 future namespace. When NVS is exhausted, a configuration commit fails with
 `ESP_ERR_NVS_NOT_ENOUGH_SPACE`. This estimate is not a measured fill test.
 
-**Recommendation.** Change the partition table before companion BLE ships,
-not afterwards. Moving or resizing `nvs` relocates it, which drops stored
-overrides and bonds on the first serial flash of the new layout. A
-single-layout change avoids a second migration later:
+**Recommendation.** Grow `nvs` in place before companion BLE ships. The
+layout below keeps `nvs` at its default `0x9000` offset and only extends it:
 
 ```csv
 # Name,   Type, SubType, Offset,   Size
@@ -138,6 +140,15 @@ factory,  app,  factory, 0x20000,  0x1E0000
 This gives 64 KiB of NVS and a 1,920 KiB application. It stays inside 4 MB
 and leaves 0x200000–0x3FFFFF free for a later OTA layout without moving
 `nvs`. Any OTA mechanism needs its own decision; ADR-0001 excludes Wi-Fi.
+
+Existing entries are expected to survive the first serial flash of this
+layout without an erase. The ESP-IDF NVS loader (`nvs_page.cpp`,
+`nvs_pagemanager.cpp`) treats the added sectors, which hold old `phy_init`
+and application bytes, as corrupt free pages and erases each one only when it
+first activates it. The original six pages load unchanged. This is from
+source inspection and needs bench confirmation. Downgrading is not safe: an
+image with the 24 KiB table cannot reach entries that NVS has since written
+to the added pages.
 
 ## Recommended sdkconfig
 
@@ -168,10 +179,17 @@ CONFIG_BT_NIMBLE_SM_SC=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_MAX_BONDS=4
+# Four bonds × three CCCDs each. Below this, a full CCCD store makes the
+# stock overflow handler unpair the oldest peer outside the pairing window.
+CONFIG_BT_NIMBLE_MAX_CCCDS=12
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 ```
+
+`CONFIG_BT_NIMBLE_MAX_CCCDS=12` was added after measurement; the tuned images
+used the default of 8. The four extra 16-byte store slots add 64 B of static
+RAM.
 
 `CONFIG_BT_NIMBLE_SM_SC_ONLY` stays at its default of `0`. The protocol spec
 requires Secure Connections without authenticated (MITM) keys, which
@@ -193,16 +211,16 @@ core 0. Its application tasks are unpinned:
 | `nimble_host` | 21 | 1 | 1,972 B of 4,096 B |
 | `local_argb` | 2 | any | 2,880 B |
 | `vehicle_telemetry` | 1 | any | 1,392 B |
-| `main` (`app_main`) | 1 | 0 | 388 B of 3,584 B |
+| `main` (`app_main`) | 1 | 0 | 388 B of 3,584 B (392 B without BLE) |
 | `ipc0` / `ipc1` | 24 | 0 / 1 | 472 B / 288 B of 1,024 B |
 
 With ESP-IDF defaults, both `btController` and `nimble_host` run on core 0, the
 same core as the TWAI, RMT and SPI interrupts. The recommended settings move
 both tasks to core 1, and the bench task list confirms the placement. The
-ESP32 controller asserts that it installs its interrupts on
-`CONFIG_BTDM_CTRL_PINNED_TO_CORE`, so those interrupts also leave core 0. It
-uses inter-processor calls to that core, which explains the lower `ipc1`
-headroom.
+ESP32 controller's interrupts follow `CONFIG_BTDM_CTRL_PINNED_TO_CORE`, so they
+also leave core 0: its high-level interrupt and ISR queue paths assert that
+they run on that core, and it uses inter-processor calls to reach it. This
+explains the lower `ipc1` headroom.
 
 Recommendations:
 
@@ -214,16 +232,25 @@ Recommendations:
   lower priority, and never block it on lighting or CAN work. BLE failure
   must not delay CAN acquisition or LED fail-off.
 - Start BLE after startup black, NVS initialization and CAN start, and log
-  and continue on failure. The spike did this and CAN startup was unchanged.
+  and continue on failure. The spike did this, and start-up completed in the
+  same order without errors. No CAN bus was attached, so this is not CAN
+  receive evidence.
+- Do not grow `app_main`'s stack use for BLE. `main` has only 392 B free at
+  its high-water mark without BLE. The advertiser stub costs 4 B, but GATT
+  registration and store setup will cost more. Start BLE from its own task or
+  the host task, or raise `CONFIG_ESP_MAIN_TASK_STACK_SIZE` with a measured
+  margin.
 - With `CONFIG_BT_NIMBLE_USE_ESP_TIMER=y`, NimBLE callout timers fire in the
   `esp_timer` task at priority 22 on core 0, above `mazda_notify`, and hand
   off to the host task. Measure
   whether `CONFIG_ESP_TIMER_TASK_AFFINITY_CPU1=y` is worth adopting with the
   GATT implementation. It is not part of the candidate settings because it
-  was not measured.
-- Re-measure `nimble_host` and `ipc1` stack headroom with a connected central
-  and the GATT service. `ipc1` drops from 464 B to 288 B free once BT runs on
-  core 1. If the GATT build reduces it further, raise
+  was not measured. It also requires `CONFIG_ESP_TIMER_SHOW_EXPERIMENTAL=y`
+  (otherwise an overlay setting is silently dropped), and its help text warns
+  that it may break other features.
+- Re-measure `main`, `nimble_host` and `ipc1` stack headroom with a
+  connected central and the GATT service. `ipc1` drops from 464 B to 288 B
+  free once BT runs on core 1. If the GATT build reduces it further, raise
   `CONFIG_ESP_IPC_TASK_STACK_SIZE`.
 
 ## Remaining risks
