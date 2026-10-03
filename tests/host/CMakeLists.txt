@@ -496,3 +496,19 @@ target_include_directories(controller_config_solid_tests PRIVATE ${CMAKE_SOURCE_
 target_link_libraries(controller_config_solid_tests PRIVATE controller_config local_argb vehicle_signals_test_support doctest::doctest)
 target_compile_features(controller_config_solid_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_solid_tests)
+
+# The reviewed selector-position example (#147), loaded from its canonical
+# JSON and applied against the production Mazda signal catalog.
+add_executable(controller_config_selector_example_tests
+  controller_config_selector_example_tests.cpp)
+target_include_directories(controller_config_selector_example_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_compile_definitions(controller_config_selector_example_tests PRIVATE
+  CONTROLLER_CONFIG_SELECTOR_EXAMPLE_JSON_PATH="${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/selector-actions-v1.json")
+target_link_libraries(controller_config_selector_example_tests PRIVATE controller_config mazda
+                                                                       vehicle_signals_test_support
+                                                                       doctest::doctest)
+target_compile_features(controller_config_selector_example_tests PRIVATE cxx_std_17)
+doctest_discover_tests(controller_config_selector_example_tests)

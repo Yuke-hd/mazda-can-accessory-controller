@@ -1089,6 +1089,17 @@ class ControllerConfigCompilerTests(unittest.TestCase):
                 json.loads(PRODUCTION_JSON.read_text(encoding="utf-8")),
             )
 
+    def test_selector_example_yaml_matches_canonical_json_example(self) -> None:
+        examples = REPOSITORY / "docs" / "specs" / "configuration" / "examples"
+        source = (examples / "selector-actions-v1.yaml").read_text(encoding="utf-8")
+        expected = json.loads((examples / "selector-actions-v1.json").read_text(encoding="utf-8"))
+
+        result, payload = self.run_compiler(source)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(payload)
+        self.assertEqual(json.loads(payload.decode("utf-8")), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
