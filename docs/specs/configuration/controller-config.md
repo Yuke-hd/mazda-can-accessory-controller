@@ -365,6 +365,31 @@ every persisted field with that C++ builder, and checks full board-strip RPM
 coverage, mirrored turns, the RPM fill range and red-zone threshold, the brake
 pedal and its coexistence with the red zone, and fail-off.
 
+## Example selector-position actions
+
+`examples/selector-actions-v1.yaml` and its canonical
+`examples/selector-actions-v1.json` define one `state` action per semantic
+`vehicle.selector_position` choice: `selector_shifting`, `selector_park`,
+`selector_reverse`, `selector_neutral` and `selector_drive`. Each rule is
+`equal` to its choice. The catalog `unknown` placeholder is not a semantic
+selector state and has no action; an `unknown` value deactivates every
+selector action.
+
+These actions are available for owner configuration but are not
+factory-enabled: `config/default.yaml` and `production_lighting_config()` do
+not include them. The example binds no LED output; pair an action with an
+output binding to make it visible.
+
+No reviewed selector freshness timeout exists, and the example does not
+invent one. Each rule opts in to `fresh_or_unverified` explicitly, so a
+`FreshnessUnverified` observation can activate its action, while `NoData`,
+`Stale` and `Unavailable` observations deactivate it.
+`tests/tools/compile_controller_config_test.py` checks that the YAML compiles
+to the canonical JSON. `tests/host/controller_config_selector_example_tests.cpp`
+loads the JSON through the canonical parser, applies it against the production
+signal catalog, and checks the per-choice rules, the park, reverse, neutral,
+drive and shifting transitions, the unverified opt-in and fail-off.
+
 ## Boot-time override storage
 
 The firmware exposes a configuration storage boundary with `load_override()`,

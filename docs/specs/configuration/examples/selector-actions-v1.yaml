@@ -1,0 +1,58 @@
+# Example selector-position actions: one state action per semantic
+# vehicle.selector_position choice. This example is available for owner
+# configuration and is not part of the factory profile. It binds no LED
+# output; pair an action with an output to make it visible.
+# Compile with:
+#   python3 tools/compile_controller_config.py \
+#     docs/specs/configuration/examples/selector-actions-v1.yaml \
+#     /tmp/selector-actions-v1.json
+version: 1
+
+actions:
+  - name: selector_shifting
+  - name: selector_park
+  - name: selector_reverse
+  - name: selector_neutral
+  - name: selector_drive
+
+# No reviewed selector freshness timeout exists, and none is invented here.
+# Each rule opts in to fresh_or_unverified explicitly; NoData, Stale and
+# Unavailable observations still fail the action off. The catalog "unknown"
+# placeholder is non-semantic and has no action.
+rules:
+  - type: state
+    action: selector_shifting
+    signal_key: vehicle.selector_position
+    comparison: equal
+    operand: {choice: shifting}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: selector_park
+    signal_key: vehicle.selector_position
+    comparison: equal
+    operand: {choice: park}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: selector_reverse
+    signal_key: vehicle.selector_position
+    comparison: equal
+    operand: {choice: reverse}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: selector_neutral
+    signal_key: vehicle.selector_position
+    comparison: equal
+    operand: {choice: neutral}
+    freshness: fresh_or_unverified
+
+  - type: state
+    action: selector_drive
+    signal_key: vehicle.selector_position
+    comparison: equal
+    operand: {choice: drive}
+    freshness: fresh_or_unverified
+
+outputs: []
