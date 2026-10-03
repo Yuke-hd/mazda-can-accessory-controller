@@ -12,8 +12,8 @@ own companion documents:
 - [`config-transfer.md`](config-transfer.md): the Config and Config status
   payloads, chunked transfer, commit, read-back, size limits and failure
   behaviour.
-- `live-signals.md`: the Live signals frame layout, availability encoding and
-  rate cap. It is added under the same issue.
+- [`live-signals.md`](live-signals.md): the Live signals frame layout,
+  availability encoding and rate cap.
 
 This is a specification only. No firmware or app implementation exists yet, and
 nothing here has been validated on hardware, on a phone, or in a vehicle.
@@ -296,7 +296,7 @@ are reserved for later characteristics.
 | Device info | Read | None (readable before pairing) | [Device info](#device-info) |
 | Config | Read, Write | Encrypted, bonded | [Config transfer](config-transfer.md#config-characteristic) |
 | Config status | Read, Notify | Encrypted, bonded | [Config transfer](config-transfer.md#config-status-characteristic) |
-| Live signals | Notify | Encrypted, bonded | `live-signals.md` |
+| Live signals | Notify | Encrypted, bonded | [`live-signals.md`](live-signals.md) |
 | Command | Write | Encrypted, bonded | [Command](#command) |
 
 "Write" means ATT Write Request (write with response). No characteristic
