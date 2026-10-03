@@ -11,6 +11,7 @@ actions:
   - name: hazard
   - name: rpm_fill
   - name: red_zone
+  - name: brake
 
 rules:
   # A scalar value is accepted as authoring shorthand for the one-key operand.
@@ -53,6 +54,15 @@ rules:
     operand: {number: 6000}
     freshness: fresh_or_unverified
 
+  # Brake freshness is unset; this owner-approved opt-in accepts an
+  # unverified observation without promoting it to fresh.
+  - type: state
+    action: brake
+    signal_key: vehicle.brake_pressed
+    comparison: equal
+    operand: {boolean: true}
+    freshness: fresh_or_unverified
+
 outputs:
   - type: led_effect
     action: left_turn
@@ -85,3 +95,7 @@ outputs:
     action: red_zone
     effect: brake
     priority: 150
+  - type: led_effect
+    action: brake
+    effect: brake
+    priority: 200

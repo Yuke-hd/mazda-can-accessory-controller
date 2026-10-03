@@ -128,12 +128,15 @@ using vehicle_signals::ValidationStatus;
 
 constexpr SignalId kTurnState{1};
 constexpr SignalId kEngineRpm{2};
+constexpr SignalId kBrakePressed{3};
 constexpr SignalEnumChoice kTurnChoices[] = {{1, "left"}, {2, "right"}, {3, "hazard"}};
 constexpr SignalMetadata kCatalog[] = {
     {kTurnState, "vehicle.turn_state", SignalType::Enum, SignalUnit::None,
      ValidationStatus::Reference, SignalCapability::Notify, kTurnChoices, 3},
     {kEngineRpm, "vehicle.engine_rpm", SignalType::Number, SignalUnit::RevolutionsPerMinute,
      ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
+    {kBrakePressed, "vehicle.brake_pressed", SignalType::Boolean, SignalUnit::None,
+     ValidationStatus::Confirmed, SignalCapability::Read | SignalCapability::Notify, nullptr, 0},
 };
 constexpr SignalCatalogView kView{kCatalog};
 static_assert(kView.well_formed());
