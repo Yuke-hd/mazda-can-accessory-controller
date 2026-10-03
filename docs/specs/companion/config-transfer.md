@@ -33,8 +33,12 @@ These apply in addition to the
    the BLE host context. They must not run on, or wait for, the CAN
    acquisition, telemetry or lighting tasks. The NVS write of a commit still
    suspends the flash cache briefly, so CAN reception can drop frames during
-   it unless the TWAI interrupt runs from IRAM; dropped observations age out
-   and fail off as usual, and a successful commit restarts anyway.
+   it unless the TWAI interrupt runs from IRAM. The stall lasts only as long
+   as the NVS write. A dropped frame is superseded by the next frame for the
+   same signal: signals with a freshness timeout age out to `Stale` and fail
+   off as usual, but signals without one, `vehicle.brake_pressed` included,
+   hold their last value until that next frame. A successful commit restarts
+   afterwards; a `StorageFailed` commit does not.
 
 ## Document encoding
 
@@ -192,12 +196,22 @@ writes nothing to storage.
 restart, but the persisted selection at the next boot is not guaranteed. The
 NVS backend commits the new active marker before its final read-back check,
 and restoring the previous marker after a failed check can itself fail. The
-next boot then loads either the new override or, if its slot fails
-verification, the factory config, as the
-[override storage contract](../configuration/controller-config.md#boot-time-override-storage)
-specifies; a slot that fails verification is never applied. After a
-`StorageFailed`, the app verifies the outcome after the next restart with
-`active_source` and `active_crc32`. `save_override()` also returns `Failed`
+next boot therefore loads one of:
+
+- the previous selection, when the write failed before the new marker was
+  committed or the previous marker was restored;
+- the new override, when the new marker stayed committed and its slot
+  verifies;
+- the factory config, when the selected slot fails verification, as the
+  [override storage contract](../configuration/controller-config.md#boot-time-override-storage)
+  specifies. A slot that fails verification is never applied.
+
+`saved_length` and `saved_crc32` are zero after a `StorageFailed`, so the app
+records `active_source` and `active_crc32` before it commits. After the next
+restart it reads them again. If both are unchanged, the previous config is
+still selected. Otherwise the outcome is unknown and the app follows the
+[unknown-outcome rule](#upload-procedure): it uploads the document again or reverts.
+`save_override()` also returns `Failed`
 when the canonical form does not parse again; that is a controller defect,
 reported as `StorageFailed` without diagnostic fields.
 
@@ -366,7 +380,7 @@ Fields that do not apply to the current result are zero.
 | Bit | Meaning |
 | ---: | --- |
 | 0 | A persisted override was present but invalid, and the controller fell back to the factory config. `boot_diag_*` give the reason. If the factory config also failed, `active_source` is `0xFF`; the factory diagnostic is not reported. |
-| 1 | Reading the persisted override failed, and the factory config was selected. |
+| 1 | Reading the persisted override failed, and the controller fell back to the factory config. If the factory config also failed, `active_source` is `0xFF`. |
 | 2 | No config store is available during this boot, so Start fails with `StorageFailure`. |
 | 3 | Lighting setup failed. The LEDs are failed off and CAN acquisition was not started. |
 
@@ -462,14 +476,17 @@ The app uploads a config like this:
 1. Read device info and check versions as the core profile requires. Check
    that the document's `version` equals `config_schema_version` and that its
    length is at most `max_config_bytes`.
-2. Subscribe to Config status, then send Abort to clear any transfer this
-   connection left open.
+2. Subscribe to Config status, record its `active_source` and
+   `active_crc32`, then send Abort to clear any transfer this connection left
+   open.
 3. Send Start with the length and CRC.
 4. Send chunks in order. Each chunk's offset is the sum of the data already
    accepted. After an `OffsetMismatch`, read `received_length` from Config
    status and continue from there.
 5. Send Commit. On a rejection, show the diagnostic from Config status and
-   stop. On `Saved`, keep `saved_crc32` and expect a disconnect.
+   stop. On `StorageFailed`, verify after the next restart as
+   [Commit](#commit) describes. On `Saved`, keep `saved_crc32` and expect a
+   disconnect.
 6. Reconnect after the restart and read Config status. The upload is active
    when `active_source` is `1` and `active_crc32` equals `saved_crc32`, and
    `boot_flags` bits 0 and 3 are clear.
