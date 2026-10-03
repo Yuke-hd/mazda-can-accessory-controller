@@ -1100,6 +1100,31 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(json.loads(payload.decode("utf-8")), expected)
 
+    def test_actual_gear_example_yaml_matches_canonical_json_example(self) -> None:
+        examples = REPOSITORY / "docs" / "specs" / "configuration" / "examples"
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "actual-gear-actions.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(COMPILER),
+                    str(examples / "actual-gear-actions-v1.yaml"),
+                    str(output_path),
+                ],
+                cwd=REPOSITORY,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                json.loads(output_path.read_text(encoding="utf-8")),
+                json.loads(
+                    (examples / "actual-gear-actions-v1.json").read_text(encoding="utf-8")
+                ),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

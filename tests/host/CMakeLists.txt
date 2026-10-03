@@ -512,3 +512,23 @@ target_link_libraries(controller_config_selector_example_tests PRIVATE controlle
                                                                        doctest::doctest)
 target_compile_features(controller_config_selector_example_tests PRIVATE cxx_std_17)
 doctest_discover_tests(controller_config_selector_example_tests)
+
+# Reviewed actual-gear example (not factory-enabled) applied through the
+# persisted configuration path against the real Mazda catalog. YAML/JSON
+# parity is checked by tests/tools/compile_controller_config_test.py.
+add_executable(controller_config_actual_gear_tests controller_config_actual_gear_tests.cpp)
+target_include_directories(controller_config_actual_gear_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_compile_definitions(controller_config_actual_gear_tests PRIVATE
+  CONTROLLER_CONFIG_ACTUAL_GEAR_JSON_PATH="${CMAKE_SOURCE_DIR}/docs/specs/configuration/examples/actual-gear-actions-v1.json")
+target_link_libraries(controller_config_actual_gear_tests PRIVATE controller_config mazda
+  vehicle_signals_test_support action_engine_test_support doctest::doctest)
+target_compile_features(controller_config_actual_gear_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(controller_config_actual_gear_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(controller_config_actual_gear_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(controller_config_actual_gear_tests)
