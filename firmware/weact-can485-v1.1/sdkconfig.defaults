@@ -23,11 +23,17 @@ CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_GATT_CLIENT=n
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=y
 
-# The security manager stays off until the pairing window lands (#164). With
-# it off, NimBLE answers every pairing request with Pairing Not Supported and
-# never writes bonds to NVS, which keeps ADR-0003's rule that no pairing
-# succeeds outside the window. #164 applies the budget's security settings.
-CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+# Security manager (#164, ADR-0003): LE Secure Connections only, Just Works,
+# bonds persisted by NimBLE in its own `nimble_bond` NVS namespace, never in
+# `mazda_config`. companion_ble rejects every pairing outside the pairing
+# window at runtime; SC-only mode stays off because it would demand MITM keys.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=y
+CONFIG_BT_NIMBLE_SM_SC=y
+CONFIG_BT_NIMBLE_SM_LEGACY=n
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=4
+# Four bonds x three CCCDs each, so a full CCCD store never needs eviction.
+CONFIG_BT_NIMBLE_MAX_CCCDS=12
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

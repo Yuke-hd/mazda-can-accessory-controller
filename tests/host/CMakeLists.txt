@@ -295,9 +295,13 @@ target_include_directories(companion_protocol_provider_tests PRIVATE
 )
 target_link_libraries(companion_protocol_provider_tests PRIVATE companion_protocol mazda_telemetry
                                                                 doctest::doctest)
+# Pairing window, user-key debounce and link security policy (#164).
+add_executable(companion_protocol_pairing_tests companion_protocol_pairing_tests.cpp)
+target_link_libraries(companion_protocol_pairing_tests PRIVATE companion_protocol doctest::doctest)
 foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protocol_transfer_tests
                                 companion_protocol_live_signals_tests
-                                companion_protocol_provider_tests)
+                                companion_protocol_provider_tests
+                                companion_protocol_pairing_tests)
   target_compile_features(${companion_test} PRIVATE cxx_std_17)
   if(MSVC)
     target_compile_options(${companion_test} PRIVATE /W4 /permissive-)

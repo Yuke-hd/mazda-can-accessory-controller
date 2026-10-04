@@ -1,6 +1,7 @@
 # Portable companion BLE protocol codec: device info, Command decoding, the
 # chunked config transfer state machine, Config status, config read-back and
-# live-signal frames. It links only the portable vehicle_signals contracts; no
+# live-signal frames, plus the pairing window, user key debounce and link
+# security policy that the BLE binding enforces. It links only the portable vehicle_signals contracts; no
 # BLE stack, Mazda, CAN, RTOS, LED, storage or config-model target is reachable.
 # Committing a config is an injected port, so the codec never parses, applies
 # or persists one.
@@ -12,8 +13,11 @@ if(COMMAND idf_component_register)
                               "src/crc32.cpp"
                               "src/device_info.cpp"
                               "src/live_signal_layout.cpp"
+                              "src/link_security.cpp"
                               "src/live_signals.cpp"
+                              "src/pairing_window.cpp"
                               "src/read_back.cpp"
+                              "src/user_key_debouncer.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES vehicle_signals)
   return()
@@ -27,8 +31,11 @@ add_library(companion_protocol STATIC
   src/crc32.cpp
   src/device_info.cpp
   src/live_signal_layout.cpp
+  src/link_security.cpp
   src/live_signals.cpp
+  src/pairing_window.cpp
   src/read_back.cpp
+  src/user_key_debouncer.cpp
 )
 target_include_directories(companion_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(companion_protocol PUBLIC vehicle_signals)

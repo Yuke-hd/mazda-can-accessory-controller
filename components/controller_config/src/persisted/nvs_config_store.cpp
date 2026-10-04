@@ -244,7 +244,12 @@ public:
 
 constexpr char kNamespace[] = "mazda_config";
 
+// Written once by make_nvs_config_store_backend() on the boot task.
+bool flash_initialized = false;
+
 } // namespace
+
+bool nvs_initialized() noexcept { return flash_initialized; }
 
 std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept {
   // This boot-only component currently owns global NVS initialization. Never
@@ -256,6 +261,7 @@ std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept {
              esp_err_to_name(init_result));
     return nullptr;
   }
+  flash_initialized = true;
 
   nvs_handle_t handle = 0;
   const esp_err_t open_result = nvs_open(kNamespace, NVS_READWRITE, &handle);
@@ -275,6 +281,8 @@ std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept {
 } // namespace controller_config::persisted
 
 #else
+
+bool nvs_initialized() noexcept { return false; }
 
 std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept { return nullptr; }
 

@@ -125,7 +125,14 @@ __attribute__((noinline)) void start_companion_link() noexcept {
       static_cast<std::uint16_t>(controller_config::persisted::kSchemaVersion);
   device_info.firmware_version = esp_app_get_description()->version;
   device_info.hardware_id = kHardwareId;
-  if (!companion_ble::start(device_info))
+  // Bonds need the NVS partition that the config store initialized; the
+  // board samples the user key that opens the pairing window.
+  companion_ble::PairingInputs pairing{};
+  pairing.bond_storage = controller_config::persisted::nvs_initialized()
+                             ? companion_protocol::BondStorage::Available
+                             : companion_protocol::BondStorage::Unavailable;
+  pairing.user_key_pressed = board::user_key_pressed;
+  if (!companion_ble::start(device_info, pairing))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }
 

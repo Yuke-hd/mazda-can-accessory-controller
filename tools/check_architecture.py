@@ -464,9 +464,12 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/config_transfer.hpp",
     "companion_protocol/crc32.hpp",
     "companion_protocol/device_info.hpp",
+    "companion_protocol/link_security.hpp",
     "companion_protocol/live_signal_layout.hpp",
     "companion_protocol/live_signals.hpp",
+    "companion_protocol/pairing_window.hpp",
     "companion_protocol/read_back.hpp",
+    "companion_protocol/user_key_debouncer.hpp",
 )
 
 # Uploads, verifies and commits one document through a probe-local commit
@@ -1080,11 +1083,14 @@ def _check_led_action_adapter(root: Path) -> None:
 
 
 COMPANION_BLE_COMPONENT = Path("components/companion_ble")
-# The companion BLE service sees NimBLE, logging, the RTOS, the portable
-# companion protocol codec and its own headers; never CAN, decoding, telemetry, the action engine, the controller
-# configuration, an LED driver or NVS. The composition root hands it values.
+# The companion BLE service sees NimBLE, logging, the RTOS, the monotonic
+# esp_timer clock of its pairing policy, the portable companion protocol codec
+# and its own headers; never CAN, decoding, telemetry, the action engine, the
+# controller configuration, an LED driver, GPIO or NVS. The composition root
+# hands it values, including the user key sampler and the NVS init result.
 _COMPANION_BLE_ALLOWED_INCLUDE = re.compile(
-    r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|freertos/(?:FreeRTOS|task)\.h"
+    r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|esp_timer\.h"
+    r"|freertos/(?:FreeRTOS|task)\.h"
     r"|host/[\w/]+\.h|nimble/[\w/]+\.h|services/(?:gap|gatt)/[\w/]+\.h"
 )
 _COMPANION_BLE_FORBIDDEN_NAMES = re.compile(
@@ -1092,7 +1098,9 @@ _COMPANION_BLE_FORBIDDEN_NAMES = re.compile(
     r"|controller_config|local_argb|led_strip|gpio_|rmt_|nvs)",
     re.IGNORECASE,
 )
-_COMPANION_BLE_ALLOWED_REQUIRES = frozenset(("bt", "companion_protocol", "freertos", "log"))
+_COMPANION_BLE_ALLOWED_REQUIRES = frozenset(
+    ("bt", "companion_protocol", "esp_timer", "freertos", "log")
+)
 _COMPANION_BLE_ALLOWED_INCLUDE_DIRS = frozenset(
     ("${CMAKE_CURRENT_SOURCE_DIR}/include", "include", "private_include")
 )
@@ -1148,8 +1156,8 @@ def _check_companion_ble_isolation(root: Path) -> None:
     if violations:
         raise ArchitectureFailure("\n".join(violations))
     print(
-        "OK   companion BLE service uses only NimBLE, logging, the RTOS and the companion "
-        "protocol codec; no CAN, telemetry, lighting or NVS"
+        "OK   companion BLE service uses only NimBLE, logging, the RTOS, esp_timer and the "
+        "companion protocol codec; no CAN, telemetry, lighting, GPIO or NVS"
     )
 
 

@@ -1,6 +1,7 @@
 #include "companion_ble/gatt_service.hpp"
 
 #include "companion_ble/nimble_uuid.hpp"
+#include "companion_ble/security.hpp"
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
@@ -16,6 +17,26 @@ std::array<ble_uuid128_t, kMaxCompanionCharacteristics> characteristic_uuids{};
 std::array<ble_gatt_chr_def, kMaxCompanionCharacteristics + 1U> characteristic_table{};
 const ble_uuid128_t service_uuid = nimble_uuid(CompanionAttribute::Service);
 std::array<ble_gatt_svc_def, 2U> service_table{};
+// The registered definitions, handed to guarded_access as its argument.
+std::array<CharacteristicDefinition, kMaxCompanionCharacteristics> registered{
+    CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service}};
+
+// The access trampoline of every protected characteristic. It applies the
+// pairing policy itself instead of the stock encryption flags, so a link that
+// is encrypted without an accepted bond is refused and every rejection reaches
+// the unbonded-link timer.
+int guarded_access(const std::uint16_t connection, const std::uint16_t attribute,
+                   ble_gatt_access_ctxt *const context, void *const argument) {
+  const auto &definition = *static_cast<const CharacteristicDefinition *>(argument);
+  const int rejection = check_protected_access(connection);
+  if (rejection != 0)
+    return rejection;
+  return definition.access(connection, attribute, context, definition.context);
+}
 
 ble_gatt_chr_def nimble_characteristic(const CharacteristicDefinition &definition,
                                        const ble_uuid128_t &uuid) noexcept {
@@ -25,6 +46,16 @@ ble_gatt_chr_def nimble_characteristic(const CharacteristicDefinition &definitio
   characteristic.arg = definition.context;
   characteristic.flags = definition.flags;
   characteristic.val_handle = definition.value_handle;
+  if (definition.security == AttributeSecurity::EncryptedBonded) {
+    characteristic.access_cb = guarded_access;
+    characteristic.arg = const_cast<CharacteristicDefinition *>(&definition);
+    // NimBLE handles CCCD writes without an access callback: the stock check
+    // requires encryption (0x05 or 0x0F like the guard), and authorization
+    // asks the pairing policy for an accepted bond.
+    if ((definition.flags & (BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_INDICATE)) != 0U)
+      characteristic.flags |=
+          BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC | BLE_GATT_CHR_F_NOTIFY_INDICATE_AUTHOR;
+  }
   return characteristic;
 }
 
@@ -52,8 +83,10 @@ int register_companion_service(
 
   std::size_t index = 0U;
   for (const auto &definition : characteristics) {
+    registered[index] = definition;
     characteristic_uuids[index] = nimble_uuid(definition.attribute);
-    characteristic_table[index] = nimble_characteristic(definition, characteristic_uuids[index]);
+    characteristic_table[index] =
+        nimble_characteristic(registered[index], characteristic_uuids[index]);
     ++index;
   }
   characteristic_table[index] = ble_gatt_chr_def{};
