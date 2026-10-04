@@ -104,6 +104,31 @@ void log_configuration_diagnostic(
            diagnostic.path.c_str(), diagnostic.message.c_str());
 }
 
+constexpr char kHardwareId[] = "weact-can485-v1.1";
+static_assert(controller_config::persisted::kSchemaVersion >= 0 &&
+                  controller_config::persisted::kSchemaVersion <= UINT16_MAX,
+              "the companion Device info carries the schema version as u16");
+static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes ==
+                  companion_protocol::kMaxConfigBytes,
+              "the companion upload limit must equal the stored config limit");
+
+// Starts the optional companion BLE link. It runs on its own startup task, so
+// a failure here or later only loses the companion link; CAN, telemetry, the
+// LED renderer and fail-off are already running and are not affected. Not
+// inlined, so the Device info value stays out of app_main's own frame; this
+// call chain still runs on the main task stack, but is shallower than the
+// configure_engine_lighting() and logging path, so it sets no new stack peak.
+__attribute__((noinline)) void start_companion_link() noexcept {
+  // Both strings have static storage; start() encodes them before returning.
+  companion_protocol::DeviceInfo device_info{};
+  device_info.config_schema_version =
+      static_cast<std::uint16_t>(controller_config::persisted::kSchemaVersion);
+  device_info.firmware_version = esp_app_get_description()->version;
+  device_info.hardware_id = kHardwareId;
+  if (!companion_ble::start(device_info))
+    ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
+}
+
 // Loads and applies one boot-time JSON configuration while the engine is
 // detached. The persisted model owns every string referenced by the engine and
 // remains alive for the lifetime of the firmware process.
@@ -151,29 +176,6 @@ bool configure_engine_lighting(
     return false;
   }
   return true;
-}
-
-constexpr char kHardwareId[] = "weact-can485-v1.1";
-static_assert(controller_config::persisted::kSchemaVersion >= 0 &&
-                  controller_config::persisted::kSchemaVersion <= UINT16_MAX,
-              "the companion Device info carries the schema version as u16");
-static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes ==
-                  companion_protocol::kMaxConfigBytes,
-              "the companion upload limit must equal the stored config limit");
-
-// Starts the optional companion BLE link. It runs on its own startup task, so
-// a failure here or later only loses the companion link; CAN, telemetry, the
-// LED renderer and fail-off are already running and are not affected. Not
-// inlined, so the Device info value never stays on the app_main stack.
-__attribute__((noinline)) void start_companion_link() noexcept {
-  // Both strings have static storage; start() encodes them before returning.
-  companion_protocol::DeviceInfo device_info{};
-  device_info.config_schema_version =
-      static_cast<std::uint16_t>(controller_config::persisted::kSchemaVersion);
-  device_info.firmware_version = esp_app_get_description()->version;
-  device_info.hardware_id = kHardwareId;
-  if (!companion_ble::start(device_info))
-    ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }
 } // namespace
 

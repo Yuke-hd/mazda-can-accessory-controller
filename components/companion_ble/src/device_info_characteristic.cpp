@@ -21,8 +21,7 @@ int access_device_info(std::uint16_t /*connection*/, std::uint16_t /*attribute*/
 
 CharacteristicDefinition
 device_info_characteristic(const companion_protocol::EncodedDeviceInfo &value) noexcept {
-  CharacteristicDefinition definition;
-  definition.attribute = CompanionAttribute::DeviceInfo;
+  CharacteristicDefinition definition{CompanionAttribute::DeviceInfo};
   definition.flags = BLE_GATT_CHR_F_READ;
   definition.access = access_device_info;
   // NimBLE only hands the context back to access_device_info, which reads it.

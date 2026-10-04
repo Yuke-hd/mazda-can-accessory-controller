@@ -28,11 +28,26 @@ ble_gatt_chr_def nimble_characteristic(const CharacteristicDefinition &definitio
   return characteristic;
 }
 
+// True when every definition names a distinct characteristic attribute.
+bool attributes_are_distinct(
+    const std::initializer_list<CharacteristicDefinition> characteristics) noexcept {
+  for (auto first = characteristics.begin(); first != characteristics.end(); ++first) {
+    if (first->attribute == CompanionAttribute::Service)
+      return false;
+    for (auto second = first + 1; second != characteristics.end(); ++second) {
+      if (first->attribute == second->attribute)
+        return false;
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 int register_companion_service(
     const std::initializer_list<CharacteristicDefinition> characteristics) noexcept {
-  if (characteristics.size() == 0U || characteristics.size() > kMaxCompanionCharacteristics)
+  if (characteristics.size() == 0U || characteristics.size() > kMaxCompanionCharacteristics ||
+      !attributes_are_distinct(characteristics))
     return BLE_HS_EINVAL;
 
   std::size_t index = 0U;
