@@ -321,8 +321,14 @@ behaviour, the binding chooses the more conservative outcome:
 - **No NVS writes outside the window.** The bond store's write callback refuses
   pairing records (both security records and the peer address record) unless
   the window is open. It checks the window's deadline itself, so a pairing
-  accepted in the moment between the deadline and the window timer stores
-  nothing and is then rejected. NimBLE re-initializes its store callbacks at
+  accepted in the moment between the deadline and the window timer stores no
+  keys and is then rejected. ESP-IDF forces NimBLE's host-based privacy, so
+  NimBLE writes a peer device record for a peer using a resolvable address
+  straight to NVS, outside the store callbacks. When the guard refused that
+  pairing's peer address record, the binding deletes the peer device record
+  with `ble_store_util_delete_peer()` once the link reports encryption, or at
+  disconnect. No resolving-list entry is created, because NimBLE adds one only
+  after the peer security record is stored. NimBLE re-initializes its store callbacks at
   every host sync (its default-IRK setup calls `ble_store_config_init()`), so
   the binding re-installs this guard at each sync and checks it on every GAP
   event. If no store callback exists to guard, the window stays closed. The

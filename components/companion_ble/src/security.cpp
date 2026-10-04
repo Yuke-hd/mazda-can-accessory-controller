@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 
 // NimBLE's config store has no public header on the ESP-IDF include path; the
 // ESP-IDF examples declare it the same way.
@@ -59,6 +60,11 @@ struct SecurityState {
   // Keeps guarded_store_write in ble_hs_cfg.store_write_cb. NimBLE resets
   // that slot to its config store at every host sync (see ensure_store_guard).
   HookGuard<ble_store_write_fn *> store_guard{guarded_store_write};
+  // The resolvable address of a pairing whose peer address record the guard
+  // refused. NimBLE has then already written a peer device record for it
+  // outside the store callbacks (see delete_refused_peer_records).
+  ble_addr_t refused_peer_rpa{};
+  bool refused_peer_rpa_pending{false};
   ble_npl_callout user_key_timer{};
   ble_npl_callout window_timer{};
   ble_npl_callout drop_timer{};
@@ -96,6 +102,26 @@ void delete_peer_keys(const ble_addr_t &peer_identity) noexcept {
   const int rc = ble_store_util_delete_peer(&peer_identity);
   if (rc != 0)
     ESP_LOGW(kTag, "could not delete a rejected pairing's keys (rc=%d)", rc);
+}
+
+// ESP-IDF forces NimBLE's host-based privacy. Before writing the bond records,
+// ble_sm_persist_keys() adds a peer device record keyed by the peer's
+// resolvable address and writes it straight to NVS
+// (ble_store_persist_peer_records()), past the store write callback. When the
+// guard refused that pairing, the record has no bond behind it.
+// ble_store_util_delete_peer() looks peer device records up by that address,
+// removes the record and persists the change. Its other deletions find
+// nothing, because records are keyed by identity address. No resolving-list
+// entry exists to remove, because NimBLE adds one only after the peer
+// security record is stored. Runs on the host task without the host lock,
+// like NimBLE's own ble_gap_unpair().
+void delete_refused_peer_records() noexcept {
+  if (!state.refused_peer_rpa_pending)
+    return;
+  state.refused_peer_rpa_pending = false;
+  const int rc = ble_store_util_delete_peer(&state.refused_peer_rpa);
+  if (rc != 0)
+    ESP_LOGW(kTag, "could not delete a refused pairing's peer record (rc=%d)", rc);
 }
 
 void schedule_disconnect(const std::uint16_t connection) noexcept {
@@ -197,7 +223,7 @@ bool is_bond_record(const int object_type) noexcept {
 // window is open, so no pairing outside it writes a bond to flash. This is the
 // authoritative deadline check. It reads the window's deadline itself, so a
 // pairing the security manager accepted between the deadline and the window
-// timer stores nothing, and its ENC_CHANGE then rejects the link. Runs with the
+// timer stores no keys, and its ENC_CHANGE then rejects the link. Runs with the
 // host lock held, so it only updates state.
 int guarded_store_write(const int object_type, const ble_store_value *const value) {
   ble_store_write_fn *const store_write = state.store_guard.original();
@@ -208,6 +234,15 @@ int guarded_store_write(const int object_type, const ble_store_value *const valu
   if (!state.window.is_open(now())) {
     // Also stop accepting further Pairing Requests before the timer runs.
     ble_hs_cfg.sm_sec_lvl = kRejectPairing;
+    // An all-zero address means the peer used no resolvable address, and
+    // NimBLE then wrote no peer device record.
+    constexpr std::array<std::uint8_t, sizeof(ble_addr_t::val)> kNoAddress{};
+    if (object_type == BLE_STORE_OBJ_TYPE_PEER_ADDR && value != nullptr &&
+        !std::equal(kNoAddress.begin(), kNoAddress.end(),
+                    std::begin(value->rpa_rec.peer_rpa_addr.val))) {
+      state.refused_peer_rpa = value->rpa_rec.peer_rpa_addr;
+      state.refused_peer_rpa_pending = true;
+    }
     return BLE_HS_EREJECT;
   }
   const int rc = store_write(object_type, value);
@@ -234,6 +269,7 @@ void handle_connect(const ble_gap_event &event) noexcept {
     return;
   state.connection = event.connect.conn_handle;
   state.disconnect_connection = BLE_HS_CONN_HANDLE_NONE;
+  delete_refused_peer_records();
   state.link.connected(now());
   rearm_drop_timer();
   ble_gap_conn_desc description{};
@@ -247,6 +283,8 @@ void handle_connect(const ble_gap_event &event) noexcept {
 }
 
 void handle_disconnect(const ble_gap_event &event) noexcept {
+  // Fallback for a refused pairing whose ENC_CHANGE never arrived.
+  delete_refused_peer_records();
   if (event.disconnect.conn.conn_handle != state.connection)
     return;
   state.connection = BLE_HS_CONN_HANDLE_NONE;
@@ -280,9 +318,13 @@ void handle_encryption_change(const ble_gap_event &event) noexcept {
   case EncryptionVerdict::RejectedDeleteKeys:
     if (found)
       delete_peer_keys(description.peer_id_addr);
+    delete_refused_peer_records();
     schedule_disconnect(connection);
     return;
   case EncryptionVerdict::Rejected:
+    // A pairing that completed after the deadline stored no keys, but may
+    // have left a peer device record.
+    delete_refused_peer_records();
     schedule_disconnect(connection);
     return;
   }
