@@ -1,11 +1,12 @@
 # Portable companion BLE protocol codec: device info, Command decoding, the
 # chunked config transfer state machine, Config status, config read-back and
 # live-signal frames. It links only the portable vehicle_signals contracts; no
-# BLE stack, make, CAN, RTOS, LED, storage or config-model target is reachable.
+# BLE stack, Mazda, CAN, RTOS, LED, storage or config-model target is reachable.
 # Committing a config is an injected port, so the codec never parses, applies
 # or persists one.
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/command.cpp"
+  idf_component_register(SRCS "src/active_document.cpp"
+                              "src/command.cpp"
                               "src/config_status.cpp"
                               "src/config_transfer.cpp"
                               "src/crc32.cpp"
@@ -19,6 +20,7 @@ if(COMMAND idf_component_register)
 endif()
 
 add_library(companion_protocol STATIC
+  src/active_document.cpp
   src/command.cpp
   src/config_status.cpp
   src/config_transfer.cpp

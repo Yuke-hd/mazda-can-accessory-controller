@@ -76,8 +76,17 @@ ByteView view(const std::vector<std::uint8_t> &bytes) {
   return ByteView{bytes.data(), bytes.size()};
 }
 
+// A 450-byte active override document. The bytes have static lifetime, as the
+// integration's canonical serialization does.
+ActiveDocument active_450() {
+  static const std::vector<std::uint8_t> canonical = document_of(450);
+  const auto document = ActiveDocument::selected(ConfigSource::Override, view(canonical));
+  REQUIRE(document.has_value());
+  return *document;
+}
+
 struct Fixture {
-  explicit Fixture(ConfigTransferEnvironment environment = {true, 1800})
+  explicit Fixture(ConfigTransferEnvironment environment = {true, ActiveDocument{}})
       : transfer(std::make_unique<ConfigTransfer>(committer, environment)) {}
 
   ConfigWriteResponse write(const std::vector<std::uint8_t> &pdu, std::uint16_t mtu = kMtu) {
@@ -104,7 +113,7 @@ TEST_CASE("a transfer starts idle with no result") {
   Fixture fixture;
   CHECK(fixture.status().state == TransferState::Idle);
   CHECK(fixture.status().result == TransferResult::None);
-  CHECK_FALSE(fixture.transfer->busy());
+  CHECK_FALSE(fixture.transfer->check_busy(fixture.now).busy);
 }
 
 TEST_CASE("a valid upload in order commits once and becomes RestartPending") {
@@ -125,7 +134,7 @@ TEST_CASE("a valid upload in order commits once and becomes RestartPending") {
   CHECK(fixture.status().saved.length == 12);
   CHECK(fixture.status().saved.crc32 == 0xCAFEF00DU);
   CHECK(fixture.transfer->restart_pending());
-  CHECK(fixture.transfer->busy());
+  CHECK(fixture.transfer->check_busy(fixture.now).busy);
 }
 
 TEST_CASE("every write is Busy while a restart is pending, after the common checks") {
@@ -170,7 +179,7 @@ TEST_CASE("start checks the MTU, length, open transfer and store in order") {
 }
 
 TEST_CASE("start fails with StorageFailure when the boot has no config store") {
-  Fixture fixture{ConfigTransferEnvironment{false, 0}};
+  Fixture fixture{ConfigTransferEnvironment{false, ActiveDocument{}}};
   CHECK(fixture.write(start_pdu(0, 0)).error == AttError::InvalidPdu);
   CHECK(fixture.write(start_pdu(10, 0)).error == AttError::StorageFailure);
   CHECK(fixture.status().state == TransferState::Idle);
@@ -283,7 +292,7 @@ TEST_CASE("a rejected config discards the transfer and keeps the diagnostic") {
   CHECK(fixture.status().result == TransferResult::ConfigRejected);
   CHECK(fixture.status().rejection.code == DiagnosticCode::MalformedJson);
   CHECK(fixture.status().rejection.path.text() == "$");
-  CHECK_FALSE(fixture.transfer->busy());
+  CHECK_FALSE(fixture.transfer->check_busy(fixture.now).busy);
 }
 
 TEST_CASE("a failed dry-run apply discards the transfer and keeps the apply status") {
@@ -355,6 +364,43 @@ TEST_CASE("a write after the idle timeout sees the transfer already discarded") 
   CHECK(fixture.status().result == TransferResult::TimedOut);
 }
 
+TEST_CASE("a busy check discards an expired transfer instead of reporting Busy") {
+  Fixture fixture;
+  const auto document = document_of(100);
+  REQUIRE(fixture.write(start_pdu(100, crc32(view(document)))).error == AttError::None);
+
+  const auto before = fixture.transfer->check_busy(fixture.now + kTransferIdleTimeout - 1ms);
+  CHECK(before.busy);
+  CHECK_FALSE(before.status_changed);
+  CHECK(fixture.status().state == TransferState::Receiving);
+
+  const auto expired = fixture.transfer->check_busy(fixture.now + kTransferIdleTimeout);
+  CHECK_FALSE(expired.busy);
+  CHECK(expired.status_changed);
+  CHECK(fixture.status().state == TransferState::Idle);
+  CHECK(fixture.status().result == TransferResult::TimedOut);
+
+  const auto again = fixture.transfer->check_busy(fixture.now + kTransferIdleTimeout);
+  CHECK_FALSE(again.busy);
+  CHECK_FALSE(again.status_changed);
+}
+
+TEST_CASE("a busy check never expires a pending restart") {
+  Fixture fixture;
+  fixture.upload(document_of(10));
+  REQUIRE(fixture.write(kCommit).error == AttError::None);
+  const auto check = fixture.transfer->check_busy(fixture.now + 60'000ms);
+  CHECK(check.busy);
+  CHECK_FALSE(check.status_changed);
+  CHECK(fixture.transfer->restart_pending());
+}
+
+TEST_CASE("select read page is bounded by the active document's own length") {
+  Fixture fixture{ConfigTransferEnvironment{true, ActiveDocument{}}};
+  CHECK(fixture.write(select_pdu(0)).read_page_offset == std::optional<std::uint16_t>{0});
+  CHECK(fixture.write(select_pdu(1)).error == AttError::InvalidPdu);
+}
+
 TEST_CASE("a disconnect interrupts an open transfer and is a no-op otherwise") {
   Fixture fixture;
   CHECK_FALSE(fixture.transfer->interrupt());
@@ -378,7 +424,7 @@ TEST_CASE("an accepted revert enters RestartPending only from Idle") {
 }
 
 TEST_CASE("select read page accepts offsets up to the active length") {
-  Fixture fixture{ConfigTransferEnvironment{true, 450}};
+  Fixture fixture{ConfigTransferEnvironment{true, active_450()}};
   const auto accepted = fixture.write(select_pdu(400));
   CHECK(accepted.error == AttError::None);
   CHECK(accepted.read_page_offset == std::optional<std::uint16_t>{400});
@@ -389,7 +435,7 @@ TEST_CASE("select read page accepts offsets up to the active length") {
 }
 
 TEST_CASE("select read page works while a transfer is open and below the transfer MTU") {
-  Fixture fixture{ConfigTransferEnvironment{true, 450}};
+  Fixture fixture{ConfigTransferEnvironment{true, active_450()}};
   fixture.upload(document_of(10));
   const auto response = fixture.write(select_pdu(200), 23);
   CHECK(response.error == AttError::None);

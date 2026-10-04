@@ -34,8 +34,11 @@ struct LiveSignalSlot {
   // Enum only: the choice-code table.
   const LiveChoiceCode *choices{nullptr};
   std::size_t choice_count{0};
-  // The signal has no freshness timeout, so a Fresh reading is a provider
-  // defect; it is reported as FreshnessUnverified instead.
+  // The signal's freshness is intentionally unset by policy, so a Fresh
+  // reading is a provider defect; it is reported as FreshnessUnverified
+  // instead. Only vehicle.brake_pressed is flagged. A signal that merely has
+  // no default timeout today, such as engine RPM, is not: a later reviewed
+  // timeout may make its Fresh readings legitimate.
   bool freshness_unset{false};
 
   // The protocol code of an Enum choice key; std::nullopt when unmapped.

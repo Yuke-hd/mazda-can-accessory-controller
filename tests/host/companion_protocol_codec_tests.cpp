@@ -161,11 +161,13 @@ TEST_CASE("boot flags map to their bits") {
 
 namespace {
 
+constexpr std::string_view kFactoryDocument = R"({"schema_version":1})";
+
 BootStatus factory_boot() {
   BootStatus boot{};
-  boot.active_source = ConfigSource::Factory;
-  boot.active_length = 0x0708;
-  boot.active_crc32 = 0xA1B2C3D4U;
+  const auto active = ActiveDocument::selected(ConfigSource::Factory, bytes_of(kFactoryDocument));
+  REQUIRE(active.has_value());
+  boot.active = *active;
   return boot;
 }
 
@@ -210,8 +212,8 @@ TEST_CASE("config status for an idle boot is 35 bytes with only the boot fields"
   CHECK(bytes.at(1) == 0);
   CHECK(bytes.at(2) == 0);
   CHECK(bytes.at(3) == 0);
-  CHECK(u16_at(bytes, 4) == 0x0708);
-  CHECK(u32_at(bytes, 6) == 0xA1B2C3D4U);
+  CHECK(u16_at(bytes, 4) == kFactoryDocument.size());
+  CHECK(u32_at(bytes, 6) == crc32(bytes_of(kFactoryDocument)));
   CHECK(all_zero(bytes, 10, 35));
 }
 
@@ -323,7 +325,7 @@ TEST_CASE("config status reports the boot diagnostic only with boot flag 0") {
 
 TEST_CASE("config status reports no active length or CRC without an active source") {
   BootStatus boot = factory_boot();
-  boot.active_source = ConfigSource::None;
+  boot.active = ActiveDocument{};
   const auto bytes = to_vector(encode_config_status(boot, TransferStatus{}));
   CHECK(bytes.at(3) == 0xFF);
   CHECK(all_zero(bytes, 4, 10));
@@ -354,16 +356,16 @@ std::string document_of(std::size_t length) {
 } // namespace
 
 TEST_CASE("read-back without an active config is a 9-byte page with source 0xFF") {
-  const auto page = encode_read_back_page(ReadBackDocument{}, 0);
+  const auto page = encode_read_back_page(ActiveDocument{}, 0);
   REQUIRE(page.has_value());
   CHECK(to_vector(*page) == std::vector<std::uint8_t>{0xFF, 0, 0, 0, 0, 0, 0, 0, 0});
-  CHECK_FALSE(encode_read_back_page(ReadBackDocument{}, 1).has_value());
-  CHECK_FALSE(ReadBackDocument::active(ConfigSource::None, bytes_of("{}")).has_value());
+  CHECK_FALSE(encode_read_back_page(ActiveDocument{}, 1).has_value());
+  CHECK_FALSE(ActiveDocument::selected(ConfigSource::None, bytes_of("{}")).has_value());
 }
 
 TEST_CASE("read-back pages carry the header and up to 200 data bytes") {
   const std::string text = document_of(450);
-  const auto document = ReadBackDocument::active(ConfigSource::Override, bytes_of(text));
+  const auto document = ActiveDocument::selected(ConfigSource::Override, bytes_of(text));
   REQUIRE(document.has_value());
   CHECK(document->crc32() == crc32(bytes_of(text)));
 
@@ -387,5 +389,5 @@ TEST_CASE("read-back pages carry the header and up to 200 data bytes") {
 
 TEST_CASE("read-back rejects a document longer than 65535 bytes") {
   const std::string text(0x10000, 'x');
-  CHECK_FALSE(ReadBackDocument::active(ConfigSource::Factory, bytes_of(text)).has_value());
+  CHECK_FALSE(ActiveDocument::selected(ConfigSource::Factory, bytes_of(text)).has_value());
 }

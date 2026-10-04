@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "companion_protocol/active_document.hpp"
 #include "companion_protocol/att_error.hpp"
 #include "companion_protocol/bytes.hpp"
 #include "companion_protocol/config_status.hpp"
@@ -67,8 +68,9 @@ struct ConfigTransferEnvironment {
   // False when this boot has no config store; Start then fails with
   // StorageFailure.
   bool config_store_available{false};
-  // Read-back `total_length` of the active document; bounds Select read page.
-  std::uint16_t active_document_length{0};
+  // The document read-back serves. Select read page accepts offsets up to its
+  // length; pass the same value Config status reports in BootStatus::active.
+  ActiveDocument active{};
 };
 
 // Per-write facts from the BLE stack.
@@ -84,6 +86,14 @@ struct ConfigWriteResponse {
   bool status_changed{false};
   // Set by an accepted Select read page: the connection's new page offset.
   std::optional<std::uint16_t> read_page_offset{};
+};
+
+// The answer to ConfigTransfer::check_busy().
+struct BusyCheck {
+  bool busy{false};
+  // True when the check discarded an expired transfer, so Config status must
+  // be notified.
+  bool status_changed{false};
 };
 
 // Config characteristic write handling: the chunked transfer state machine
@@ -111,9 +121,11 @@ public:
   // Fails, changing nothing, while a transfer is open.
   bool enter_restart_pending() noexcept;
 
-  // True while a transfer is open or a restart is pending, when commands are
-  // Busy.
-  [[nodiscard]] bool busy() const noexcept { return status_.state != TransferState::Idle; }
+  // Whether a Command written at `now` must be refused as Busy: a transfer
+  // is open or a restart is pending. An open transfer idle for
+  // kTransferIdleTimeout is discarded first with TimedOut, so an expired
+  // transfer never makes a Command Busy.
+  [[nodiscard]] BusyCheck check_busy(TransferClock now) noexcept;
   [[nodiscard]] bool restart_pending() const noexcept {
     return status_.state == TransferState::RestartPending;
   }

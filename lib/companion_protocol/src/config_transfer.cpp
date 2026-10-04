@@ -102,6 +102,13 @@ bool ConfigTransfer::expire_if_idle(TransferClock now) noexcept {
   return true;
 }
 
+BusyCheck ConfigTransfer::check_busy(TransferClock now) noexcept {
+  BusyCheck check{};
+  check.status_changed = expire_if_idle(now);
+  check.busy = status_.state != TransferState::Idle;
+  return check;
+}
+
 bool ConfigTransfer::interrupt() noexcept {
   if (!receiving()) {
     return false;
@@ -237,7 +244,7 @@ AttError ConfigTransfer::abort() noexcept {
 AttError ConfigTransfer::select_read_page(ByteView pdu,
                                           ConfigWriteResponse &response) const noexcept {
   const std::uint16_t offset = read_u16(pdu, 1);
-  if (offset > environment_.active_document_length) {
+  if (offset > environment_.active.length()) {
     return AttError::InvalidPdu;
   }
   response.read_page_offset = offset;

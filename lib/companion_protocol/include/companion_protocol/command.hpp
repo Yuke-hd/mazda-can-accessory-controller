@@ -22,7 +22,7 @@ struct CommandDecision {
 
 // Applies the Command checks in protocol order: length, check byte, opcode,
 // then Busy while a config transfer, commit or restart is in progress
-// (`operation_in_progress`, normally ConfigTransfer::busy()). Decoding never
+// (`operation_in_progress`, normally ConfigTransfer::check_busy(now).busy). Decoding never
 // performs the command; the caller does that after an accepted decision.
 [[nodiscard]] CommandDecision decode_command(ByteView pdu, bool operation_in_progress) noexcept;
 

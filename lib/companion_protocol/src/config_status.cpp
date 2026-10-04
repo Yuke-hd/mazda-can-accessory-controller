@@ -35,13 +35,10 @@ void push_zeros(EncodedConfigStatus &value, std::size_t count) noexcept {
 // Offsets 2-9: boot flags and the active document.
 void push_boot(EncodedConfigStatus &value, const BootStatus &boot) noexcept {
   value.push(boot.flags.bits());
-  value.push(code(boot.active_source));
-  if (boot.active_source == ConfigSource::None) {
-    push_zeros(value, 6);
-    return;
-  }
-  value.push_u16(boot.active_length);
-  value.push_u32(boot.active_crc32);
+  // A boot with no active document reports source None, length 0 and CRC 0.
+  value.push(code(boot.active.source()));
+  value.push_u16(boot.active.length());
+  value.push_u32(boot.active.crc32());
 }
 
 // Offsets 10-13.

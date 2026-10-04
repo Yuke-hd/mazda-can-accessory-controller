@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "companion_protocol/active_document.hpp"
 #include "companion_protocol/bytes.hpp"
 
 // Config status value and its wire-code tables. Every enumerator carries its
@@ -31,13 +32,6 @@ enum class TransferResult : std::uint8_t {
   TimedOut = 6,
   ChecksumMismatch = 7,
   Interrupted = 8,
-};
-
-// Active config source, shared by Config status and read-back.
-enum class ConfigSource : std::uint8_t {
-  Factory = 0,
-  Override = 1,
-  None = 0xFF,
 };
 
 // `diag_category`: ConfigErrorCategory.
@@ -204,9 +198,9 @@ struct BootFlags {
 // What this boot selected. Fixed until the next restart.
 struct BootStatus {
   BootFlags flags{};
-  ConfigSource active_source{ConfigSource::None};
-  std::uint16_t active_length{0};
-  std::uint32_t active_crc32{0};
+  // `active_source`, `active_length` and `active_crc32` are read from the
+  // same document the read-back pages serve.
+  ActiveDocument active{};
   // BootConfigurationResult::override_diagnostic, sent only with boot flag 0.
   DiagnosticCode override_code{DiagnosticCode::None};
   ValidationCode override_validation{ValidationCode::None};

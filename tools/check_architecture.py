@@ -456,6 +456,7 @@ _ACTION_ENGINE_PROBE_BODY = (
 )
 
 COMPANION_PROTOCOL_HEADERS = (
+    "companion_protocol/active_document.hpp",
     "companion_protocol/att_error.hpp",
     "companion_protocol/bytes.hpp",
     "companion_protocol/command.hpp",
@@ -508,7 +509,7 @@ _COMPANION_PROTOCOL_PROBE_BODY = (
     "  const std::array<std::uint8_t, 7> chunk{0x02, 0x00, 0x00, 0x7B, 0x7D, 0x0A, 0x0A};\n"
     "  const std::array<std::uint8_t, 1> commit{0x03};\n"
     "  ProbeCommitter committer{};\n"
-    "  ConfigTransfer transfer{committer, ConfigTransferEnvironment{true, 0}};\n"
+    "  ConfigTransfer transfer{committer, ConfigTransferEnvironment{true, ActiveDocument{}}};\n"
     "  const ConfigWriteContext context{247, TransferClock{0}};\n"
     "  const bool uploaded = transfer.handle_write(start, context).error == AttError::None &&\n"
     "                        transfer.handle_write(chunk, context).error == AttError::None &&\n"
