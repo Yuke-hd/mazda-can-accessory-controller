@@ -138,9 +138,9 @@ static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes 
 // Starts the optional companion BLE link. It runs on its own startup task, so
 // a failure here or later only loses the companion link; CAN, telemetry, the
 // LED renderer and fail-off are already running and are not affected. Not
-// inlined, so the Device info value stays out of app_main's own frame; this
-// call chain still runs on the main task stack, but is shallower than the
-// configure_engine_lighting() and logging path, so it sets no new stack peak.
+// inlined, so the Device info value stays out of app_main's own frame. The
+// vehicle I/O startup no longer runs on the main task, so this call chain may
+// now set the main task's stack peak; re-measure it on the bench (ADR-0004).
 __attribute__((noinline)) void start_companion_link() noexcept {
   // Both strings have static storage; start() encodes them before returning.
   companion_protocol::DeviceInfo device_info{};
@@ -282,17 +282,19 @@ constexpr BaseType_t kVehicleIoCore = 1;
 constexpr std::uint32_t kVehicleIoStartupStackBytes = 6144;
 // Healthy startup takes well under a second. The renderer's own supervisor
 // already bounds LED driver hangs once it runs; this bounds the rest.
-// No digit separator: tools/validate_local_argb_boundary.py would read it as
-// an unterminated character literal.
+// No digit separator: the validators' comment stripper reads a ' digit
+// separator as the start of a character literal and silently stops stripping
+// comments from that point on, so commented-out code could satisfy its rules.
 constexpr std::uint32_t kVehicleIoStartupTimeoutMs = 10000;
 constexpr std::uint32_t kVehicleIoStarted = 1;
 constexpr std::uint32_t kVehicleIoRefused = 2;
 
 void vehicle_io_startup_task(void *const waiting_task) noexcept {
   const bool started = start_vehicle_io();
-  // Bench evidence for the interrupt placement: every driver this sequence
-  // installed allocated its interrupt on this core.
-  ESP_LOGI(kTag, "vehicle I/O startup %s on core %d (TWAI, RMT and SPI interrupt core)",
+  // This task is pinned, so the core only restates the pinning. The interrupt
+  // allocation evidence is esp_intr_dump(), enabled with
+  // CONFIG_WEACT_DUMP_INTERRUPT_ALLOCATION.
+  ESP_LOGI(kTag, "vehicle I/O startup %s; drivers installed from core %d",
            started ? "completed" : "refused", xPortGetCoreID());
 #if defined(CONFIG_WEACT_DUMP_INTERRUPT_ALLOCATION)
   (void)esp_intr_dump(nullptr);
@@ -311,6 +313,8 @@ void vehicle_io_startup_task(void *const waiting_task) noexcept {
 // restarts instead, and the next boot runs safe defaults and startup black
 // again before CAN can start.
 bool start_vehicle_io_on_core1() noexcept {
+  // Drop any stale notification so only the startup task's result is read.
+  (void)xTaskNotifyStateClear(nullptr);
   if (xTaskCreatePinnedToCore(&vehicle_io_startup_task, "vehicle_io_start",
                               kVehicleIoStartupStackBytes, xTaskGetCurrentTaskHandle(),
                               ESP_TASK_MAIN_PRIO, nullptr, kVehicleIoCore) != pdPASS) {

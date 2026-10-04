@@ -331,6 +331,30 @@ def _driver_core_failures(structure: str) -> List[str]:
     task_body = _function_body(structure, "void", STARTUP_TASK) or ""
     if re.search(rf"\b{STARTUP_SEQUENCE}\s*\(\s*\)", task_body) is None:
         failures.append(f"{STARTUP_TASK} does not run {STARTUP_SEQUENCE}()")
+    # The task must be the sequence's only call site, so no other path can run
+    # it on core 0. The definition itself is the one `bool` match.
+    call_sites = [
+        call
+        for call in re.finditer(rf"\b{STARTUP_SEQUENCE}\s*\(", structure)
+        if re.search(r"\bbool\s+$", structure[: call.start()]) is None
+    ]
+    if len(call_sites) != 1:
+        failures.append(
+            f"{STARTUP_SEQUENCE}() must have exactly one call site, in {STARTUP_TASK}; "
+            f"found {len(call_sites)}"
+        )
+    # A refused or failed startup must stop app_main before the companion link
+    # and the polling loop.
+    gated = re.search(
+        rf"\bif\s*\(\s*!\s*{STARTUP_RUNNER}\s*\(\s*\)\s*\)\s*\{{[^{{}}]*\breturn\s*;[^{{}}]*\}}",
+        app_main,
+    )
+    runner_calls = len(re.findall(rf"\b{STARTUP_RUNNER}\s*\(", app_main))
+    if gated is None or runner_calls != 1:
+        failures.append(
+            f"app_main does not return when {STARTUP_RUNNER}() fails: "
+            f"use a single `if (!{STARTUP_RUNNER}()) {{ ... return; }}` guard"
+        )
     return failures
 
 

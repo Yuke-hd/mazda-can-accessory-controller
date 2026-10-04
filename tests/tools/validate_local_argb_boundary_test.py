@@ -122,6 +122,37 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {\n    ESP_LOGE", "  if (false) {\n    ESP_LOGE")
         self.assert_rejected("board safe defaults do not precede the vehicle I/O startup")
 
+    def test_ignored_vehicle_io_startup_result_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  if (!start_vehicle_io_on_core1()) {\n"
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
+            "    return;\n"
+            "  }\n",
+            "  (void)start_vehicle_io_on_core1();\n",
+        )
+        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+
+    def test_vehicle_io_startup_failure_without_return_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
+            "    return;\n",
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n',
+        )
+        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+
+    def test_startup_sequence_called_from_a_core_0_helper_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "extern \"C\" void app_main(void) {\n",
+            "void warm_up() noexcept { (void)start_vehicle_io(); }\n\n"
+            "extern \"C\" void app_main(void) {\n",
+        )
+        self.assert_rejected(
+            "start_vehicle_io() must have exactly one call site, in vehicle_io_startup_task; found 2"
+        )
+
     def test_legacy_sink_binding_is_rejected(self) -> None:
         self.edit(
             MAIN,
