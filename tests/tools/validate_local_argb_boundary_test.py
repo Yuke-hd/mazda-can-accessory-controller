@@ -82,6 +82,46 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_repository_composition_passes(self) -> None:
         self.assert_accepted()
 
+    def test_startup_sequence_called_directly_from_app_main_is_rejected(self) -> None:
+        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {", "  if (!start_vehicle_io()) {")
+        self.assert_rejected(
+            "app_main calls start_vehicle_io() directly instead of on the driver core",
+            "start_vehicle_io_on_core1() is not called in app_main",
+        )
+
+    def test_vehicle_io_core_other_than_core_1_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "constexpr BaseType_t kVehicleIoCore = 1;",
+            "constexpr BaseType_t kVehicleIoCore = 0;",
+        )
+        self.assert_rejected("the vehicle I/O driver core is not core 1")
+
+    def test_unpinned_startup_task_is_rejected(self) -> None:
+        self.edit(MAIN, "  if (xTaskCreatePinnedToCore(", "  if (xTaskCreate(")
+        self.edit(MAIN, "ESP_TASK_MAIN_PRIO, nullptr, kVehicleIoCore)", "ESP_TASK_MAIN_PRIO, nullptr)")
+        self.assert_rejected(
+            "start_vehicle_io_on_core1() does not create vehicle_io_startup_task pinned to kVehicleIoCore"
+        )
+
+    def test_startup_task_without_the_sequence_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  const bool started = start_vehicle_io();",
+            "  const bool started = false;",
+        )
+        self.assert_rejected("vehicle_io_startup_task does not run start_vehicle_io()")
+
+    def test_board_defaults_after_vehicle_io_startup_are_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  if (!board::initialize_safe_defaults()) {",
+            "  if (!start_vehicle_io_on_core1()) {\n    return;\n  }\n"
+            "  if (!board::initialize_safe_defaults()) {",
+        )
+        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {\n    ESP_LOGE", "  if (false) {\n    ESP_LOGE")
+        self.assert_rejected("board safe defaults do not precede the vehicle I/O startup")
+
     def test_legacy_sink_binding_is_rejected(self) -> None:
         self.edit(
             MAIN,
@@ -215,19 +255,19 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("engine.detach() is not followed by local_argb::fail_off()")
 
-    def test_start_wrapped_in_helper_after_app_main_is_rejected(self) -> None:
+    def test_start_wrapped_in_helper_outside_startup_sequence_is_rejected(self) -> None:
         for label, call, helper, message in (
             (
                 "renderer start",
                 "if (!local_argb::start()) {",
                 "bool start_renderer() noexcept { return local_argb::start(); }\n",
-                "local_argb::start() is not called in app_main",
+                "local_argb::start() is not called in start_vehicle_io",
             ),
             (
                 "telemetry start",
                 "if (!telemetry.start().ok()) {",
                 "bool start_renderer() noexcept { return telemetry.start().ok(); }\n",
-                "telemetry.start() is not called in app_main",
+                "telemetry.start() is not called in start_vehicle_io",
             ),
         ):
             original = (self.root / MAIN).read_text(encoding="utf-8")
@@ -328,7 +368,7 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
 
     def test_unreachable_shared_profile_application_is_rejected(self) -> None:
         self.edit(MAIN, "if (!configure_engine_lighting(config_backend.get())) {", "if (false) {")
-        self.assert_rejected("configure_engine_lighting() is not called in app_main")
+        self.assert_rejected("configure_engine_lighting() is not called in start_vehicle_io")
 
     def test_missing_boot_configuration_loader_is_rejected(self) -> None:
         self.edit(

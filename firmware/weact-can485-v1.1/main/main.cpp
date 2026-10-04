@@ -10,8 +10,10 @@
 #include "controller_config/persisted/model.hpp"
 #include "controller_config/timing.hpp"
 #include "esp_app_desc.h"
+#include "esp_intr_alloc.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_task.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -20,6 +22,7 @@
 #include "local_argb_actions/led_action_sink.hpp"
 #include "mazda/signal_provider.hpp"
 #include "mazda/vehicle_telemetry.hpp"
+#include "sdkconfig.h"
 
 #include <cstdint>
 #include <memory>
@@ -85,7 +88,9 @@ std::uint32_t notification_dispatch_progress(const void *context) noexcept {
 // If teardown were ever added, it would have to stop the facade
 // (telemetry.stop()) before the engine is destroyed, and then call
 // local_argb::fail_off(), because a stopped facade and a destroyed engine send
-// no Deactivate.
+// no Deactivate. The facade's lifecycle owner is the vehicle I/O startup task,
+// which exits after start, so such a stop would have to run on a long-lived
+// owner instead.
 static ApplicationState application_state{};
 class ApplicationClock final : public vehicle_core::MonotonicClock {
 public:
@@ -211,14 +216,16 @@ bool configure_engine_lighting(
 }
 } // namespace
 
-extern "C" void app_main(void) {
-  if (!board::initialize_safe_defaults()) {
-    ESP_LOGE(kTag, "board safe-default initialization failed; refusing to start");
-    return;
-  }
+namespace {
+// Runs the vehicle I/O startup sequence: startup black, configuration, signal
+// subscriptions and the CAN start, in that order. Every failure after
+// local_argb::start() fails off before refusing. The task that runs it becomes
+// the telemetry facade's lifecycle owner, so every facade lifecycle call
+// (subscribe, attach, start) must stay in this function.
+bool start_vehicle_io() noexcept {
   if (!local_argb::start()) {
     ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
-    return;
+    return false;
   }
 
   auto config_backend = controller_config::persisted::make_nvs_config_store_backend();
@@ -227,7 +234,7 @@ extern "C" void app_main(void) {
   if (!configure_engine_lighting(config_backend.get())) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "engine LED action setup failed; refusing to start CAN");
-    return;
+    return false;
   }
   // The turn channel has two subscriber slots: the typed notice log and the
   // engine. Both register while the facade is stopped.
@@ -236,17 +243,17 @@ extern "C" void app_main(void) {
   if (!turn_subscription.ok()) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "turn notification registration failed; refusing to start CAN");
-    return;
+    return false;
   }
   if (engine.attach() != vehicle_signals::SignalStatus::Ok) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");
-    return;
+    return false;
   }
   if (!local_argb::watch_progress(&notification_dispatch_progress, &telemetry)) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "dispatcher progress watch failed; refusing to start CAN");
-    return;
+    return false;
   }
 
   ESP_LOGI(kTag,
@@ -256,10 +263,83 @@ extern "C" void app_main(void) {
   if (!telemetry.start().ok()) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "strict listen-only telemetry startup failed; refusing to continue");
-    return;
+    return false;
   }
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
+  return true;
+}
+
+// ESP-IDF allocates a driver's interrupt on the core that installs it, and the
+// TWAI, RMT and SPI drivers offer no core option. The vehicle I/O startup
+// therefore runs on a short-lived task pinned to core 1, which leaves core 0 to
+// the Bluetooth controller, the NimBLE host and esp_timer (ADR-0004). Tasks
+// created inside the sequence use xTaskCreate(), which is tskNO_AFFINITY in
+// ESP-IDF: they do not inherit this task's pinning.
+constexpr BaseType_t kVehicleIoCore = 1;
+// app_main ran this sequence on 3,584 B with 388 B left at its high-water
+// mark; this task keeps a wide margin and is freed once it exits.
+constexpr std::uint32_t kVehicleIoStartupStackBytes = 6144;
+// Healthy startup takes well under a second. The renderer's own supervisor
+// already bounds LED driver hangs once it runs; this bounds the rest.
+// No digit separator: tools/validate_local_argb_boundary.py would read it as
+// an unterminated character literal.
+constexpr std::uint32_t kVehicleIoStartupTimeoutMs = 10000;
+constexpr std::uint32_t kVehicleIoStarted = 1;
+constexpr std::uint32_t kVehicleIoRefused = 2;
+
+void vehicle_io_startup_task(void *const waiting_task) noexcept {
+  const bool started = start_vehicle_io();
+  // Bench evidence for the interrupt placement: every driver this sequence
+  // installed allocated its interrupt on this core.
+  ESP_LOGI(kTag, "vehicle I/O startup %s on core %d (TWAI, RMT and SPI interrupt core)",
+           started ? "completed" : "refused", xPortGetCoreID());
+#if defined(CONFIG_WEACT_DUMP_INTERRUPT_ALLOCATION)
+  (void)esp_intr_dump(nullptr);
+#endif
+  ESP_LOGI(kTag, "vehicle I/O startup task stack headroom: %u bytes",
+           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+  (void)xTaskNotify(static_cast<TaskHandle_t>(waiting_task),
+                    started ? kVehicleIoStarted : kVehicleIoRefused, eSetValueWithOverwrite);
+  vTaskDelete(nullptr);
+}
+
+// Runs start_vehicle_io() on core 1 and waits for its result. Returns true only
+// when vehicle I/O started. A refused sequence has already failed off. If no
+// result arrives in time, the sequence may be blocked inside a driver or the
+// facade, so app_main must not touch the LED drivers concurrently; the device
+// restarts instead, and the next boot runs safe defaults and startup black
+// again before CAN can start.
+bool start_vehicle_io_on_core1() noexcept {
+  if (xTaskCreatePinnedToCore(&vehicle_io_startup_task, "vehicle_io_start",
+                              kVehicleIoStartupStackBytes, xTaskGetCurrentTaskHandle(),
+                              ESP_TASK_MAIN_PRIO, nullptr, kVehicleIoCore) != pdPASS) {
+    // Nothing has started: the LED drivers were never installed, so the board
+    // safe defaults still hold the outputs low.
+    ESP_LOGE(kTag, "vehicle I/O startup task creation failed; refusing to start CAN");
+    return false;
+  }
+  std::uint32_t result = 0;
+  if (xTaskNotifyWait(0, UINT32_MAX, &result, pdMS_TO_TICKS(kVehicleIoStartupTimeoutMs)) !=
+      pdTRUE) {
+    ESP_LOGE(kTag, "vehicle I/O startup gave no result within %lu ms; restarting",
+             static_cast<unsigned long>(kVehicleIoStartupTimeoutMs));
+    esp_restart();
+  }
+  return result == kVehicleIoStarted;
+}
+} // namespace
+
+extern "C" void app_main(void) {
+  if (!board::initialize_safe_defaults()) {
+    ESP_LOGE(kTag, "board safe-default initialization failed; refusing to start");
+    return;
+  }
+  if (!start_vehicle_io_on_core1()) {
+    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");
+    return;
+  }
+
   // The companion link starts only after startup black, NVS initialization and
   // CAN start, and its result never gates lighting.
   start_companion_link();
