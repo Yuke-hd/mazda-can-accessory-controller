@@ -6,6 +6,7 @@ cmake_minimum_required(VERSION 3.16)
 
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/board"
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/companion_ble"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_actions"
@@ -13,6 +14,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_can_rx"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/companion_protocol"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")

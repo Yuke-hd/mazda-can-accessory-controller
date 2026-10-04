@@ -266,7 +266,96 @@ def write_led_actions_fixture(root: Path) -> None:
     )
 
 
+def write_companion_ble_fixture(root: Path) -> None:
+    component = root / "components/companion_ble"
+    (component / "include/companion_ble").mkdir(parents=True)
+    (component / "src").mkdir()
+    (component / "include/companion_ble/companion_ble.hpp").write_text(
+        '#pragma once\n#include <cstdint>\n#include "companion_protocol/device_info.hpp"\n'
+        "// No CAN, telemetry, local_argb or NVS access; mazda is only mentioned here.\n",
+        encoding="utf-8",
+    )
+    (component / "src/companion_ble.cpp").write_text(
+        '#include "companion_ble/companion_ble.hpp"\n'
+        '#include "esp_log.h"\n#include "freertos/task.h"\n'
+        '#include "host/ble_hs.h"\n#include "nimble/nimble_port.h"\n'
+        '#include "services/gap/ble_svc_gap.h"\n'
+        'constexpr const char *kDeviceName = "Mazda CAN Controller";\n',
+        encoding="utf-8",
+    )
+    (component / "CMakeLists.txt").write_text(
+        "if(COMMAND idf_component_register)\n"
+        '  idf_component_register(SRCS "src/companion_ble.cpp" INCLUDE_DIRS "include"\n'
+        '                         PRIV_INCLUDE_DIRS "private_include"\n'
+        "                         REQUIRES companion_protocol\n"
+        "                         PRIV_REQUIRES bt freertos log)\n"
+        "  return()\n"
+        "endif()\n"
+        "add_library(companion_ble_uuids INTERFACE)\n"
+        "target_include_directories(companion_ble_uuids INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)\n",
+        encoding="utf-8",
+    )
+
+
 class ArchitectureCheckerRegressionTests(unittest.TestCase):
+    def test_clean_companion_ble_service_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_ble_isolation(root)
+        self.assertIn("OK   companion BLE service", output.getvalue())
+
+    def test_companion_ble_vehicle_lighting_and_nvs_access_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + '#include "local_argb/local_argb.h"\n'
+                + '#include "controller_config/persisted/config_store.hpp"\n'
+                + '#include "vehicle_signals/catalog.hpp"\n'
+                + "#include <led_strip.h>\n"
+                + "void probe() { twai_receive(); nvs_flash_init(); }\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("includes forbidden header local_argb/local_argb.h", detail)
+        self.assertIn(
+            "includes forbidden header controller_config/persisted/config_store.hpp", detail
+        )
+        self.assertIn("includes forbidden header vehicle_signals/catalog.hpp", detail)
+        self.assertIn("includes forbidden header led_strip.h", detail)
+        self.assertIn("uses forbidden name twai", detail)
+        self.assertIn("uses forbidden name nvs", detail)
+        self.assertNotIn("uses forbidden name mazda", detail)
+
+    def test_companion_ble_build_escapes_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            cmake = root / "components/companion_ble/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8").replace(
+                    "PRIV_REQUIRES bt freertos log", "PRIV_REQUIRES bt freertos log local_argb nvs_flash"
+                )
+                + "target_link_libraries(companion_ble_uuids INTERFACE mazda_telemetry)\n"
+                + "include_directories(../vehicle_can_rx/include)\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_ble requires forbidden component local_argb", detail)
+        self.assertIn("companion_ble requires forbidden component nvs_flash", detail)
+        self.assertIn("companion_ble links forbidden target mazda_telemetry", detail)
+        self.assertIn("companion_ble uses directory-scope include_directories()", detail)
+
+
     def test_clean_generic_consumer_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-consumer-fixture-") as directory:
             root = Path(directory)

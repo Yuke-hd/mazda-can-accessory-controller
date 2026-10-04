@@ -3,3 +3,31 @@ CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_FREERTOS_UNICORE=n
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Companion BLE (docs/development/ble-resource-budget.md#recommended-sdkconfig).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# Controller: BLE only, one link, on core 1.
+CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
+CONFIG_BTDM_CTRL_PINNED_TO_CORE_1=y
+
+# Host: peripheral and broadcaster roles only, one connection, on core 1.
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_1=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=y
+
+# The security manager stays off until the pairing window lands (#164). With
+# it off, NimBLE answers every pairing request with Pairing Not Supported and
+# never writes bonds to NVS, which keeps ADR-0003's rule that no pairing
+# succeeds outside the window. #164 applies the budget's security settings.
+CONFIG_BT_NIMBLE_SECURITY_ENABLE=n
+
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

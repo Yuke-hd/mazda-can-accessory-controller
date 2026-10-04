@@ -8,6 +8,7 @@ board::initialize_safe_defaults()
     -> load NVS override or embedded factory JSON, then apply it
     -> typed turn subscription, ActionEngine::attach()
     -> VehicleTelemetry::start()    # facade starts strict vehicle CAN
+    -> companion_ble::start()       # optional; asynchronous; never gates lighting
     -> application polling cadence
 ```
 
@@ -48,6 +49,24 @@ The application does not stop the facade or detach the engine.
 The typed turn callback and the engine's shared turn subscription occupy the
 turn channel's two subscriber slots.
 
+## Companion BLE
+
+After the facade has started CAN, the composition root builds the companion
+Device info inputs from `controller_config::persisted::kSchemaVersion`, the
+application description's version and the `weact-can485-v1.1` hardware
+identifier, and passes them to `companion_ble::start()`; a static assertion
+keeps `kMaxStoredControllerConfigJsonBytes` equal to the protocol's
+`companion_protocol::kMaxConfigBytes`. That call encodes the value with
+`companion_protocol::encode_device_info()`, creates a low-priority startup
+task and returns; NimBLE initialization, GATT registration and advertising run on
+that task and on the NimBLE host task, never on `app_main`. A failure at any
+stage is logged and leaves the controller without a companion link. It does
+not stop CAN, telemetry, LED rendering or fail-off, which are already
+running. NVS is already initialized by the configuration store; the companion
+component does not initialize or write NVS. Its protocol is specified in
+[`ble-protocol.md`](../specs/companion/ble-protocol.md) and its resource
+budget in [`ble-resource-budget.md`](../development/ble-resource-budget.md).
+
 ## Application boundary
 
 The application registers a typed `on_turn_state_changed` callback and polls
@@ -77,8 +96,8 @@ operations.
 
 The vehicle project selects `vehicle_can_rx`, `mazda_telemetry`,
 `vehicle_lighting_policy`, `vehicle_signals`, `action_engine`,
-`local_argb_actions`, `local_argb_sink_contract`, and `local_argb`. The
-receive-only CAN invariant is documented in
+`local_argb_actions`, `local_argb_sink_contract`, `local_argb`,
+`companion_protocol`, and `companion_ble`. The receive-only CAN invariant is documented in
 [`receive-only-boundary.md`](receive-only-boundary.md).
 
 ## Validation
