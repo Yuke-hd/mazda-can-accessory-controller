@@ -277,9 +277,11 @@ keys itself.
    to press the controller's user key, then read Device info again (or
    reconnect) until bit 0 is `1`. The window stays open for 120 s, and another
    press restarts it.
-3. Touch a protected attribute, for example read Config status or subscribe to
-   Live signals. The controller answers `Insufficient Authentication` (`0x05`),
-   and iOS shows its pairing alert. When the user accepts, Just Works LE Secure
+3. Read a protected attribute, for example Config status. The controller
+   answers `Insufficient Authentication` (`0x05`), and iOS shows its pairing
+   alert. Use a read, not a subscription, as the trigger: NimBLE rejects an
+   unencrypted CCCD write before the controller's access check runs, so that
+   rejection does not restart the 30 s period. When the user accepts, Just Works LE Secure
    Connections pairing runs and the bond is stored. The window then closes.
 4. Retry the protected access. It succeeds once the link is encrypted with the
    accepted bond.
@@ -317,7 +319,14 @@ behaviour, the binding chooses the more conservative outcome:
   handler still returns `IGNORE` and disconnects if it is ever reached outside
   the window.
 - **No NVS writes outside the window.** The bond store's write callback refuses
-  security records unless the window is open, and the store-full handler
+  pairing records (both security records and the peer address record) unless
+  the window is open. It checks the window's deadline itself, so a pairing
+  accepted in the moment between the deadline and the window timer stores
+  nothing and is then rejected. NimBLE re-initializes its store callbacks at
+  every host sync (its default-IRK setup calls `ble_store_config_init()`), so
+  the binding re-installs this guard at each sync and checks it on every GAP
+  event. If no store callback exists to guard, the window stays closed. The
+  store-full handler
   refuses to evict a bond outside it (the pairing then fails with
   `Unspecified Reason`, `0x08`). An outside-window pairing therefore never
   writes, evicts or deletes a bond.
@@ -325,8 +334,10 @@ behaviour, the binding chooses the more conservative outcome:
   period restarts on the connection, on the first protected-attribute
   rejection, on a repeat pairing accepted inside the window and on pairing
   completion. A store-full event inside the window does not restart it. The
-  90 s cap is unchanged. Whether 30 s after the first rejection suits the iOS
-  pairing alert still needs a bench trace.
+  90 s cap is unchanged. An unencrypted CCCD write is rejected by NimBLE's
+  stock permission check before the access check, so it does not restart the
+  period either. Whether 30 s after the first rejection suits the iOS pairing
+  alert still needs a bench trace.
 - **Accepted bond.** A link has an accepted bond only when it is encrypted with
   a 16-byte key and its peer has a stored bond. A bond counts as new only when
   this link wrote its keys during the window, and only then does the window
@@ -338,6 +349,12 @@ behaviour, the binding chooses the more conservative outcome:
   accepted bond is refused through the authorization hook, which NimBLE
   reports as `Insufficient Authorization` (`0x08`) rather than `0x05`, and the
   link is then disconnected.
+- **Notification gate.** A protected notifier sends only to a link for which
+  `link_has_accepted_bond()` is true. NimBLE's `sec_state.encrypted` and
+  `sec_state.bonded` flags are not enough, because a rejected pairing is
+  encrypted and bonded until its disconnect completes. The Live signals
+  notifier (#166) must use this check when it is integrated with this
+  binding.
 - **Clear bonds.** The operation deletes each bonded peer's security, CCCD and
   address records and keeps the controller's own identity resolving key, so
   the controller's identity address does not change. Entries in the

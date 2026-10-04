@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "companion_protocol/hook_guard.hpp"
 #include "companion_protocol/link_security.hpp"
 #include "companion_protocol/pairing_window.hpp"
 #include "companion_protocol/user_key_debouncer.hpp"
@@ -260,6 +261,48 @@ TEST_CASE("ATT error codes match the protected access outcomes") {
   CHECK(companion_protocol::att_error_code(ProtectedAccess::InsufficientEncryption) == 0x0FU);
   CHECK(companion_protocol::att_error_code(
             ProtectedAccess::InsufficientAuthenticationAndDisconnect) == 0x05U);
+}
+
+// --- Hook guard -----------------------------------------------------------
+
+using companion_protocol::HookGuard;
+using companion_protocol::HookState;
+using StoreWrite = int (*)(int);
+
+int host_store_write(const int value) { return value; }
+int reinitialized_store_write(const int value) { return value + 1; }
+int guarded_write(const int value) { return -value; }
+
+TEST_CASE("the hook guard installs itself and forwards to the host function") {
+  HookGuard<StoreWrite> guard{guarded_write};
+  StoreWrite slot = host_store_write;
+  CHECK(guard.ensure(slot) == HookState::Installed);
+  CHECK(slot == &guarded_write);
+  CHECK(guard.original() == &host_store_write);
+  CHECK(guard.ensure(slot) == HookState::AlreadyInstalled);
+  CHECK(slot == &guarded_write);
+}
+
+TEST_CASE("the hook guard survives the host resetting its slot at sync") {
+  HookGuard<StoreWrite> guard{guarded_write};
+  StoreWrite slot = host_store_write;
+  CHECK(guard.ensure(slot) == HookState::Installed);
+  // NimBLE's host startup re-initializes the store and overwrites the slot.
+  slot = reinitialized_store_write;
+  CHECK(guard.ensure(slot) == HookState::Installed);
+  CHECK(slot == &guarded_write);
+  CHECK(guard.original() == &reinitialized_store_write);
+}
+
+TEST_CASE("the hook guard reports a missing host function") {
+  HookGuard<StoreWrite> guard{guarded_write};
+  StoreWrite slot = nullptr;
+  CHECK(guard.ensure(slot) == HookState::Missing);
+  CHECK(slot == nullptr);
+  CHECK(guard.original() == nullptr);
+  // A guard placed in the slot without anything to forward to is not usable.
+  slot = guarded_write;
+  CHECK(guard.ensure(slot) == HookState::Missing);
 }
 
 } // namespace

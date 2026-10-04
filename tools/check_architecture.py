@@ -464,6 +464,7 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/config_transfer.hpp",
     "companion_protocol/crc32.hpp",
     "companion_protocol/device_info.hpp",
+    "companion_protocol/hook_guard.hpp",
     "companion_protocol/link_security.hpp",
     "companion_protocol/live_signal_layout.hpp",
     "companion_protocol/live_signals.hpp",

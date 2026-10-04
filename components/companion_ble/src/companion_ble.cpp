@@ -40,6 +40,7 @@ void host_task(void * /*argument*/) {
 }
 
 void on_host_sync() {
+  internal::on_host_synced();
   const int rc = ble_hs_util_ensure_addr(0);
   if (rc != 0) {
     ESP_LOGW(kTag, "no usable BLE identity address (rc=%d)", rc);

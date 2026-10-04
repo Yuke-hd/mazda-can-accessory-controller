@@ -1,5 +1,6 @@
 #include "companion_ble/security.hpp"
 
+#include "companion_protocol/hook_guard.hpp"
 #include "companion_protocol/link_security.hpp"
 #include "companion_protocol/pairing_window.hpp"
 #include "companion_protocol/user_key_debouncer.hpp"
@@ -24,6 +25,8 @@ namespace {
 using companion_protocol::BondStorage;
 using companion_protocol::EncryptedLink;
 using companion_protocol::EncryptionVerdict;
+using companion_protocol::HookGuard;
+using companion_protocol::HookState;
 using companion_protocol::LinkEncryption;
 using companion_protocol::LinkSecurity;
 using companion_protocol::PairingClock;
@@ -42,6 +45,8 @@ constexpr std::uint32_t kUserKeySamplePeriodMs = 20U;
 constexpr std::uint8_t kRejectPairing = 1U;
 constexpr std::uint8_t kAcceptPairing = 0U;
 
+int guarded_store_write(int object_type, const ble_store_value *value);
+
 // All policy state. Touched only on the NimBLE host task, except by
 // configure_security() before that task exists.
 struct SecurityState {
@@ -51,7 +56,9 @@ struct SecurityState {
   LinkSecurity link{};
   std::uint16_t connection{BLE_HS_CONN_HANDLE_NONE};
   std::uint16_t disconnect_connection{BLE_HS_CONN_HANDLE_NONE};
-  ble_store_write_fn *store_write{nullptr};
+  // Keeps guarded_store_write in ble_hs_cfg.store_write_cb. NimBLE resets
+  // that slot to its config store at every host sync (see ensure_store_guard).
+  HookGuard<ble_store_write_fn *> store_guard{guarded_store_write};
   ble_npl_callout user_key_timer{};
   ble_npl_callout window_timer{};
   ble_npl_callout drop_timer{};
@@ -108,10 +115,33 @@ void rearm_drop_timer() noexcept {
   arm_at(state.drop_timer, *deadline);
 }
 
+// Re-installs the bond store guard if NimBLE replaced it. NimBLE's host
+// startup (ble_hs_startup_go) runs at every sync, including after a host
+// reset. Without a store_gen_key_cb it calls ble_hs_pvcy_set_default_irk(),
+// which, with BT_NIMBLE_STATIC_TO_DYNAMIC, calls ble_store_config_init() again
+// and so resets store_write_cb. ble_gap_reset_irk() takes the same path. The
+// guard is therefore checked on every GAP event and at each sync. Returns
+// false, after logging an error, when no store write callback exists to guard.
+bool ensure_store_guard() noexcept {
+  switch (state.store_guard.ensure(ble_hs_cfg.store_write_cb)) {
+  case HookState::AlreadyInstalled:
+    return true;
+  case HookState::Installed:
+    ESP_LOGI(kTag, "bond store guard installed");
+    return true;
+  case HookState::Missing:
+    break;
+  }
+  ESP_LOGE(kTag, "no bond store to guard; pairing stays disabled");
+  return false;
+}
+
 // Applies the window state to the security manager and the expiry timer.
+// Every pairing decision rests on the bond store guard, so without it the
+// window stays closed.
 void apply_window_state() noexcept {
   const PairingClock current = now();
-  if (state.window.is_open(current)) {
+  if (state.window.is_open(current) && ensure_store_guard()) {
     ble_hs_cfg.sm_sec_lvl = kAcceptPairing;
     arm_at(state.window_timer, *state.window.closes_at());
     return;
@@ -124,7 +154,7 @@ void apply_window_state() noexcept {
 void on_user_key_timer(ble_npl_event * /*event*/) {
   const UserKeyLevel level =
       state.user_key_pressed() ? UserKeyLevel::Pressed : UserKeyLevel::Released;
-  if (state.debouncer.sample(level) && state.window.open(now())) {
+  if (state.debouncer.sample(level) && ensure_store_guard() && state.window.open(now())) {
     apply_window_state();
     ESP_LOGI(kTag, "pairing window open for %u s",
              static_cast<unsigned>(companion_protocol::kPairingWindowPeriod.count() / 1000));
@@ -156,19 +186,31 @@ void on_disconnect_timer(ble_npl_event * /*event*/) {
     (void)ble_gap_terminate(connection, BLE_ERR_REM_USER_CONN_TERM);
 }
 
+// The records ble_sm_persist_keys() writes for a pairing: both security
+// records and the peer's resolvable-address record.
 bool is_bond_record(const int object_type) noexcept {
-  return object_type == BLE_STORE_OBJ_TYPE_OUR_SEC || object_type == BLE_STORE_OBJ_TYPE_PEER_SEC;
+  return object_type == BLE_STORE_OBJ_TYPE_OUR_SEC || object_type == BLE_STORE_OBJ_TYPE_PEER_SEC ||
+         object_type == BLE_STORE_OBJ_TYPE_PEER_ADDR;
 }
 
-// Wraps the config store's write: pairing keys are stored only while the
-// window is open, so no pairing outside it writes a bond to flash. Runs with
-// the host lock held, so it only updates state.
+// Wraps the config store's write: pairing records are stored only while the
+// window is open, so no pairing outside it writes a bond to flash. This is the
+// authoritative deadline check. It reads the window's deadline itself, so a
+// pairing the security manager accepted between the deadline and the window
+// timer stores nothing, and its ENC_CHANGE then rejects the link. Runs with the
+// host lock held, so it only updates state.
 int guarded_store_write(const int object_type, const ble_store_value *const value) {
-  if (!is_bond_record(object_type))
-    return state.store_write(object_type, value);
-  if (!state.window.is_open(now()))
+  ble_store_write_fn *const store_write = state.store_guard.original();
+  if (store_write == nullptr)
     return BLE_HS_EREJECT;
-  const int rc = state.store_write(object_type, value);
+  if (!is_bond_record(object_type))
+    return store_write(object_type, value);
+  if (!state.window.is_open(now())) {
+    // Also stop accepting further Pairing Requests before the timer runs.
+    ble_hs_cfg.sm_sec_lvl = kRejectPairing;
+    return BLE_HS_EREJECT;
+  }
+  const int rc = store_write(object_type, value);
   if (rc == 0)
     state.link.bond_keys_written();
   return rc;
@@ -180,7 +222,11 @@ int guarded_store_write(const int object_type, const ble_store_value *const valu
 int on_store_status(ble_store_status_event *const event, void *const argument) {
   if (!state.window.is_open(now()))
     return BLE_HS_EREJECT;
-  return ble_store_util_status_rr(event, argument);
+  const int rc = ble_store_util_status_rr(event, argument);
+  // The stock handler unpairs through ble_gap_unpair(), which can reset the
+  // IRK and, with it, the store callbacks.
+  (void)ensure_store_guard();
+  return rc;
 }
 
 void handle_connect(const ble_gap_event &event) noexcept {
@@ -284,8 +330,7 @@ void configure_security(const PairingInputs &inputs) noexcept {
   ble_hs_cfg.sm_sec_lvl = kRejectPairing;
 
   ble_store_config_init();
-  state.store_write = ble_hs_cfg.store_write_cb;
-  ble_hs_cfg.store_write_cb = guarded_store_write;
+  (void)ensure_store_guard();
   ble_hs_cfg.store_status_cb = on_store_status;
 
   ble_npl_eventq *const queue = nimble_port_get_dflt_eventq();
@@ -302,7 +347,16 @@ void configure_security(const PairingInputs &inputs) noexcept {
     arm(state.user_key_timer, PairingClock{kUserKeySamplePeriodMs});
 }
 
+void on_host_synced() noexcept {
+  (void)ensure_store_guard();
+  apply_window_state();
+}
+
 int handle_security_event(ble_gap_event &event) noexcept {
+  // NimBLE may have reset the store callbacks since the last event, and the
+  // window may have expired before its timer ran.
+  (void)ensure_store_guard();
+  apply_window_state();
   switch (event.type) {
   case BLE_GAP_EVENT_CONNECT:
     handle_connect(event);
@@ -331,7 +385,9 @@ int handle_security_event(ble_gap_event &event) noexcept {
   }
 }
 
-bool pairing_window_open() noexcept { return state.window.is_open(now()); }
+bool pairing_window_open() noexcept {
+  return state.window.is_open(now()) && state.store_guard.original() != nullptr;
+}
 
 int check_protected_access(const std::uint16_t connection) noexcept {
   if (connection == BLE_HS_CONN_HANDLE_NONE)

@@ -18,6 +18,10 @@ std::array<ble_gatt_chr_def, kMaxCompanionCharacteristics + 1U> characteristic_t
 const ble_uuid128_t service_uuid = nimble_uuid(CompanionAttribute::Service);
 std::array<ble_gatt_svc_def, 2U> service_table{};
 // The registered definitions, handed to guarded_access as its argument.
+// CharacteristicDefinition has no default constructor, so each slot starts
+// as a placeholder naming the service. register_companion_service()
+// overwrites a slot before NimBLE can use it, and unused slots are never
+// referenced.
 std::array<CharacteristicDefinition, kMaxCompanionCharacteristics> registered{
     CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},

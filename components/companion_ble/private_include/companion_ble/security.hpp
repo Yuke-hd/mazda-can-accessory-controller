@@ -18,6 +18,10 @@ namespace companion_ble::internal {
 // starts.
 void configure_security(const PairingInputs &inputs) noexcept;
 
+// Re-applies the security binding after a NimBLE host sync, which resets the
+// bond store callbacks. Call it first in the host sync callback.
+void on_host_synced() noexcept;
+
 // Handles the security-related GAP events of the companion connection. The
 // advertising module forwards every GAP event here first. Returns the value
 // the event handler must return to NimBLE (only BLE_GAP_EVENT_REPEAT_PAIRING
