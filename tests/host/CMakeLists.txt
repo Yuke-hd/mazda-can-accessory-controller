@@ -506,6 +506,27 @@ add_test(NAME controller_config_factory_build
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/tools/controller_config_factory_build_test.py
           --cmake ${CMAKE_COMMAND} --compiler ${CMAKE_CXX_COMPILER})
 
+# Companion config service (#165): wire-code tables, commit, revert, boot
+# selection and the scratch dry run against the factory config and the real
+# Mazda catalog.
+add_executable(companion_config_tests companion_config_tests.cpp)
+target_include_directories(companion_config_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_compile_definitions(companion_config_tests PRIVATE
+  CONTROLLER_CONFIG_FACTORY_JSON_PATH="${_factory_json}")
+target_link_libraries(companion_config_tests PRIVATE companion_config mazda
+                                                     vehicle_signals_test_support
+                                                     telemetry_test_support doctest::doctest)
+target_compile_features(companion_config_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(companion_config_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(companion_config_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(companion_config_tests)
+
 # Every successful compiler fixture is accepted by the production JSON loader
 # and the action engine's resolvers against the real Mazda catalog.
 add_executable(controller_config_json_check controller_config_json_check.cpp)

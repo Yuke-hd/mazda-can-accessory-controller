@@ -188,6 +188,8 @@ CONFIG_BT_NIMBLE_MAX_BONDS=4
 CONFIG_BT_NIMBLE_MAX_CCCDS=12
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+# Config transfer commits run in the host task (unmeasured estimate).
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 ```
 
@@ -263,6 +265,33 @@ Recommendations:
   connected central and the GATT service. `ipc1` drops from 464 B to 288 B
   free once BT runs on core 1. If the GATT build reduces it further, raise
   `CONFIG_ESP_IPC_TASK_STACK_SIZE`.
+
+## Config transfer cost (#165)
+
+The Config, Config status and Command characteristics run every config commit
+inside the Config write handler, on the NimBLE host task. A commit parses the
+upload with cJSON, dry-runs `apply_controller_config()` on a scratch engine
+and LED sink, re-parses and serializes the upload in `save_override()`, and
+writes NVS. This is software evidence only; nothing here was measured on
+hardware.
+
+- `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` rises from 4,096 B to 8,192 B. That
+  is an estimate, not a measurement. The handler logs the host stack's
+  remaining headroom after each transfer state change, which includes every
+  commit; re-measure with a 4 KiB upload and tune.
+- The companion startup task stack rises from 4,096 B to 6,144 B, because it
+  now serializes the active configuration once. It logs its own headroom.
+- `idf.py size` against the #164 head: static DRAM +6,456 B (`.bss`
+  +6,392 B, `.data` +64 B), IRAM unchanged, flash +11,328 B, image
+  +11,392 B. The largest additions are all static: the 4.2 KiB transfer
+  state with its upload buffer, the 512 B write buffer, and the 1.9 KiB
+  scratch engine and LED sink used for the dry run. GCC puts a class with
+  default member initializers in `.data` even when every byte is zero, so
+  the large buffers are separate statics that land in `.bss`.
+- The canonical serializer now formats floats with `snprintf("%.*g")`
+  instead of `std::ostringstream`. The output bytes are the same, and the
+  firmware no longer links the C++ locale and stream machinery the stream
+  pulled in (about 190 KB of flash).
 
 ## Remaining risks
 

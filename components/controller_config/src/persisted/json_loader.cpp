@@ -5,12 +5,10 @@
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-#include <iomanip>
 #include <limits>
-#include <locale>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -795,12 +793,17 @@ void append_integer(std::string &output, const persisted::Integer value) {
   output += std::to_string(value);
 }
 
+// The same bytes as a classic-locale ostream with max_digits10 precision and
+// defaultfloat, which formats through "%.*g". snprintf avoids linking the C++
+// locale and stream machinery (about 180 KB of firmware flash). Neither the
+// firmware nor the host tools call setlocale(), so the C locale applies.
 void append_float(std::string &output, const float value) {
-  std::ostringstream stream;
-  stream.imbue(std::locale::classic());
-  stream << std::setprecision(std::numeric_limits<float>::max_digits10) << std::defaultfloat
-         << value;
-  output += stream.str();
+  char buffer[32];
+  const int length =
+      std::snprintf(buffer, sizeof buffer, "%.*g", std::numeric_limits<float>::max_digits10,
+                    static_cast<double>(value));
+  if (length > 0 && static_cast<std::size_t>(length) < sizeof buffer)
+    output.append(buffer, static_cast<std::size_t>(length));
 }
 
 template <typename Enum> void append_enum(std::string &output, const Enum value) {

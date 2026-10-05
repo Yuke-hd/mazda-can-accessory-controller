@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -254,6 +255,24 @@ TEST_CASE("canonical serialization preserves nondefault fields and every model a
   REQUIRE(parsed.ok());
   check_config(*parsed.configuration, model);
   CHECK(persisted::serialize_controller_config(*parsed.configuration) == json);
+}
+
+TEST_CASE("canonical serialization writes floats as shortest-round-trip %.9g text") {
+  // Pins the canonical number text: max_digits10 significant digits of the
+  // float, in the C locale, exactly as a classic-locale defaultfloat stream.
+  const std::pair<float, const char *> cases[] = {{5800.1F, "5800.1001"}, {0.1F, "0.100000001"},
+                                                  {3000.0F, "3000"},      {1e-5F, "9.99999975e-06"},
+                                                  {1e10F, "1e+10"},       {-2.5F, "-2.5"}};
+  for (const auto &entry : cases) {
+    CAPTURE(entry.second);
+    auto model = persisted::production_lighting_config();
+    std::get<persisted::SampledStateRule>(model.rules[4]).release_threshold = entry.first;
+    const auto json = persisted::serialize_controller_config(model);
+    const std::string field = std::string{"\"release_threshold\":"} + entry.second;
+    const bool found =
+        json.find(field + ",") != std::string::npos || json.find(field + "}") != std::string::npos;
+    CHECK(found);
+  }
 }
 
 TEST_CASE("generated factory RPM fill covers the board vehicle light strip") {

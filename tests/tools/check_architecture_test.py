@@ -397,6 +397,36 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("includes forbidden header driver/gpio.h", detail)
         self.assertIn("uses forbidden name gpio_", detail)
 
+    def test_companion_ble_restart_passes_but_config_types_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            original = source.read_text(encoding="utf-8")
+            source.write_text(
+                original
+                + '#include "esp_system.h"\n'
+                + '#include "companion_protocol/config_ports.hpp"\n'
+                + "void probe_restart() { esp_restart(); }\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_ble_isolation(root)
+            self.assertIn("OK   companion BLE service", output.getvalue())
+
+            source.write_text(
+                original
+                + '#include "companion_config/config_service.hpp"\n'
+                + "controller_config::persisted::ControllerConfig probe_config;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_config/config_service.hpp", detail)
+        self.assertIn("uses forbidden name controller_config", detail)
+
 
     def test_clean_generic_consumer_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-consumer-fixture-") as directory:

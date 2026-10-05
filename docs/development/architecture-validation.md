@@ -29,7 +29,8 @@ comments, and vehicle catalog key literals are allowed only in
 `lib/companion_protocol/src/live_signal_layout.cpp`.
 
 A source scan keeps `components/companion_ble` isolated: its includes are
-limited to NimBLE, logging, the RTOS, `esp_timer`, the `companion_protocol`
+limited to NimBLE, logging, the RTOS, `esp_timer`, `esp_system.h` (for the
+controlled restart), the `companion_protocol`
 codec and its own headers, it names no CAN, Mazda, telemetry, action-engine,
 controller-config, LED-driver, GPIO or NVS symbols, and its ESP-IDF
 requirements are limited to `bt`, `companion_protocol`, `esp_timer`,

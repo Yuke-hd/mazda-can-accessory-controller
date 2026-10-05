@@ -36,4 +36,8 @@ CONFIG_BT_NIMBLE_MAX_BONDS=4
 CONFIG_BT_NIMBLE_MAX_CCCDS=12
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
+# Config transfer (#165): a commit parses, dry-runs and saves the upload inside
+# the Config write handler on the host task. 8 KiB is an unmeasured estimate;
+# the handler logs the remaining headroom after each commit.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y

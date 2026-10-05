@@ -260,6 +260,15 @@ live in heap or static storage, not on the BLE host stack, and the
 implementation sizes the host task stack for the parse, serialization and
 apply that run in the write handler.
 
+The firmware implements this with the `companion_config` component (#165).
+The composition root injects one `companion_config::ConfigService` as the
+`companion_protocol` `ConfigCommitter`, `ConfigBootSource` and
+`FactoryReverter` ports. Its dry run is a static
+`companion_config::ScratchApplyCheck`, which rebuilds a never-attached engine
+and LED sink for each commit over a lighting sink that discards every command.
+The host task stack is 8 KiB, an unmeasured estimate; see the
+[resource budget](../../development/ble-resource-budget.md#config-transfer-cost-165).
+
 The dry run does not cover checks that happen only at attach, such as the
 provider's subscriber slots. An override that passes the dry run can therefore
 still fail at boot; [BLE recovery](#ble-recovery) covers that case.

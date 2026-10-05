@@ -460,6 +460,7 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/att_error.hpp",
     "companion_protocol/bytes.hpp",
     "companion_protocol/command.hpp",
+    "companion_protocol/config_ports.hpp",
     "companion_protocol/config_status.hpp",
     "companion_protocol/config_transfer.hpp",
     "companion_protocol/crc32.hpp",
@@ -1085,12 +1086,15 @@ def _check_led_action_adapter(root: Path) -> None:
 
 COMPANION_BLE_COMPONENT = Path("components/companion_ble")
 # The companion BLE service sees NimBLE, logging, the RTOS, the monotonic
-# esp_timer clock of its pairing policy, the portable companion protocol codec
-# and its own headers; never CAN, decoding, telemetry, the action engine, the
+# esp_timer clock of its pairing policy, esp_restart() for the controlled
+# restart after a config change, the portable companion protocol codec and its
+# own headers; never CAN, decoding, telemetry, the action engine, the
 # controller configuration, an LED driver, GPIO or NVS. The composition root
-# hands it values, including the user key sampler and the NVS init result.
+# hands it values, including the user key sampler, the NVS init result and the
+# companion protocol's config ports.
 _COMPANION_BLE_ALLOWED_INCLUDE = re.compile(
     r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|esp_timer\.h"
+    r"|esp_system\.h"
     r"|freertos/(?:FreeRTOS|task)\.h"
     r"|host/[\w/]+\.h|nimble/[\w/]+\.h|services/(?:gap|gatt)/[\w/]+\.h"
 )

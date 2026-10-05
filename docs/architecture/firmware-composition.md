@@ -67,7 +67,22 @@ component never initializes or erases NVS, and only NimBLE's own bond store
 writes to it, in the `nimble_bond` namespace. The composition root also passes
 `companion_ble::PairingInputs`: whether bonds can be stored
 (`controller_config::persisted::nvs_initialized()`) and the
-`board::user_key_pressed()` sampler that opens the pairing window. Its protocol is specified in
+`board::user_key_pressed()` sampler that opens the pairing window.
+
+The composition root also passes `companion_ble::ConfigInputs`, the three
+`companion_protocol` config ports, all implemented by one static
+`companion_config::ConfigService`. Right after
+`load_boot_configuration()`, `configure_engine_lighting()` records the boot
+selection and the NVS config backend in the service, which `app_main` owns
+and never releases. The service serializes the active configuration once,
+on the companion startup task, into the canonical document that Config status
+and read-back both report. A commit parses the upload, dry-runs
+`apply_controller_config()` on a static `companion_config::ScratchApplyCheck`
+(a never-attached engine and LED sink whose lighting sink discards every
+command) and saves it with `ConfigStore::save_override()`; Revert to factory
+uses `clear_override()`. Neither changes the live engine or the running
+lighting: a saved change takes effect only through the controlled restart
+that follows. Its protocol is specified in
 [`ble-protocol.md`](../specs/companion/ble-protocol.md) and its resource
 budget in [`ble-resource-budget.md`](../development/ble-resource-budget.md).
 
@@ -101,7 +116,7 @@ operations.
 The vehicle project selects `vehicle_can_rx`, `mazda_telemetry`,
 `vehicle_lighting_policy`, `vehicle_signals`, `action_engine`,
 `local_argb_actions`, `local_argb_sink_contract`, `local_argb`,
-`companion_protocol`, and `companion_ble`. The receive-only CAN invariant is documented in
+`companion_protocol`, `companion_config`, and `companion_ble`. The receive-only CAN invariant is documented in
 [`receive-only-boundary.md`](receive-only-boundary.md).
 
 ## Validation

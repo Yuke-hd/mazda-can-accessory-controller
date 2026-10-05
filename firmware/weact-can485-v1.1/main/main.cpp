@@ -1,6 +1,8 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
 #include "companion_ble/companion_ble.hpp"
+#include "companion_config/apply_check.hpp"
+#include "companion_config/config_service.hpp"
 #include "controller_config/factory_default.hpp"
 #include "controller_config/persisted/application.hpp"
 #include "controller_config/persisted/config_store.hpp"
@@ -97,6 +99,11 @@ static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 static controller_config::persisted::ControllerConfig active_configuration{};
+// The companion config ports. A commit dry-runs the upload on a scratch,
+// never-attached engine and LED sink whose lighting sink discards every
+// command, so it never touches the live engine or the renderer queue.
+static companion_config::ScratchApplyCheck config_apply_check{signal_provider, application_clock};
+static companion_config::ConfigService config_service{active_configuration, config_apply_check};
 
 void log_configuration_diagnostic(
     const char *const prefix, const controller_config::persisted::ConfigDiagnostic &diagnostic) {
@@ -132,7 +139,11 @@ __attribute__((noinline)) void start_companion_link() noexcept {
                              ? companion_protocol::BondStorage::Available
                              : companion_protocol::BondStorage::Unavailable;
   pairing.user_key_pressed = board::user_key_pressed;
-  if (!companion_ble::start(device_info, pairing))
+  companion_ble::ConfigInputs config{};
+  config.boot = &config_service;
+  config.committer = &config_service;
+  config.reverter = &config_service;
+  if (!companion_ble::start(device_info, pairing, config))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }
 
@@ -146,6 +157,8 @@ bool configure_engine_lighting(
     store.emplace(*backend);
   auto selected = controller_config::persisted::load_boot_configuration(
       store ? &*store : nullptr, controller_config::factory_default_config_json());
+  // `backend` is owned by app_main, which never returns once lighting starts.
+  config_service.record_boot(selected, backend);
   if (!selected.ok()) {
     if (selected.override_diagnostic.has_value())
       log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);

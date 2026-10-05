@@ -5,10 +5,12 @@
 // The controller is a BLE peripheral and GATT server for the companion app.
 // This component owns NimBLE initialization, advertising, the companion GATT
 // service and its pairing policy (ADR-0003). It has no CAN, telemetry, LED,
-// GPIO or NVS dependency: the composition root hands it the user key sampler
-// and the NVS initialization result. A BLE failure leaves the controller
+// GPIO or NVS dependency: the composition root hands it the user key sampler,
+// the NVS initialization result and the config ports. A BLE failure leaves the controller
 // without a companion link and never affects lighting.
 
+#include "companion_protocol/config_ports.hpp"
+#include "companion_protocol/config_transfer.hpp"
 #include "companion_protocol/device_info.hpp"
 #include "companion_protocol/pairing_window.hpp"
 
@@ -26,6 +28,18 @@ struct PairingInputs {
   UserKeySampler user_key_pressed{nullptr};
 };
 
+// The composition root's config ports (config-transfer.md). They must outlive
+// the NimBLE host. With all three set, start() serves Config, Config status
+// and Command; otherwise only Device info. Every port call runs on the BLE
+// tasks: prepare_boot() once on the startup task, commits and reverts on the
+// NimBLE host task inside the write handler. A successful commit or Revert to
+// factory ends in a controlled restart.
+struct ConfigInputs {
+  companion_protocol::ConfigBootSource *boot{nullptr};
+  companion_protocol::ConfigCommitter *committer{nullptr};
+  companion_protocol::FactoryReverter *reverter{nullptr};
+};
+
 // Starts the companion BLE service on its own low-priority startup task and
 // returns without waiting for the stack, so the caller's stack and timing are
 // unaffected. Call it once, after startup black, NVS initialization and CAN
@@ -40,6 +54,7 @@ struct PairingInputs {
 // and advertising failures after that are logged by the component and leave
 // the controller without a companion link.
 [[nodiscard]] bool start(const companion_protocol::DeviceInfo &device_info,
-                         const PairingInputs &pairing) noexcept;
+                         const PairingInputs &pairing,
+                         const ConfigInputs &config = ConfigInputs{}) noexcept;
 
 } // namespace companion_ble
