@@ -36,6 +36,10 @@ inline constexpr vehicle_core::Microseconds kWorkerRestartRequestBoundUs =
 inline constexpr vehicle_core::Microseconds kProgressStallFailOffUs = 2'000'000;
 inline constexpr vehicle_core::Microseconds kProgressFailOffBoundUs =
     kProgressStallFailOffUs + 2 * kSupervisorPollUs;
+// The longest fail_off_for_restart() waits for the worker to write black: a
+// driver write that takes longer is a hang the supervisor already resets.
+inline constexpr vehicle_core::Microseconds kRestartFailOffWaitUs =
+    kDriverHangRestartUs + 2 * kSupervisorPollUs;
 
 // Compatibility seam for the older single-colour host model; the renderer
 // writes whole frames to PixelFrameSink.
@@ -58,5 +62,12 @@ void fail_off() noexcept;
 // command lights the strip; nothing is re-emitted. Returns false before
 // start(), for a null probe, or when a probe is already watched.
 bool watch_progress(ProgressProbe probe, const void *context) noexcept;
+// Fails the strip off for a controlled restart. Closes the lighting gate for
+// good, so no publisher can relight the strip and a progress resume cannot
+// reopen it, then queues black and waits up to `timeout_us` for the worker
+// to write it. Never calls the LED driver itself, so any task may call it.
+// Returns true once black is written; false before start(), when the queue
+// rejects black or on timeout. The caller restarts either way.
+bool fail_off_for_restart(vehicle_core::Microseconds timeout_us) noexcept;
 
 } // namespace local_argb

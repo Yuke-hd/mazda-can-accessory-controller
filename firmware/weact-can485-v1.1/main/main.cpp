@@ -11,6 +11,7 @@
 #include "controller_config/timing.hpp"
 #include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -119,6 +120,16 @@ static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes 
                   companion_protocol::kMaxConfigBytes,
               "the companion upload limit must equal the stored config limit");
 
+// The controlled restart after a companion commit or Revert to factory. It
+// runs on the NimBLE host task. The lighting layer shuts its gate, queues
+// black and waits a bounded time for its own worker to write it, so this task
+// never calls the LED driver; the restart follows either way.
+[[noreturn]] void restart_after_fail_off() noexcept {
+  if (!local_argb::fail_off_for_restart(local_argb::kRestartFailOffWaitUs))
+    ESP_LOGW(kTag, "black frame not confirmed before the companion restart");
+  esp_restart();
+}
+
 // Starts the optional companion BLE link. It runs on its own startup task, so
 // a failure here or later only loses the companion link; CAN, telemetry, the
 // LED renderer and fail-off are already running and are not affected. Not
@@ -143,6 +154,7 @@ __attribute__((noinline)) void start_companion_link() noexcept {
   config.boot = &config_service;
   config.committer = &config_service;
   config.reverter = &config_service;
+  config.restart = restart_after_fail_off;
   if (!companion_ble::start(device_info, pairing, config))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }

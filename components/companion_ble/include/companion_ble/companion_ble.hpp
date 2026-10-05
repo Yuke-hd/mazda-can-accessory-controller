@@ -28,16 +28,24 @@ struct PairingInputs {
   UserKeySampler user_key_pressed{nullptr};
 };
 
+// Performs the controlled restart that ends a successful commit or Revert to
+// factory. The composition root owns it: it fails the lighting off to black
+// through the lighting layer, then restarts. It runs on the NimBLE host task
+// and must not return.
+using ControlledRestart = void (*)() noexcept;
+
 // The composition root's config ports (config-transfer.md). They must outlive
-// the NimBLE host. With all three set, start() serves Config, Config status
-// and Command; otherwise only Device info. Every port call runs on the BLE
-// tasks: prepare_boot() once on the startup task, commits and reverts on the
-// NimBLE host task inside the write handler. A successful commit or Revert to
-// factory ends in a controlled restart.
+// the NimBLE host. With every member set, start() serves Config, Config
+// status and Command; otherwise only Device info. Every port call runs on the
+// BLE tasks: prepare_boot() once on the startup task, commits, reverts and the
+// restart on the NimBLE host task. The restart is called after the
+// disconnection, or after the 1 s disconnect wait (ble-protocol.md,
+// "Disconnect and restart sequence").
 struct ConfigInputs {
   companion_protocol::ConfigBootSource *boot{nullptr};
   companion_protocol::ConfigCommitter *committer{nullptr};
   companion_protocol::FactoryReverter *reverter{nullptr};
+  ControlledRestart restart{nullptr};
 };
 
 // Starts the companion BLE service on its own low-priority startup task and

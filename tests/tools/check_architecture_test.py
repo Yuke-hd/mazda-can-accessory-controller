@@ -297,7 +297,100 @@ def write_companion_ble_fixture(root: Path) -> None:
     )
 
 
+def write_companion_config_fixture(root: Path) -> None:
+    component = root / "components/companion_config"
+    (component / "include/companion_config").mkdir(parents=True)
+    (component / "src").mkdir()
+    (component / "include/companion_config/apply_check.hpp").write_text(
+        '#pragma once\n#include <optional>\n#include "action_engine/engine.hpp"\n'
+        '#include "local_argb/lighting_sink.hpp"\n'
+        '#include "local_argb_actions/led_action_sink.hpp"\n'
+        '#include "vehicle_signals/signal_provider.hpp"\n'
+        "// The scratch engine is never attached to the live sink().\n",
+        encoding="utf-8",
+    )
+    (component / "src/scratch_apply_check.cpp").write_text(
+        '#include "companion_config/apply_check.hpp"\n'
+        '#include "companion_protocol/config_ports.hpp"\n'
+        '#include "controller_config/persisted/application.hpp"\n'
+        "void dry_run() { engine_.emplace(provider_); leds_.emplace(lighting_, clock_); }\n",
+        encoding="utf-8",
+    )
+    (component / "CMakeLists.txt").write_text(
+        "if(COMMAND idf_component_register)\n"
+        '  idf_component_register(SRCS "src/scratch_apply_check.cpp" INCLUDE_DIRS "include"\n'
+        "                         REQUIRES action_engine companion_protocol controller_config\n"
+        "                                  local_argb_actions local_argb_sink_contract)\n"
+        "  return()\n"
+        "endif()\n"
+        "add_library(companion_config STATIC src/scratch_apply_check.cpp)\n"
+        "target_include_directories(companion_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)\n"
+        "target_link_libraries(companion_config PUBLIC action_engine companion_protocol)\n",
+        encoding="utf-8",
+    )
+
+
 class ArchitectureCheckerRegressionTests(unittest.TestCase):
+    def test_clean_companion_config_service_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-config-fixture-") as directory:
+            root = Path(directory)
+            write_companion_config_fixture(root)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_config_isolation(root)
+        self.assertIn("OK   companion config service", output.getvalue())
+
+    def test_companion_config_renderer_ble_and_live_sink_access_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-config-fixture-") as directory:
+            root = Path(directory)
+            write_companion_config_fixture(root)
+            source = root / "components/companion_config/src/scratch_apply_check.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + '#include "local_argb/local_argb.h"\n'
+                + '#include "companion_ble/companion_ble.hpp"\n'
+                + '#include "freertos/task.h"\n'
+                + "void probe() {\n"
+                + "  local_argb::internal::sink();\n"
+                + "  engine_->attach ();\n"
+                + "  esp_restart();\n"
+                + "  nvs_commit();\n"
+                + "}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_config_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("includes forbidden header local_argb/local_argb.h", detail)
+        self.assertIn("includes forbidden header companion_ble/companion_ble.hpp", detail)
+        self.assertIn("includes forbidden header freertos/task.h", detail)
+        self.assertIn("calls forbidden sink()", detail)
+        self.assertIn("calls forbidden attach()", detail)
+        self.assertIn("uses forbidden name esp_", detail)
+        self.assertIn("uses forbidden name nvs", detail)
+
+    def test_companion_config_build_escapes_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-config-fixture-") as directory:
+            root = Path(directory)
+            write_companion_config_fixture(root)
+            cmake = root / "components/companion_config/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8").replace(
+                    "local_argb_actions local_argb_sink_contract)",
+                    "local_argb_actions local_argb_sink_contract local_argb bt)",
+                )
+                + "target_link_libraries(companion_config PRIVATE mazda_telemetry)\n"
+                + "include_directories(../local_argb/private_include)\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_config_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_config requires forbidden component local_argb", detail)
+        self.assertIn("companion_config requires forbidden component bt", detail)
+        self.assertIn("companion_config links forbidden target mazda_telemetry", detail)
+        self.assertIn("companion_config uses directory-scope include_directories()", detail)
+
     def test_clean_companion_ble_service_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
             root = Path(directory)
@@ -397,17 +490,16 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("includes forbidden header driver/gpio.h", detail)
         self.assertIn("uses forbidden name gpio_", detail)
 
-    def test_companion_ble_restart_passes_but_config_types_are_rejected(self) -> None:
+    def test_companion_ble_config_ports_pass_but_restart_and_config_types_are_rejected(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
             root = Path(directory)
             write_companion_ble_fixture(root)
             source = root / "components/companion_ble/src/companion_ble.cpp"
             original = source.read_text(encoding="utf-8")
             source.write_text(
-                original
-                + '#include "esp_system.h"\n'
-                + '#include "companion_protocol/config_ports.hpp"\n'
-                + "void probe_restart() { esp_restart(); }\n",
+                original + '#include "companion_protocol/config_ports.hpp"\n',
                 encoding="utf-8",
             )
             output = io.StringIO()
@@ -415,8 +507,11 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 check_architecture._check_companion_ble_isolation(root)
             self.assertIn("OK   companion BLE service", output.getvalue())
 
+            # The composition root owns the restart, so the lighting fails
+            # off first; the BLE service may not restart the chip itself.
             source.write_text(
                 original
+                + '#include "esp_system.h"\n'
                 + '#include "companion_config/config_service.hpp"\n'
                 + "controller_config::persisted::ControllerConfig probe_config;\n",
                 encoding="utf-8",
@@ -424,9 +519,9 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
                 check_architecture._check_companion_ble_isolation(root)
         detail = str(raised.exception)
+        self.assertIn("includes forbidden header esp_system.h", detail)
         self.assertIn("companion_config/config_service.hpp", detail)
         self.assertIn("uses forbidden name controller_config", detail)
-
 
     def test_clean_generic_consumer_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-consumer-fixture-") as directory:

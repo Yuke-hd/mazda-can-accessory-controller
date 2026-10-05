@@ -82,7 +82,14 @@ and read-back both report. A commit parses the upload, dry-runs
 command) and saves it with `ConfigStore::save_override()`; Revert to factory
 uses `clear_override()`. Neither changes the live engine or the running
 lighting: a saved change takes effect only through the controlled restart
-that follows. Its protocol is specified in
+that follows. The composition root owns that restart: `ConfigInputs::restart`
+is `restart_after_fail_off()` in `main.cpp`, which calls
+`local_argb::fail_off_for_restart()` and then `esp_restart()`. The fail-off
+shuts the renderer's publish gate for good, waits for in-flight publishers,
+queues black and waits up to `kRestartFailOffWaitUs` (120 ms) for the worker
+to write it; the BLE task never calls the LED driver. The restart goes ahead
+even when black is not confirmed, and the boot path writes startup black
+again. Its protocol is specified in
 [`ble-protocol.md`](../specs/companion/ble-protocol.md) and its resource
 budget in [`ble-resource-budget.md`](../development/ble-resource-budget.md).
 

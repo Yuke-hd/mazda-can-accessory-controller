@@ -6,7 +6,6 @@
 #include "companion_protocol/config_transfer.hpp"
 #include "companion_protocol/read_back.hpp"
 #include "esp_log.h"
-#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -41,6 +40,7 @@ constexpr std::uint32_t kRestartDisconnectWaitMs = 1000U;
 struct ConfigState {
   ConfigBoot boot{};
   companion_protocol::FactoryReverter *reverter{nullptr};
+  ControlledRestart restart{nullptr};
   std::uint16_t status_handle{0U};
   bool status_subscribed{false};
   // Select read page offset of the current connection; 0 on each connect.
@@ -102,7 +102,9 @@ void track_idle_timeout() noexcept {
 
 // The disconnect and restart sequence after a Saved commit or an accepted
 // Revert to factory. The terminate is queued behind the write response; the
-// restart follows the disconnect, or the wait limit.
+// restart follows the disconnect, or the wait limit. Called once, on the
+// transition into RestartPending: later writes are Busy and must neither
+// re-arm the wait nor queue another terminate.
 void schedule_restart(const std::uint16_t connection) noexcept {
   ESP_LOGI(kTag, "config change accepted; restarting after disconnect");
   disconnect_after_response(connection);
@@ -116,8 +118,9 @@ void on_idle_timer(ble_npl_event * /*event*/) {
 }
 
 void on_restart_timer(ble_npl_event * /*event*/) {
-  // Normal boot path: startup black, then the selected config.
-  esp_restart();
+  // The composition root fails the lighting off to black, then restarts;
+  // boot follows the normal path: startup black, then the selected config.
+  state.restart();
 }
 
 int on_gap_event(ble_gap_event *const event, void * /*argument*/) {
@@ -197,7 +200,7 @@ int access_config(const std::uint16_t connection, std::uint16_t /*attribute*/,
     notify_status();
   }
   track_idle_timeout();
-  if (transfer->restart_pending())
+  if (response.entered_restart_pending)
     schedule_restart(connection);
   return static_cast<int>(response.error);
 }
@@ -256,24 +259,38 @@ int access_command(const std::uint16_t connection, std::uint16_t /*attribute*/,
 } // namespace
 
 bool prepare_config_transfer(const ConfigInputs &inputs) noexcept {
-  if (inputs.boot == nullptr || inputs.committer == nullptr || inputs.reverter == nullptr)
+  if (inputs.boot == nullptr || inputs.committer == nullptr || inputs.reverter == nullptr ||
+      inputs.restart == nullptr)
     return false;
   // Serializes the active config once; the ActiveDocument it returns views
   // bytes owned by the boot source until restart, and both Config status and
   // read-back use this one value.
   state.boot = inputs.boot->prepare_boot();
   state.reverter = inputs.reverter;
+  state.restart = inputs.restart;
   transfer.emplace(*inputs.committer, state.boot.environment());
   return true;
 }
 
-void configure_config_transfer() noexcept {
+bool configure_config_transfer() noexcept {
+  // Without connection tracking, notifications, the disconnect interruption
+  // and the restart after a disconnect would all be wrong, so the service is
+  // not served at all.
+  const int rc = ble_gap_event_listener_register(&state.listener, on_gap_event, nullptr);
+  if (rc != 0) {
+    ESP_LOGW(kTag, "config transfer GAP listener failed (rc=%d)", rc);
+    return false;
+  }
   ble_npl_eventq *const queue = nimble_port_get_dflt_eventq();
   ble_npl_callout_init(&state.idle_timer, queue, on_idle_timer, nullptr);
   ble_npl_callout_init(&state.restart_timer, queue, on_restart_timer, nullptr);
-  const int rc = ble_gap_event_listener_register(&state.listener, on_gap_event, nullptr);
-  if (rc != 0)
-    ESP_LOGW(kTag, "config transfer GAP listener failed (rc=%d)", rc);
+  return true;
+}
+
+void release_config_transfer() noexcept {
+  (void)ble_gap_event_listener_unregister(&state.listener);
+  ble_npl_callout_deinit(&state.idle_timer);
+  ble_npl_callout_deinit(&state.restart_timer);
 }
 
 CharacteristicDefinition config_characteristic() noexcept {

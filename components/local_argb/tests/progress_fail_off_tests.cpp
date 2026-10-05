@@ -279,9 +279,55 @@ void test_transitions_are_counted_for_a_later_report_taken_once() {
   assert(drained.stalls == 0 && drained.resumes == 0);
 }
 
+void test_a_shut_gate_rejects_commands_and_ignores_a_resume() {
+  FailOffFixture fixture{};
+  const auto before = fixture.gate.transient_epoch();
+  fixture.gate.shut();
+  assert(fixture.gate.is_shut());
+  assert(fixture.gate.transient_epoch() != before);
+  assert(!fixture.gate.publish(lit()));
+  // A progress stall and resume around the shutdown must not reopen it.
+  fixture.fail_off.apply(ProgressTransition::Stalled);
+  fixture.fail_off.apply(ProgressTransition::Resumed);
+  fixture.gate.open();
+  assert(fixture.gate.is_shut());
+  assert(!fixture.gate.publish(lit()));
+  assert(fixture.downstream.published == 0);
+}
+
+void test_a_shut_during_a_publish_is_followed_by_black() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  downstream.gate = &gate;
+  downstream.on_publish = [](RecordingLightingSink &sink) {
+    sink.on_publish = nullptr;
+    // The racing publisher is still counted while it is inside publish().
+    assert(sink.gate->in_flight() == 1);
+    sink.gate->shut();
+  };
+  assert(!gate.publish(lit()));
+  assert(downstream.published == 2);
+  assert(!downstream.last.actionable);
+  assert(gate.in_flight() == 0);
+}
+
+void test_in_flight_is_zero_after_every_publish_outcome() {
+  RecordingLightingSink downstream{};
+  StallGatedSink gate{downstream};
+  assert(gate.in_flight() == 0);
+  assert(gate.publish(lit()));
+  assert(gate.in_flight() == 0);
+  gate.close();
+  assert(!gate.publish(lit()));
+  assert(gate.in_flight() == 0);
+}
+
 } // namespace
 
 int main() {
+  test_a_shut_gate_rejects_commands_and_ignores_a_resume();
+  test_a_shut_during_a_publish_is_followed_by_black();
+  test_in_flight_is_zero_after_every_publish_outcome();
   test_the_stall_bound_is_about_two_seconds();
   test_an_unarmed_watchdog_never_reports_a_stall();
   test_an_unchanged_count_within_the_bound_is_healthy();

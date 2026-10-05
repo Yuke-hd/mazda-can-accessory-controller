@@ -37,6 +37,11 @@ void ConfigService::record_boot(const persisted::BootConfigurationResult &select
   boot_.flags.invalid_override = selection.override_diagnostic.has_value();
   boot_.flags.override_read_failed = !selection.override_storage_message.empty();
   boot_.flags.no_config_store = store == nullptr;
+  // Only the selection failure is known here. TODO(GH-165 follow-up): bit 3
+  // also covers apply, engine attach, progress watch and telemetry start
+  // failures, but app_main fails off and returns on each of them before the
+  // companion link starts, so no Config status is ever served for such a
+  // boot. Record them here once a failed boot keeps the companion link.
   boot_.flags.lighting_setup_failed = !selection.ok();
   if (selection.override_diagnostic.has_value()) {
     boot_.override_code = to_wire(selection.override_diagnostic->code);

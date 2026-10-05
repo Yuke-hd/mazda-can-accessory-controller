@@ -80,17 +80,21 @@ bool bring_up_nimble() noexcept {
   config_transfer = internal::prepare_config_transfer(config_inputs);
   if (!config_transfer)
     ESP_LOGW(kTag, "config ports missing; serving Device info only");
+  else if (!internal::configure_config_transfer()) {
+    ESP_LOGW(kTag, "config transfer unavailable; serving Device info only");
+    config_transfer = false;
+  }
   const int rc = register_services();
   if (rc != 0) {
     ESP_LOGW(kTag, "companion GATT registration failed (rc=%d)", rc);
+    if (config_transfer)
+      internal::release_config_transfer();
     nimble_port_deinit();
     return false;
   }
   // After registration, so a failed registration deinitializes NimBLE before
   // any policy timer exists.
   internal::configure_security(pairing_inputs);
-  if (config_transfer)
-    internal::configure_config_transfer();
   ble_hs_cfg.sync_cb = on_host_sync;
   ble_hs_cfg.reset_cb = on_host_reset;
   nimble_port_freertos_init(host_task);

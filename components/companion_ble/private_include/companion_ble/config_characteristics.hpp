@@ -17,13 +17,18 @@ namespace companion_ble::internal {
 // Builds this boot's ActiveDocument and the transfer from `inputs`. Call it
 // once on the startup task, before registration. Returns false, leaving the
 // Config, Config status and Command characteristics unregistered, when a port
-// is missing.
+// or the restart is missing.
 [[nodiscard]] bool prepare_config_transfer(const ConfigInputs &inputs) noexcept;
 
-// Initializes the timers and the GAP listener. Call it once, after a
-// successful prepare_config_transfer() and nimble_port_init(), before the
-// host task starts.
-void configure_config_transfer() noexcept;
+// Registers the GAP listener and initializes the timers. Call it once, after
+// a successful prepare_config_transfer() and nimble_port_init(), before
+// registration and before the host task starts. Returns false, changing
+// nothing, when the listener cannot be registered; the caller then serves
+// Device info only.
+[[nodiscard]] bool configure_config_transfer() noexcept;
+
+// Undoes configure_config_transfer() when bring-up fails after it.
+void release_config_transfer() noexcept;
 
 // Config: Read returns a read-back page, Write carries the transfer PDUs.
 [[nodiscard]] CharacteristicDefinition config_characteristic() noexcept;

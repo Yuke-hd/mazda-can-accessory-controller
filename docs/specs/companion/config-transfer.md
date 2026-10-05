@@ -266,7 +266,8 @@ The composition root injects one `companion_config::ConfigService` as the
 `FactoryReverter` ports. Its dry run is a static
 `companion_config::ScratchApplyCheck`, which rebuilds a never-attached engine
 and LED sink for each commit over a lighting sink that discards every command.
-The host task stack is 8 KiB, an unmeasured estimate; see the
+The host task stack is 8 KiB, sized from a static stack-usage estimate of
+the commit path (about 5.1 KiB worst case) rather than a measurement; see the
 [resource budget](../../development/ble-resource-budget.md#config-transfer-cost-165).
 
 The dry run does not cover checks that happen only at attach, such as the

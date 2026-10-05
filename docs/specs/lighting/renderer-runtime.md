@@ -54,6 +54,15 @@ the colored frame again on its own. If the black write fails, the worker
 retries black on its next 10 ms tick. The supervisor requests a restart if a
 driver call stops returning.
 
+A controlled restart requested by another task (the companion config commit
+and factory revert) goes through `fail_off_for_restart(timeout)`, never the
+driver. It shuts the publish gate permanently, so later commands and resumes
+are refused, waits for publishers already inside the gate (each follows a
+command that raced the shut with black), then queues black and waits for the
+worker to finish a pass that leaves the queue empty and black written. It
+returns whether black was confirmed within the timeout; the caller restarts
+either way, because startup black runs again at boot.
+
 ## Bounded transient layers
 
 The private value-only handoff also accepts up to eight solid-zone transients.

@@ -2,6 +2,7 @@
 #include "controller_config/persisted/names.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -797,12 +798,22 @@ void append_integer(std::string &output, const persisted::Integer value) {
 // defaultfloat, which formats through "%.*g". snprintf avoids linking the C++
 // locale and stream machinery (about 180 KB of firmware flash). Neither the
 // firmware nor the host tools call setlocale(), so the C locale applies.
+//
+// The longest text is 16 bytes, such as "-1.17549435e-38": a sign, nine
+// digits, the point and a four-byte exponent. An encoding error or a
+// truncation cannot happen with this buffer; if one ever did, the assertion
+// stops debug builds, and release builds append nothing, which leaves invalid
+// JSON that the save path's re-parse rejects as a storage failure instead of
+// storing a wrong number.
 void append_float(std::string &output, const float value) {
   char buffer[32];
+  static_assert(sizeof buffer > 16U, "room for the longest %.9g float text");
   const int length =
       std::snprintf(buffer, sizeof buffer, "%.*g", std::numeric_limits<float>::max_digits10,
                     static_cast<double>(value));
-  if (length > 0 && static_cast<std::size_t>(length) < sizeof buffer)
+  const bool formatted = length > 0 && static_cast<std::size_t>(length) < sizeof buffer;
+  assert(formatted && "float text failed or was truncated");
+  if (formatted)
     output.append(buffer, static_cast<std::size_t>(length));
 }
 

@@ -257,7 +257,7 @@ TEST_CASE("canonical serialization preserves nondefault fields and every model a
   CHECK(persisted::serialize_controller_config(*parsed.configuration) == json);
 }
 
-TEST_CASE("canonical serialization writes floats as shortest-round-trip %.9g text") {
+TEST_CASE("canonical serialization writes floats as max_digits10 %.9g text") {
   // Pins the canonical number text: max_digits10 significant digits of the
   // float, in the C locale, exactly as a classic-locale defaultfloat stream.
   const std::pair<float, const char *> cases[] = {{5800.1F, "5800.1001"}, {0.1F, "0.100000001"},

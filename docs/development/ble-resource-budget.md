@@ -188,7 +188,8 @@ CONFIG_BT_NIMBLE_MAX_BONDS=4
 CONFIG_BT_NIMBLE_MAX_CCCDS=12
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
-# Config transfer commits run in the host task (unmeasured estimate).
+# Config transfer commits run in the host task (static estimate, about
+# 5.1 KiB worst case; see "Config transfer cost").
 CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 ```
@@ -275,10 +276,10 @@ and LED sink, re-parses and serializes the upload in `save_override()`, and
 writes NVS. This is software evidence only; nothing here was measured on
 hardware.
 
-- `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` rises from 4,096 B to 8,192 B. That
-  is an estimate, not a measurement. The handler logs the host stack's
-  remaining headroom after each transfer state change, which includes every
-  commit; re-measure with a 4 KiB upload and tune.
+- `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE` rises from 4,096 B to 8,192 B.
+  The size rests on a static call-graph estimate, not a measurement; see
+  "Host stack estimate" below. The handler logs the host stack's remaining
+  headroom after each transfer state change, which includes every commit.
 - The companion startup task stack rises from 4,096 B to 6,144 B, because it
   now serializes the active configuration once. It logs its own headroom.
 - `idf.py size` against the #164 head: static DRAM +6,456 B (`.bss`
@@ -292,6 +293,50 @@ hardware.
   instead of `std::ostringstream`. The output bytes are the same, and the
   firmware no longer links the C++ locale and stream machinery the stream
   pulled in (about 190 KB of flash).
+
+### Host stack estimate
+
+The commit path's translation units (the companion BLE, config, protocol and
+controller-config sources, cJSON, `nvs_flash`, `esp_partition`, `spi_flash`,
+`heap` and the NimBLE host) were recompiled with the firmware's own compile
+commands plus `-fstack-usage -fcallgraph-info=su` (xtensa-esp32-elf GCC from
+ESP-IDF 5.5.4). The worst path was found by walking the call graph from the
+ATT write handler. Indirect calls GCC cannot resolve were added by hand from
+the source: the GATT access callback, the `ConfigCommitter`, `ApplyCheck` and
+`ConfigStoreBackend` virtuals, the NVS handle virtuals and every `nvs::Page`
+call into the `NVSPartition` read, write and erase virtuals. No frame on the
+graph is dynamic.
+
+| Segment | Frames (B) |
+| --- | ---: |
+| Host receive path down to the ATT handler (`ble_hs_event_rx_data` to `ble_att_rx_extended`) | 240 |
+| `ble_att_svr_rx_write` to `access_config` (GATT dispatch) | 256 |
+| `access_config` to `ConfigService::commit` | 976 |
+| `ConfigStore::save_override` re-parse: `parse_controller_config` and the deepest field parser chain into `std::string` growth | 2,896 |
+| Compiled total | 4,368 |
+| Not compiled, allowed for: `operator new`, newlib `malloc` and `heap_caps_malloc_default` (272 B measured) | about 340 |
+| Not compiled, allowed for: task entry, `nimble_port_run` and the event dispatch | about 100 |
+| Not compiled, allowed for: an interrupt or window-spill frame on the task stack | about 400 |
+| Estimated worst case | about 5.1 KiB |
+
+The other branches are shallower. From `access_config`, the NVS write
+(`write_override` into `nvs_set_blob`, the page compare and erase, and
+`esp_partition_write`) peaks at about 3.1 KiB, and the dry run at about
+1.9 KiB. cJSON's parser and `cJSON_Delete` recurse, but
+`parse_controller_config()` rejects any document nested deeper than 16
+levels before it calls cJSON (`kMaxControllerConfigJsonNesting`). At 32 B
+per `parse_value` and 32 B per `parse_array` or `parse_object` frame, the
+recursion adds at most about 1.1 KiB, so the cJSON path stays below the
+field-parser path.
+
+This leaves about 3 KiB of the 8,192 B stack as margin. It is a static
+estimate with hand-resolved indirect calls and allowances for code that was
+not compiled. It is not a high-water measurement.
+
+**Deferred (bench):** measure the host task's high-water mark on hardware.
+Upload a 4 KiB document with maximum nesting and the longest field paths,
+commit it to a nearly full NVS partition so that a page erase runs, and
+read the headroom the handler logs. Tune the stack from that measurement.
 
 ## Remaining risks
 
