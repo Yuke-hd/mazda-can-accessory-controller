@@ -444,10 +444,10 @@ DecodeStatus decode_acceleration(const vehicle_core::RawCanFrame &frame, Vehicle
       static_cast<std::uint16_t>(((frame.data[0] & 0x3fU) << 7U) | (frame.data[1] >> 1U));
   const auto raw_y = static_cast<std::uint16_t>(((frame.data[1] & 0x01U) << 12U) |
                                                 (frame.data[2] << 4U) | (frame.data[3] >> 4U));
-  const auto longitudinal = raw_x * kLongitudinalAccelerationDefinition.scale +
-                            kLongitudinalAccelerationDefinition.offset;
-  const auto lateral =
-      raw_y * kLateralAccelerationDefinition.scale + kLateralAccelerationDefinition.offset;
+  // Centre the exact signed raw code before one float division. Applying
+  // float scale/offset separately introduces cancellation noise near zero.
+  const auto longitudinal = (static_cast<std::int32_t>(raw_x) - 4000) / 100.0F;
+  const auto lateral = (static_cast<std::int32_t>(raw_y) - 4096) / 1000.0F;
   bool updated = state.longitudinal_acceleration_mps2.update(longitudinal, frame.timestamp_us);
   updated = state.lateral_acceleration_mps2.update(lateral, frame.timestamp_us) || updated;
   if (updated && frame.timestamp_us > state.timestamp_us)

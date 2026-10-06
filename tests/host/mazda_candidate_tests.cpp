@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
@@ -557,4 +558,130 @@ TEST_CASE("0x078 snapshots copy availability evidence and independent optional f
         mazda::Availability::Fresh);
   CHECK(aged.status_at(aged.lateral_acceleration_mps2, kAccelerationId, 111,
                        vehicle_core::TransportHealth::Stopped) == mazda::Availability::Unavailable);
+}
+
+TEST_CASE("0x078 neutral and adjacent codes round only the centred SI value") {
+  using namespace mazda::candidate;
+  struct Vector {
+    std::array<std::uint8_t, 8> payload;
+    float longitudinal;
+    float lateral;
+  };
+  const std::array vectors{
+      Vector{{0x1f, 0x41, 0x00, 0x00, 0, 0, 0, 0}, 0.0F, 0.0F},
+      Vector{{0x1f, 0x43, 0x00, 0x10, 0, 0, 0, 0}, 0.01F, 0.001F},
+      Vector{{0x1f, 0x3e, 0xff, 0xf0, 0, 0, 0, 0}, -0.01F, -0.001F},
+      Vector{{0, 0, 0, 0, 0, 0, 0, 0}, -40.0F, -4.096F},
+      Vector{{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, 41.91F, 4.095F},
+  };
+  for (const auto &vector : vectors) {
+    mazda::VehicleState state{};
+    auto sample = frame(kAccelerationId, 100, {});
+    sample.data = vector.payload;
+    REQUIRE(decode(sample, state) == DecodeStatus::Decoded);
+    CHECK(state.longitudinal_acceleration_mps2.value == vector.longitudinal);
+    CHECK(state.lateral_acceleration_mps2.value == vector.lateral);
+    CHECK(std::isfinite(state.longitudinal_acceleration_mps2.value));
+    CHECK(std::isfinite(state.lateral_acceleration_mps2.value));
+  }
+}
+
+TEST_CASE(
+    "0x078 ignored extended and remote attempts preserve accepted message and caller transport") {
+  using namespace mazda::candidate;
+  for (const auto extended : {false, true}) {
+    mazda::VehicleState state{};
+    REQUIRE(decode(frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80}), state) ==
+            DecodeStatus::Decoded);
+    const auto accepted = *state.message_health_for(kAccelerationId);
+    auto ignored = frame(kAccelerationId, 200, {0x1f, 0x41});
+    ignored.bus_id = 2;
+    ignored.remote_request = !extended;
+    ignored.identifier_format = extended ? vehicle_core::CanIdentifierFormat::Extended
+                                         : vehicle_core::CanIdentifierFormat::Standard;
+    vehicle_core::DecoderObservation observation{};
+    vehicle_core::HealthObservation health{};
+    health.transport = vehicle_core::TransportHealth::TimedOut;
+    REQUIRE(decode(ignored, state, nullptr, &observation, &health) == DecodeStatus::Ignored);
+    CHECK(observation.validity == DecodeStatus::Ignored);
+    CHECK(observation.identifier == kAccelerationId);
+    CHECK(observation.timestamp_us == 200);
+    CHECK(observation.bus_id == 2);
+    CHECK(observation.dlc == 8);
+    CHECK(health.transport == vehicle_core::TransportHealth::TimedOut);
+    CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+    CHECK(health.message == vehicle_core::MessageHealth::Healthy);
+    CHECK(health.has_last_frame);
+    CHECK(health.last_frame_us == 100);
+    CHECK(health.has_last_accepted);
+    CHECK(health.last_accepted_us == 100);
+    CHECK_FALSE(health.fault_timestamp_us.has_value());
+    const auto retained = *state.message_health_for(kAccelerationId);
+    CHECK(retained.data == accepted.data);
+    CHECK(retained.identifier_format == accepted.identifier_format);
+    CHECK(retained.remote_request == accepted.remote_request);
+    CHECK(retained.bus_id == accepted.bus_id);
+    CHECK(state.longitudinal_acceleration_mps2.value == 10.0F);
+    CHECK(state.longitudinal_acceleration_mps2.last_update_us == 100);
+    CHECK(state.lateral_acceleration_mps2.last_update_us == 100);
+    CHECK(state.timestamp_us == 100);
+    CHECK(
+        state.reading_at(state.longitudinal_acceleration_mps2, kAccelerationId, 200).availability ==
+        mazda::Availability::FreshnessUnverified);
+  }
+}
+
+TEST_CASE("0x078 attempt health distinguishes conflicts duplicates and newer fault recovery") {
+  using namespace mazda::candidate;
+  mazda::VehicleState state{};
+  const auto accepted = frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80});
+  vehicle_core::DecoderObservation observation{};
+  vehicle_core::HealthObservation health{};
+  health.transport = vehicle_core::TransportHealth::Live;
+  REQUIRE(decode(accepted, state, nullptr, &observation, &health) == DecodeStatus::Decoded);
+  REQUIRE(health.signal == vehicle_core::SignalHealth::Available);
+
+  const auto conflict = frame(kAccelerationId, 100, {0x1f, 0x41});
+  REQUIRE(decode(conflict, state, nullptr, &observation, &health) == DecodeStatus::Decoded);
+  CHECK(observation.validity == DecodeStatus::Decoded);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  CHECK(health.message == vehicle_core::MessageHealth::Healthy);
+  CHECK(health.transport == vehicle_core::TransportHealth::Live);
+  CHECK(health.last_frame_us == 100);
+  CHECK(health.last_accepted_us == 100);
+  CHECK_FALSE(health.fault_timestamp_us.has_value());
+  const auto retained = state.snapshot(200);
+  CHECK(retained.longitudinal_acceleration_mps2.value == 10.0F);
+  CHECK(retained.lateral_acceleration_mps2.value == 0.904F);
+  CHECK(retained.reading_at(retained.longitudinal_acceleration_mps2, kAccelerationId, 200)
+            .availability == mazda::Availability::FreshnessUnverified);
+  // A consumer of this attempted observation can conservatively reject it.
+  CHECK(mazda::status_at(state.longitudinal_acceleration_mps2, 200, health) ==
+        mazda::Availability::Unavailable);
+  REQUIRE(decode(accepted, state, nullptr, &observation, &health) == DecodeStatus::Decoded);
+  CHECK(health.signal == vehicle_core::SignalHealth::Available);
+
+  auto malformed = accepted;
+  malformed.timestamp_us = 200;
+  malformed.dlc = 7;
+  REQUIRE(decode(malformed, state, nullptr, &observation, &health) == DecodeStatus::Malformed);
+  CHECK(observation.validity == DecodeStatus::Malformed);
+  CHECK(health.message == vehicle_core::MessageHealth::Faulted);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  CHECK(health.last_frame_us == 200);
+  CHECK(health.last_accepted_us == 100);
+  REQUIRE(health.fault_timestamp_us.has_value());
+  CHECK(*health.fault_timestamp_us == 200);
+  auto equal_recovery = accepted;
+  equal_recovery.timestamp_us = 200;
+  REQUIRE(decode(equal_recovery, state, nullptr, &observation, &health) == DecodeStatus::Decoded);
+  CHECK(health.message == vehicle_core::MessageHealth::Faulted);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  equal_recovery.timestamp_us = 201;
+  REQUIRE(decode(equal_recovery, state, nullptr, &observation, &health) == DecodeStatus::Decoded);
+  CHECK(health.message == vehicle_core::MessageHealth::Healthy);
+  CHECK(health.signal == vehicle_core::SignalHealth::Available);
+  CHECK(health.last_frame_us == 201);
+  CHECK(health.last_accepted_us == 201);
+  CHECK_FALSE(health.fault_timestamp_us.has_value());
 }

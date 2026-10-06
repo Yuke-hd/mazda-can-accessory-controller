@@ -54,6 +54,14 @@ No raw invalid code is declared upstream. All 13-bit codes are decoded;
 X code 8191 represents 41.91 m/s², above the source's declared maximum 40.
 The source range is not treated as an undocumented invalid-code rule.
 
+The decoder computes `(raw_x - 4000) / 100` and `(raw_y - 4096) / 1000`
+using a signed integer subtraction before one float division. This preserves
+the source scale and offset with one float-representation rounding, makes
+neutral exactly zero, and preserves the signed one-code steps (`±0.01` and
+`±0.001` m/s²). It adds no smoothing, dead zone, or clipping. Multiplying by
+float scale and then adding a float offset can introduce cancellation noise;
+fused and non-fused compiler evaluation can produce different noise.
+
 Both default freshness timeouts and the message period remain unset because
 #186 establishes no timing evidence. Accepted readings are
 `FreshnessUnverified`, with Reference validation. Callers can explicitly
@@ -63,6 +71,32 @@ frames fault only the acceleration message, preserve both last values, and
 make them unavailable until a strictly newer valid frame. Older observations
 and conflicting observations at the same timestamp do not change either
 value; identical duplicates are idempotent.
+
+The optional output `DecoderObservation` describes the attempted frame;
+`HealthObservation` combines the retained message record with that attempt's
+signal result. `finish_health` preserves the caller's transport status and
+copies the retained message health and frame/acceptance/fault watermarks before
+setting the attempt's signal status. Neither output changes retained state.
+
+- A valid extended-ID or remote-request frame with identifier `0x078` is
+  `Ignored`. It never observes or updates the standard message record, values,
+  or timestamps. The optional health output reports `signal=Unavailable` for
+  that ignored attempt while preserving the caller's transport and the accepted
+  record's health/watermarks.
+- An older or conflicting same-timestamp standard frame is reported `Decoded`
+  after its fields pass validation, but its rejected attempt reports
+  `signal=Unavailable`. The first accepted values and healthy message record
+  remain intact; a retained-state reading with live transport still reports
+  `FreshnessUnverified` under the default policy. A consumer evaluating the
+  returned attempt health can conservatively report `Unavailable` instead.
+  This matches brake-pedal conflict handling. Engine-data handling differs: it
+  reports `signal=Available` whenever an accepted RPM value exists, even when
+  the new observation is rejected.
+- An identical healthy duplicate reports `signal=Available` while the retained
+  raw signals are valid. A malformed frame faults the message record and
+  reports `signal=Unavailable`; an equal-time valid frame cannot clear that
+  fault. A strictly newer valid frame reports healthy/available and clears the
+  fault watermark.
 
 The supported custom-DBC comparison table remains restricted to fields in the
 byte-for-byte reviewed custom DBC. Acceleration metadata is separately covered
