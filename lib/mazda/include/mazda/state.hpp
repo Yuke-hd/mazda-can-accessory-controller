@@ -40,12 +40,16 @@ enum class MessageObservationResult : std::uint8_t {
   CapacityExceeded,
 };
 
-inline constexpr std::size_t kTrackedMessageCapacity = 6;
+inline constexpr std::size_t kTrackedMessageCapacity = 7;
 
 struct VehicleState {
   vehicle_core::MonotonicTimestamp timestamp_us{0};
   vehicle_core::Signal<float> speed_kph{vehicle_core::SignalUnit::KilometresPerHour};
   vehicle_core::Signal<float> engine_rpm{vehicle_core::SignalUnit::RevolutionsPerMinute};
+  // SI m/s^2; source X/Y axis and sign assignments remain Reference. The
+  // pinned core has no acceleration unit enum, so internal metadata is None.
+  vehicle_core::Signal<float> longitudinal_acceleration_mps2{};
+  vehicle_core::Signal<float> lateral_acceleration_mps2{};
   vehicle_core::Signal<SelectorPosition> selector_position{};
   vehicle_core::Signal<ActualGear> actual_gear{};
   vehicle_core::Signal<TurnState> turn_state{vehicle_core::SignalUnit::None,
