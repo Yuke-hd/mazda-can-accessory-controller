@@ -380,6 +380,12 @@ add_test(
           ${CMAKE_SOURCE_DIR}/tests/tools/check_architecture_test.py
 )
 
+add_test(
+  NAME protocol_acceleration_evidence
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/acceleration_evidence_test.py
+)
+
 # Local LED action sink: engine commands to the renderer's private lighting
 # handoff. No Mazda target is reachable from this test.
 add_executable(local_led_action_sink_tests local_led_action_sink_tests.cpp)
