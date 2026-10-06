@@ -43,7 +43,12 @@ private:
 enum class SignalType : std::uint8_t { Boolean, Number, Enum };
 
 // Engineering unit of a Number signal. Boolean and Enum signals use None.
-enum class SignalUnit : std::uint8_t { None, KilometresPerHour, RevolutionsPerMinute };
+enum class SignalUnit : std::uint8_t {
+  None,
+  KilometresPerHour,
+  RevolutionsPerMinute,
+  MetresPerSecondSquared
+};
 
 // Tagged Boolean/Number/Enum value. Typed accessors return std::nullopt on a
 // type mismatch instead of reinterpreting storage. Enum values are the raw

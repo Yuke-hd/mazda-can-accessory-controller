@@ -76,8 +76,9 @@ to_signal_notification(const vehicle_signals::SignalId id,
   return result;
 }
 
-// The only Mazda-to-generic unit mapping. A reading value is never rescaled;
-// the catalog row carries the unit, and Boolean state has no generic unit.
+// Maps units represented by core 0.1.0. Acceleration SI units are declared
+// directly by the catalog because the core has no acceleration enumerator.
+// A reading value is never rescaled; Boolean state has no generic unit.
 [[nodiscard]] constexpr vehicle_signals::SignalUnit
 to_signal_unit(const vehicle_core::SignalUnit unit) noexcept {
   switch (unit) {

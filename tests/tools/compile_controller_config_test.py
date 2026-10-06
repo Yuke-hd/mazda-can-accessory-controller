@@ -646,6 +646,33 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertEqual(document["rules"][0]["type"], "event")
         self.assertEqual(document["rules"][1]["release_threshold"], 5900)
 
+    def test_acceleration_compiles_as_sampled_numeric_and_range_rules(self) -> None:
+        for key in ("vehicle.acceleration.longitudinal", "vehicle.acceleration.lateral"):
+            with self.subTest(key=key):
+                source = f"""
+                version: 1
+                actions: [{{name: acceleration_state}}, {{name: acceleration_level}}]
+                rules:
+                  - type: sampled_state
+                    action: acceleration_state
+                    signal_key: {key}
+                    comparison: greater
+                    operand: {{number: 1.0}}
+                    release_threshold: 0.5
+                  - type: range
+                    action: acceleration_level
+                    signal_key: {key}
+                    input: {{from: -10, to: 10}}
+                    output: {{from: 0, to: 1}}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                document = json.loads(output)
+                self.assertEqual([rule["signal_key"] for rule in document["rules"]], [key, key])
+                self.assertEqual(document["rules"][0]["operand"], {"number": 1.0})
+                self.assertEqual(document["rules"][1]["input"], {"from": -10, "to": 10})
+
     def test_brake_boolean_conditions_compile_for_notify_and_read_rules(self) -> None:
         cases = product(
             ("state", "event", "sampled_state"),

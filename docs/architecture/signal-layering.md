@@ -32,7 +32,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 
 ## Brake signal contract
 
-The Mazda generic catalog contains nineteen signals. `vehicle.brake_pressed`
+The Mazda generic catalog contains twenty-one signals. `vehicle.brake_pressed`
 is a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
@@ -57,6 +57,29 @@ action, bound to the LED `Brake` effect above the RPM red zone. See
 [signal evidence](../protocol/signal-evidence.md) for the field mapping and its
 evidence boundary, and [controller configuration](../specs/configuration/controller-config.md#yaml-compiler)
 for the owner-approved opt-in.
+
+## Acceleration signal contract
+
+`vehicle.acceleration.longitudinal` and `vehicle.acceleration.lateral` are
+Number signals with Read capability and
+`vehicle_signals::SignalUnit::MetresPerSecondSquared`. Values retain the
+source decoder's SI magnitude and sign without conversion to g. Runtime ids
+20 and 21 append these entries; the existing nineteen ids and keys retain
+their assignments. The generic API exposes no CAN coordinates, Mazda state,
+or decoder types, and does not provide acceleration notifications.
+
+Both readings use the coherent publication's polling descriptors and preserve
+source value presence, availability, and Reference confidence, including
+NoData and Unavailable states. Default freshness remains unset, so a valid
+observation is `FreshnessUnverified`; an explicit caller freshness policy is
+preserved. The candidate axis interpretation and timing evidence remain
+unconfirmed; see [signal evidence](../protocol/signal-evidence.md).
+
+The pinned core 0.1.0 has no acceleration unit enumerator. Its internal source
+signals use `None` with SI member names; the Mazda-owned generic catalog
+supplies the engineering unit without modifying that dependency or rescaling
+values. The controller compiler's catalog manifest includes both Read-only
+numeric keys for sampled conditions and numeric range rules.
 
 ## Boundary contracts
 

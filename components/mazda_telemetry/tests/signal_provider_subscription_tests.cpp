@@ -412,7 +412,7 @@ void test_request_failures_are_distinct() {
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(SignalId{}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
-  EXPECT(provider.subscribe(SignalId{20}, &record_notice, &context).status ==
+  EXPECT(provider.subscribe(SignalId{22}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
   EXPECT(provider.subscribe(SignalId{0xffffU}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
@@ -420,6 +420,10 @@ void test_request_failures_are_distinct() {
          SignalStatus::InvalidArgument);
   const auto failed = provider.subscribe(ids::kTurnState, nullptr, &context);
   EXPECT(!failed.ok() && !failed.value.has_value());
+
+  for (const auto id : {ids::kAccelerationLongitudinal, ids::kAccelerationLateral})
+    EXPECT(provider.subscribe(id, &record_notice, &context).status ==
+           SignalStatus::UnsupportedCapability);
 
   // None of the rejected requests consumed a slot or a trampoline record.
   const auto first = provider.subscribe(ids::kTurnState, &record_notice, &context);

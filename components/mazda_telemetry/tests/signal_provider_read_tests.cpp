@@ -1,5 +1,6 @@
 #include "mazda/signal_provider.hpp"
 
+#include "mazda/decoder.hpp"
 #include "mazda/definitions.hpp"
 #include "mazda/signal_catalog.hpp"
 #include "mazda/signal_value_conversion.hpp"
@@ -9,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -223,13 +225,27 @@ bool wait_for_notice_value(const NoticeRecorder<T> &recorder, const T expected) 
 }
 
 constexpr SignalId kAllIds[] = {
-    ids::kEngineRpm,         ids::kSpeedKph,           ids::kTurnState,
-    ids::kHazardRequest,     ids::kTurnRequestLeft,    ids::kTurnRequestRight,
-    ids::kIndicatorLampLeft, ids::kIndicatorLampRight, ids::kSelectorPosition,
-    ids::kActualGear,        ids::kLiftgateOpen,       ids::kDoorRearRight,
-    ids::kDoorRearLeft,      ids::kDoorFrontLeftRhd,   ids::kDoorFrontRightRhd,
-    ids::kDoorsUnlocked,     ids::kWiperLow,           ids::kWiperFrontPosition,
+    ids::kEngineRpm,
+    ids::kSpeedKph,
+    ids::kTurnState,
+    ids::kHazardRequest,
+    ids::kTurnRequestLeft,
+    ids::kTurnRequestRight,
+    ids::kIndicatorLampLeft,
+    ids::kIndicatorLampRight,
+    ids::kSelectorPosition,
+    ids::kActualGear,
+    ids::kLiftgateOpen,
+    ids::kDoorRearRight,
+    ids::kDoorRearLeft,
+    ids::kDoorFrontLeftRhd,
+    ids::kDoorFrontRightRhd,
+    ids::kDoorsUnlocked,
+    ids::kWiperLow,
+    ids::kWiperFrontPosition,
     ids::kBrakePressed,
+    ids::kAccelerationLongitudinal,
+    ids::kAccelerationLateral,
 };
 static_assert(std::size(kAllIds) == internal::kSignalCatalogSize);
 
@@ -359,7 +375,14 @@ void test_unit_mapping_and_descriptor_types_match_catalog() {
     ++bound;
     const auto &signal = state.*descriptor.signal;
     using Value = std::decay_t<decltype(signal.value)>;
-    EXPECT(row(descriptor.id).unit == internal::to_signal_unit(signal.unit));
+    const bool acceleration = descriptor.id == ids::kAccelerationLongitudinal ||
+                              descriptor.id == ids::kAccelerationLateral;
+    // Core 0.1.0 lacks an acceleration enum; SI units are declared by the
+    // Mazda-owned generic catalog without altering the core dependency.
+    EXPECT(row(descriptor.id).unit == (acceleration ? SignalUnit::MetresPerSecondSquared
+                                                    : internal::to_signal_unit(signal.unit)));
+    if (acceleration)
+      EXPECT(signal.unit == vehicle_core::SignalUnit::None);
     EXPECT(row(descriptor.id).type == internal::signal_type_of<Value>());
   };
   std::apply([&check](const auto &...descriptor) { (check(descriptor), ...); },
@@ -381,7 +404,7 @@ void test_invalid_and_unknown_ids_are_request_failures() {
   const auto unknown = harness.provider.read(SignalId{99});
   EXPECT(unknown.status == SignalStatus::InvalidSignal);
   EXPECT(!unknown.value.has_value());
-  const auto beyond = harness.provider.read(SignalId{20});
+  const auto beyond = harness.provider.read(SignalId{22});
   EXPECT(beyond.status == SignalStatus::InvalidSignal);
 }
 
@@ -462,6 +485,7 @@ void test_all_ids_read_no_data_then_typed_values() {
   harness.inject(blink_frame(1'000));
   harness.inject(doors_frame(1'000));
   harness.inject(frame(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0}));
+  harness.inject(frame(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0, 0, 0, 0}));
   EXPECT(wait_for([&harness] {
     for (const auto id : kAllIds) {
       const auto result = harness.provider.read(id);
@@ -760,6 +784,100 @@ void test_brake_catalog_and_read_without_freshness_policy() {
   EXPECT(harness.telemetry.stop().ok());
 }
 
+void expect_acceleration_matches(const Harness &harness, const mazda::VehicleState &source) {
+  const auto longitudinal = source.reading_at(source.longitudinal_acceleration_mps2,
+                                              candidate::kAccelerationId, harness.clock.now());
+  const auto lateral = source.reading_at(source.lateral_acceleration_mps2,
+                                         candidate::kAccelerationId, harness.clock.now());
+  EXPECT(same_reading(*harness.provider.read(ids::kAccelerationLongitudinal).value, longitudinal));
+  EXPECT(same_reading(*harness.provider.read(ids::kAccelerationLateral).value, lateral));
+}
+
+void test_acceleration_matches_source_and_keeps_message_health_independent() {
+  Harness harness{};
+  mazda::VehicleState source{};
+  EXPECT(harness.telemetry.start().ok());
+  expect_acceleration_matches(harness, source);
+  for (const auto id : {ids::kAccelerationLongitudinal, ids::kAccelerationLateral}) {
+    EXPECT(harness.provider.subscribe(id, nullptr, nullptr).status ==
+           SignalStatus::UnsupportedCapability);
+    EXPECT(harness.provider.read(id).value->validation == ValidationStatus::Reference);
+  }
+  harness.clock.set(100);
+  const auto observation =
+      frame(candidate::kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80, 0, 0, 0, 0});
+  EXPECT(candidate::decode(observation, source) == candidate::DecodeStatus::Decoded);
+  harness.inject(observation);
+  harness.inject(engine_frame(100));
+  harness.inject(frame(candidate::kBrakePedalId, 100, {0x10, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_value(harness.provider, ids::kAccelerationLateral));
+  EXPECT(wait_for_value(harness.provider, ids::kEngineRpm));
+  EXPECT(wait_for_value(harness.provider, ids::kBrakePressed));
+  expect_acceleration_matches(harness, source);
+  EXPECT(
+      std::fabs(*harness.provider.read(ids::kAccelerationLongitudinal).value->value->as_number() -
+                10.0F) < 0.0001F);
+  harness.clock.set(500'000);
+  expect_acceleration_matches(harness, source);
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->availability ==
+         Availability::FreshnessUnverified);
+
+  harness.clock.set(500'001);
+  const auto malformed = frame(candidate::kAccelerationId, 500'001, {0});
+  EXPECT(candidate::decode(malformed, source) == candidate::DecodeStatus::Malformed);
+  harness.inject(malformed);
+  EXPECT(
+      wait_for_read(harness.provider, ids::kAccelerationLongitudinal, Availability::Unavailable));
+  expect_acceleration_matches(harness, source);
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->validation ==
+         ValidationStatus::Reference);
+  EXPECT(harness.provider.read(ids::kEngineRpm).value->availability ==
+         Availability::FreshnessUnverified);
+  EXPECT(harness.provider.read(ids::kBrakePressed).value->availability ==
+         Availability::FreshnessUnverified);
+
+  harness.clock.set(500'002);
+  auto recovered = observation;
+  recovered.timestamp_us = 500'002;
+  EXPECT(candidate::decode(recovered, source) == candidate::DecodeStatus::Decoded);
+  harness.inject(recovered);
+  EXPECT(wait_for_read(harness.provider, ids::kAccelerationLateral,
+                       Availability::FreshnessUnverified));
+  harness.inject(frame(candidate::kBrakePedalId, 500'002, {0}));
+  EXPECT(wait_for_read(harness.provider, ids::kBrakePressed, Availability::Unavailable));
+  expect_acceleration_matches(harness, source);
+  harness.source.fail();
+  EXPECT(
+      wait_for_read(harness.provider, ids::kAccelerationLongitudinal, Availability::Unavailable));
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->availability ==
+         Availability::Unavailable);
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->validation ==
+         ValidationStatus::Reference);
+  EXPECT(harness.telemetry.stop().status == mazda::ResultCode::Faulted);
+}
+
+void test_acceleration_preserves_explicit_freshness_policy() {
+  auto config = Harness::test_config();
+  config.freshness.longitudinal_acceleration_mps2_timeout_us = 100;
+  config.freshness.lateral_acceleration_mps2_timeout_us = 200;
+  Harness harness{config};
+  EXPECT(harness.telemetry.start().ok());
+  harness.clock.set(1'000);
+  harness.inject(frame(candidate::kAccelerationId, 1'000, {0x1f, 0x41, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, ids::kAccelerationLongitudinal, Availability::Fresh));
+  harness.clock.set(1'100);
+  EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
+         Availability::Fresh);
+  harness.clock.set(1'101);
+  EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
+         Availability::Stale);
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->availability ==
+         Availability::Fresh);
+  EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->validation ==
+         ValidationStatus::Reference);
+  EXPECT(harness.telemetry.stop().ok());
+}
+
 void test_brake_uses_explicit_caller_freshness_policy() {
   auto config = Harness::test_config();
   config.freshness.brake_pressed_timeout_us = 100;
@@ -780,6 +898,8 @@ void test_brake_uses_explicit_caller_freshness_policy() {
 } // namespace
 
 int main() {
+  test_acceleration_matches_source_and_keeps_message_health_independent();
+  test_acceleration_preserves_explicit_freshness_policy();
   test_brake_catalog_and_read_without_freshness_policy();
   test_brake_uses_explicit_caller_freshness_policy();
   test_value_and_type_conversion();

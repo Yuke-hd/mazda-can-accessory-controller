@@ -72,7 +72,7 @@ observer that writes one record per reading:
 | `timestamp_us` | Replay-relative time of the reading.                                                                     |
 | `signal`       | Catalog key, JSON-escaped.                                                                               |
 | `value`        | `true`/`false`, a shortest round-trip number, the enum choice key, or the raw number for an unknown enum value. `null` without a value or for a non-finite number. |
-| `unit`         | `"rpm"`, `"km/h"` or `null`.                                                                             |
+| `unit`         | `"rpm"`, `"km/h"`, `"m/s^2"` or `null`.                                                                             |
 | `freshness`    | `"fresh"`, `"stale"` or `"unverified"`; `null` when the reading has no freshness (`no_data`, `unavailable`). |
 | `availability` | `no_data`, `fresh`, `stale`, `freshness_unverified` or `unavailable`.                                    |
 | `validation`   | `reference`, `observed` or `confirmed`.                                                                  |

@@ -97,6 +97,8 @@ void append_value(std::string &line, const SignalMetadata &signal,
     return "\"km/h\"";
   case SignalUnit::RevolutionsPerMinute:
     return "\"rpm\"";
+  case SignalUnit::MetresPerSecondSquared:
+    return "\"m/s^2\"";
   case SignalUnit::None:
     break;
   }

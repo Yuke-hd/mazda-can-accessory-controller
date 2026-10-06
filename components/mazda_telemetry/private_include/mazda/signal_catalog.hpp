@@ -39,6 +39,8 @@ inline constexpr vehicle_signals::SignalId kDoorsUnlocked{16};
 inline constexpr vehicle_signals::SignalId kWiperLow{17};
 inline constexpr vehicle_signals::SignalId kWiperFrontPosition{18};
 inline constexpr vehicle_signals::SignalId kBrakePressed{19};
+inline constexpr vehicle_signals::SignalId kAccelerationLongitudinal{20};
+inline constexpr vehicle_signals::SignalId kAccelerationLateral{21};
 } // namespace signal_ids
 
 // Enum choice values are the raw Mazda enumerator values; keys are the
@@ -95,7 +97,7 @@ using vehicle_signals::SignalType;
 using vehicle_signals::SignalUnit;
 using vehicle_signals::ValidationStatus;
 
-// RPM and speed are backed by polling descriptors only.
+// Continuous numbers are backed by polling descriptors only.
 [[nodiscard]] constexpr SignalMetadata polled_number(SignalId id, std::string_view key,
                                                      SignalUnit unit,
                                                      ValidationStatus validation) noexcept {
@@ -179,9 +181,16 @@ inline constexpr vehicle_signals::SignalMetadata kSignalCatalog[] = {
                                   kFrontWiperPositionChoices),
     catalog_detail::notified_boolean(signal_ids::kBrakePressed, "vehicle.brake_pressed",
                                      candidate::kBrakePressedDefinition.confidence),
+    catalog_detail::polled_number(signal_ids::kAccelerationLongitudinal,
+                                  "vehicle.acceleration.longitudinal",
+                                  vehicle_signals::SignalUnit::MetresPerSecondSquared,
+                                  candidate::kLongitudinalAccelerationDefinition.confidence),
+    catalog_detail::polled_number(signal_ids::kAccelerationLateral, "vehicle.acceleration.lateral",
+                                  vehicle_signals::SignalUnit::MetresPerSecondSquared,
+                                  candidate::kLateralAccelerationDefinition.confidence),
 };
 
-inline constexpr std::size_t kSignalCatalogSize = 19;
+inline constexpr std::size_t kSignalCatalogSize = 21;
 
 static_assert(std::size(kSignalCatalog) == kSignalCatalogSize);
 static_assert(vehicle_signals::SignalCatalogView{kSignalCatalog}.well_formed());
