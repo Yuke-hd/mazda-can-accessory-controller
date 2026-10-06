@@ -67,6 +67,50 @@ The metadata line links above are intentionally descriptive only. When metadata 
 changes, preserve the stable channel name, DBC field, and status boundary; a
 source-line move does not establish new evidence.
 
+## Candidate acceleration mapping: `BRAKE` (`0x078`)
+
+This section records the protocol research for #186. It is not a public channel
+inventory entry and does not add decoder metadata, freshness policy, or a
+runtime signal. The exact upstream candidate is pinned in the
+[opendbc provenance matrix](opendbc-provenance.md) and comes from
+`95f3d52f474b677c28fc8f10fef3f2f0386aff92`:
+
+```text
+BO_ 120 BRAKE: 8 XXX
+ SG_ VEHICLE_ACC_X : 5|13@0+ (0.01,-40) [-40|40] "m/s^2" XXX
+ SG_ VEHICLE_ACC_Y : 8|13@0+ (0.001,-4.096) [-4.096|4.096] "m/s^2" XXX
+```
+
+The upstream comments use the exact wording “Vehicle acceleration of X-axis
+wrt. NED frame.” and “Vehicle acceleration of Y-axis wrt. NED frame.”
+([`VEHICLE_ACC_X`](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L778),
+[`VEHICLE_ACC_Y`](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L779)). NED wording does not establish how either source axis maps to the vehicle's longitudinal or lateral direction, nor does it establish the sign convention for the target vehicle.
+
+The existing CX-5 capture contains `0x078`, but the reviewed evidence only
+supports the pressure-correlated `BrakePressureRaw` extraction already recorded
+in [`mazda_custom.dbc`](mazda_custom.dbc#L113-L114). It does not establish either acceleration axis, its sign convention, or the upstream scaling against an annotated vehicle event. At-rest values around 0 m/s² therefore cannot be checked from the repository evidence. The source offsets imply neutral raw codes of 4000 for X and 4096 for Y; those are expected-code calculations, not observations.
+
+Both candidate fields remain **Reference**. Synthetic vectors do not promote
+these candidates, and no firmware decoder or generic telemetry contract is
+authorized by this research record.
+
+### Required validation capture
+
+If the private capture owner supplies a reviewed, privacy-safe validation
+fixture, it must include an operator annotation for each of these phases:
+
+- stationary baseline;
+- straight acceleration;
+- straight braking;
+- left turn; and
+- right turn.
+
+The review must compare raw extraction with the annotations, check the
+stationary values for plausibility around 0 m/s², establish which source axis is
+longitudinal versus lateral, and record the sign convention. Until those checks
+are available, the axis and sign semantics remain Reference and no dashboard or
+vehicle-compatibility claim may be made.
+
 ## Source names and semantic differences
 
 The reviewed DBC deliberately retains source caution in names such as
