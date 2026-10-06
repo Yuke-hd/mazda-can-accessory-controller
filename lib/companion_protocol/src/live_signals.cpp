@@ -23,22 +23,33 @@ constexpr std::size_t kBooleansOffset = 11;
 constexpr std::size_t kStatusOffset = 13;
 constexpr std::uint8_t kTelemetryStartedFlag = 0x01;
 constexpr std::uint8_t kValuePresentBit = 0x08;
-constexpr double kLargestFieldValue = 65535.0;
+constexpr double kLargestUnsignedFieldValue = 65535.0;
+constexpr double kSmallestSignedFieldValue = -32768.0;
+constexpr double kLargestSignedFieldValue = 32767.0;
 
 void write_u16(LiveFrame &bytes, std::size_t offset, std::uint16_t value) noexcept {
   bytes[offset] = static_cast<std::uint8_t>(value & 0xFFU);
   bytes[offset + 1] = static_cast<std::uint8_t>(value >> 8U);
 }
 
-// Writes a Number field when it is finite, not negative, and fits 16 bits
+// Writes a finite Number when it fits its signed or unsigned 16-bit field
 // after scaling and rounding. Returns whether the value was written.
 bool write_number(const LiveSignalSlot &slot, const SignalValue &value, LiveFrame &bytes) noexcept {
   const auto number = value.as_number();
-  if (!number.has_value() || !std::isfinite(*number) || *number < 0.0F) {
+  if (!number.has_value() || !std::isfinite(*number) || (!slot.signed_number && *number < 0.0F)) {
     return false;
   }
   const double scaled = std::round(static_cast<double>(*number) * static_cast<double>(slot.scale));
-  if (scaled > kLargestFieldValue) {
+  if (slot.signed_number) {
+    if (scaled < kSmallestSignedFieldValue || scaled > kLargestSignedFieldValue) {
+      return false;
+    }
+    // The checked float-to-signed conversion is in range; signed-to-unsigned
+    // conversion is defined modulo 65536, producing the wire two's complement.
+    write_u16(bytes, slot.position, static_cast<std::uint16_t>(static_cast<std::int16_t>(scaled)));
+    return true;
+  }
+  if (scaled > kLargestUnsignedFieldValue) {
     return false;
   }
   write_u16(bytes, slot.position, static_cast<std::uint16_t>(scaled));

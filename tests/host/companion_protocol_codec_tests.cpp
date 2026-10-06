@@ -47,7 +47,7 @@ TEST_CASE("device info encodes the version 1 layout little-endian") {
   const auto encoded = encode_device_info(DeviceInfo{0x0102, true, "1.2.3", "weact-can485-v1.1"});
   REQUIRE(encoded.has_value());
   const auto bytes = to_vector(*encoded);
-  const std::vector<std::uint8_t> header{1, 0, 0x02, 0x01, 1, 0x01, 0x00, 0x10, 5};
+  const std::vector<std::uint8_t> header{1, 0, 0x02, 0x01, 2, 0x01, 0x00, 0x10, 5};
   REQUIRE(bytes.size() == 9 + 5 + 1 + 17);
   CHECK(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + 9) == header);
   CHECK(std::string(bytes.begin() + 9, bytes.begin() + 14) == "1.2.3");
@@ -58,7 +58,7 @@ TEST_CASE("device info encodes the version 1 layout little-endian") {
 TEST_CASE("device info flags bit 0 is clear when the pairing window is closed") {
   const auto encoded = encode_device_info(DeviceInfo{1, false, "", ""});
   REQUIRE(encoded.has_value());
-  CHECK(to_vector(*encoded) == std::vector<std::uint8_t>{1, 0, 1, 0, 1, 0, 0x00, 0x10, 0, 0});
+  CHECK(to_vector(*encoded) == std::vector<std::uint8_t>{1, 0, 1, 0, 2, 0, 0x00, 0x10, 0, 0});
 }
 
 TEST_CASE("device info with two 31-byte strings is the 72-byte maximum") {

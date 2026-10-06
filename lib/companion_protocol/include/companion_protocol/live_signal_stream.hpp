@@ -23,6 +23,8 @@ inline constexpr LiveStreamClock kLiveFrameInterval{100};
 inline constexpr LiveStreamClock kLiveHeartbeatInterval{1000};
 // Frames are sent only on a link with at least this ATT MTU.
 inline constexpr std::uint16_t kMinLiveSignalsAttMtu = 64;
+static_assert(kLiveFrameBytes <= kMinLiveSignalsAttMtu - 3,
+              "Live signals must fit one notification at the minimum ATT MTU");
 
 // Port to the BLE stack: queue one notification without waiting. Returns
 // whether the stack accepted the frame; a refused frame is dropped.

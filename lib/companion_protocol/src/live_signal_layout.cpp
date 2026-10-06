@@ -1,7 +1,7 @@
 #include "companion_protocol/live_signal_layout.hpp"
 
 // The only file in this library that names catalog signal keys: the live
-// signals layout version 1 table is a protocol definition, keyed by the
+// signals layout version 2 table is a protocol definition, keyed by the
 // catalog's semantic keys so that no per-build SignalId reaches the wire.
 
 namespace companion_protocol {
@@ -25,8 +25,9 @@ constexpr LiveChoiceCode kWiperCodes[] = {
     {"unknown", 0}, {"off", 1}, {"on", 2}, {"high", 3}, {"intermittent", 4},
 };
 
-constexpr LiveSignalSlot number(std::string_view key, std::uint8_t offset, float scale) {
-  return LiveSignalSlot{key, SignalType::Number, offset, scale, nullptr, 0, false};
+constexpr LiveSignalSlot number(std::string_view key, std::uint8_t offset, float scale,
+                                bool signed_number = false) {
+  return LiveSignalSlot{key, SignalType::Number, offset, scale, nullptr, 0, false, signed_number};
 }
 
 template <std::size_t N>
@@ -61,6 +62,8 @@ constexpr std::array<LiveSignalSlot, kLiveSignalCount> kSlots{{
     boolean("vehicle.wiper.low", 11),
     // Brake freshness is intentionally unset, so the slot can never be Fresh.
     boolean("vehicle.brake_pressed", 12, true),
+    number("vehicle.acceleration.longitudinal", 24, 100.0F, true),
+    number("vehicle.acceleration.lateral", 26, 1000.0F, true),
 }};
 
 } // namespace

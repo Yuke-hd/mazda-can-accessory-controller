@@ -5,6 +5,7 @@
 #include "companion_protocol/live_signals.hpp"
 #include "support/fake_signal_provider.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -33,6 +34,36 @@ struct Contents {
   LiveSignalSampler sampler{provider};
   LiveSignalContent quiet{sampler.sample(false)};
   LiveSignalContent changed{sampler.sample(true)};
+};
+
+// Acceleration changes alone must use the same stream gates and pacing.
+std::array<vehicle_signals::SignalMetadata, 2> acceleration_catalog() {
+  std::array<vehicle_signals::SignalMetadata, 2> entries{};
+  for (std::size_t index = 0; index < entries.size(); ++index) {
+    entries[index].id = vehicle_signals::SignalId{static_cast<std::uint16_t>(index + 1)};
+    entries[index].key =
+        index == 0 ? "vehicle.acceleration.longitudinal" : "vehicle.acceleration.lateral";
+    entries[index].type = vehicle_signals::SignalType::Number;
+    entries[index].unit = vehicle_signals::SignalUnit::MetresPerSecondSquared;
+    entries[index].capabilities = vehicle_signals::SignalCapability::Read;
+  }
+  return entries;
+}
+
+struct AccelerationContents {
+  std::array<vehicle_signals::SignalMetadata, 2> entries{acceleration_catalog()};
+  test_support::FakeSignalProvider provider{
+      vehicle_signals::SignalCatalogView{entries.data(), entries.size()}};
+  LiveSignalSampler sampler{provider};
+
+  LiveSignalContent sample(float value) {
+    for (const auto &entry : entries)
+      provider.set_reading(entry.id, vehicle_signals::SignalReading{
+                                         vehicle_signals::SignalValue::number(value),
+                                         vehicle_signals::Availability::FreshnessUnverified,
+                                         vehicle_signals::ValidationStatus::Reference});
+    return sampler.sample(true);
+  }
 };
 
 constexpr std::size_t kSequence = 1;
@@ -294,6 +325,49 @@ TEST_CASE("redundant condition updates do not restart the stream") {
   CHECK(stream.offer(milliseconds{200}, contents.changed, sink));
   REQUIRE(sink.frames.size() == 2);
   CHECK(sink.frames[1][kSequence] == 1);
+}
+
+TEST_CASE("acceleration frames fit minimum MTU and stream only when subscribed") {
+  CHECK(kLiveFrameBytes == 28);
+  CHECK(kLiveFrameBytes <= kMinLiveSignalsAttMtu - 3);
+  AccelerationContents contents;
+  LiveSignalStream stream;
+  RecordingSink sink;
+  const auto negative = contents.sample(-1.0F);
+  stream.set_att_mtu(kMinLiveSignalsAttMtu);
+  stream.set_link_secured(true);
+  CHECK_FALSE(stream.offer(milliseconds{0}, negative, sink));
+  stream.set_notifications_enabled(true);
+  CHECK(stream.offer(milliseconds{0}, negative, sink));
+  REQUIRE(sink.frames.size() == 1);
+  CHECK(sink.frames[0][0] == 2);
+  CHECK(sink.frames[0][24] == 0x9C); // -100, signed i16 LE
+  CHECK(sink.frames[0][25] == 0xFF);
+  CHECK(sink.frames[0][23] == 0x0B); // lateral unverified, unused high nibble zero
+  stream.set_notifications_enabled(false);
+  CHECK_FALSE(stream.offer(milliseconds{100}, contents.sample(1.0F), sink));
+  CHECK(contents.provider.subscription_count() == 0);
+}
+
+TEST_CASE("acceleration-only changes obey rate cap and replace dropped frames with latest state") {
+  AccelerationContents contents;
+  LiveSignalStream stream;
+  RecordingSink sink;
+  make_streamable(stream);
+  sink.accept = false;
+  CHECK(stream.offer(milliseconds{0}, contents.sample(-1.0F), sink));
+  for (int ms = 1; ms < 100; ++ms)
+    CHECK_FALSE(stream.offer(milliseconds{ms}, contents.sample(0.0F), sink));
+  sink.accept = true;
+  const auto latest = contents.sample(1.0F);
+  CHECK(stream.offer(milliseconds{100}, latest, sink));
+  REQUIRE(sink.frames.size() == 2);
+  CHECK(sink.frames[1] == latest.frame(1));
+  CHECK(sink.frames[1][24] == 100);
+  CHECK(sink.frames[1][25] == 0);
+  CHECK(sink.frames[1][26] == 0xE8);
+  CHECK(sink.frames[1][27] == 0x03);
+  CHECK(contents.provider.subscription_count() == 0);
 }
 
 } // namespace
