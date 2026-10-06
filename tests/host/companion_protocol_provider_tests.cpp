@@ -219,3 +219,30 @@ TEST_CASE("frames streamed from the production provider never report brake or rp
     CHECK(nibble(frame, kRpmSlot) == (kValuePresent | kFreshnessUnverified));
   }
 }
+
+TEST_CASE("production acceleration arrives as signed SI values with provider availability") {
+  Harness harness;
+  REQUIRE(harness.telemetry.start().ok());
+  const LiveSignalSampler sampler{harness.provider};
+  auto initial = sampler.sample(true).frame(0);
+  CHECK(nibble(initial, 19) == 0); // NoData
+  CHECK(nibble(initial, 20) == 0);
+  // Literal synthetic vector: X=-10 m/s^2 and Y=-1.096 m/s^2.
+  harness.inject(candidate::kAccelerationId, 1'000, {0x17, 0x70, 0xbb, 0x80, 0, 0, 0, 0});
+  REQUIRE(
+      wait_for([&] { return (nibble(sampler.sample(true).frame(0), 19) & kValuePresent) != 0; }));
+  const auto observed = sampler.sample(true).frame(0);
+  CHECK(observed[24] == 0x18); // -1000
+  CHECK(observed[25] == 0xFC);
+  CHECK(observed[26] == 0xB8); // -1096
+  CHECK(observed[27] == 0xFB);
+  CHECK(nibble(observed, 19) == (kValuePresent | kFreshnessUnverified));
+  CHECK(nibble(observed, 20) == (kValuePresent | kFreshnessUnverified));
+  CHECK((observed[23] & 0xF0U) == 0);
+  REQUIRE(harness.telemetry.stop().ok());
+  const auto stopped = sampler.sample(false).frame(0);
+  CHECK(nibble(stopped, 19) == kUnavailable);
+  CHECK(nibble(stopped, 20) == kUnavailable);
+  CHECK(stopped[24] == 0);
+  CHECK(stopped[26] == 0);
+}

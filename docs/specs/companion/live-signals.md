@@ -1,15 +1,15 @@
-# Companion live signals (layout version 1)
+# Companion live signals (layout version 2)
 
 This document specifies the Live signals characteristic of the
 [companion BLE protocol](ble-protocol.md): the sampling source, the frame
 layout, the availability encoding and the rate cap. The core profile defines
 the UUIDs, properties, security, versioning and ATT MTU rules that this
 document builds on. Device info reports the layout as
-`live_signal_layout_version` `1`.
+`live_signal_layout_version` `2`.
 
 The firmware side is implemented by `companion_protocol::LiveSignalSampler`,
 `companion_protocol::LiveSignalStream` and the `companion_ble` Live signals
-characteristic (issues #162 and #166); no app implementation exists yet.
+characteristic (issues #162, #166 and #189); no app implementation exists yet.
 Nothing here has been validated on hardware, on a phone, or in a vehicle.
 
 ## Invariants
@@ -27,7 +27,7 @@ These apply in addition to the
 2. **Brake freshness stays unset.** `vehicle.brake_pressed` has no freshness
    timeout, so the provider never reports it as `Fresh`, and the frame never
    does either. As defence in depth, the encoder sends a `Fresh` brake reading
-   as `FreshnessUnverified` (code 2): such a reading is a provider defect, and
+   as `FreshnessUnverified` (code 3): such a reading is a provider defect, and
    demoting it can only lower confidence. This is the only availability the
    encoder changes. It applies only to signals whose freshness is
    intentionally unset by policy, which is brake alone; a signal that merely
@@ -110,11 +110,11 @@ timeout can turn stale between frames, and the next frame reports it.
 
 ## Frame layout
 
-A frame is 23 bytes, within the 61-byte notification limit at the minimum MTU.
+A frame is 28 bytes, within the 61-byte notification limit at the minimum MTU.
 
 | Offset | Size | Field |
 | ---: | ---: | --- |
-| 0 | 1 | `layout_version` (u8): `1` |
+| 0 | 1 | `layout_version` (u8): `2` |
 | 1 | 1 | `sequence` (u8): increments by 1 for each frame the controller attempts to send, wrapping from 255 to 0; the first frame is 0 |
 | 2 | 1 | `flags` (u8): bit 0 is set when the telemetry facade started successfully during this boot; other bits are zero |
 | 3 | 2 | `engine_rpm` (u16): units of 0.25 rpm |
@@ -124,7 +124,9 @@ A frame is 23 bytes, within the 61-byte notification limit at the minimum MTU.
 | 9 | 1 | `actual_gear` (u8): choice code |
 | 10 | 1 | `front_wiper_position` (u8): choice code |
 | 11 | 2 | `booleans` (u16): one bit per Boolean signal, `1` for true |
-| 13 | 10 | `status`: one 4-bit [status nibble](#status-nibbles) per signal |
+| 13 | 11 | `status`: one 4-bit [status nibble](#status-nibbles) per signal |
+| 24 | 2 | `acceleration_longitudinal` (i16): units of 0.01 m/s² |
+| 26 | 2 | `acceleration_lateral` (i16): units of 0.001 m/s² |
 
 - Multi-byte fields are little-endian, as in the core profile.
 - A field whose signal has no value is zero. The status nibble, not the
@@ -144,18 +146,47 @@ A frame is 23 bytes, within the 61-byte notification limit at the minimum MTU.
   bit, needs a new `live_signal_layout_version`. The app discards a frame
   whose `layout_version` byte is not the version device info reported.
 
+### Layout 1 compatibility reference
+
+Layout 1 is the prior 23-byte frame: byte 0 is `1`, bytes 1–12 have the same
+sequence, flags, RPM, speed, enum and Boolean definitions as the table above,
+and bytes 13–22 contain 19 status nibbles for indexes 0–18 below. Its final
+high nibble (index 19) is reserved and zero. It has no acceleration fields.
+Its Number, Boolean and Enum encodings are unchanged by layout 2.
+
+Layout 2 changes byte 0 to `2`, assigns index 19 to longitudinal acceleration,
+adds index 20 and a status byte at 23, and adds the two fields at 24 and 26.
+A layout 1 client must not subscribe to a device reporting layout 2, and must
+reject a received layout 2 frame. Apps supporting both versions select an
+explicit decoder from Device info, require the matching frame version and exact
+length (23 or 28 bytes), and never reinterpret a newer frame as the old layout.
+The protocol version remains `1.0`; live-layout compatibility is independent.
+
 ### Number encoding
 
 | Signal | Field | Encoding | Range |
 | --- | --- | --- | --- |
 | `vehicle.engine_rpm` | `engine_rpm` | `round(rpm × 4)` | The decoder accepts `0..8500` rpm (raw `0..34000`). |
-| `vehicle.speed_kph` | `speed_kph` | `round(km/h × 100)` | `0..655.35` km/h, the 16-bit encoding ceiling. |
+| `vehicle.speed_kph` | `speed_kph` | `round(km/h × 100)` (u16) | `0..655.35` km/h, the unsigned 16-bit encoding ceiling. |
+| `vehicle.acceleration.longitudinal` | `acceleration_longitudinal` | `round(m/s² × 100)` (i16) | Wire range `-327.68..327.67` m/s²; decoded 13-bit range `-40..41.91` m/s². |
+| `vehicle.acceleration.lateral` | `acceleration_lateral` | `round(m/s² × 1000)` (i16) | Wire range `-32.768..32.767` m/s²; decoded 13-bit range `-4.096..4.095` m/s². |
 
 The units match the decoder's own resolution, so encoding loses no precision.
-The range column is information only. The encoder sends a value when it is
-finite, not negative, and `round(value × scale)` is at most `65535`.
-Otherwise the field is zero and the value-present bit is clear, and the
-availability code is unchanged, as [invariant 1](#invariants) requires.
+The encoder requires a finite value and rounds `value × scale` to the nearest
+integer, with halfway values rounded away from zero. Unsigned fields additionally
+reject negative values and require the rounded result in `0..65535`. Signed
+acceleration fields require the rounded result in `-32768..32767`, encoded as
+little-endian two's complement. Otherwise the field is zero and the value-present
+bit is clear, while availability is unchanged, as [invariant 1](#invariants)
+requires. A negative acceleration and a valid zero both set value-present.
+
+Acceleration is canonical SI, in m/s². No filtering, peak calculation, or `g`
+conversion occurs in firmware; an app may convert for display. The source's
+published engineering ranges (`-40..40` and `-4.096..4.096` m/s²) are metadata,
+not invalid-code rules. All decoded 13-bit values fit the wire fields. The axis,
+sign and scaling remain Reference candidates from
+[signal evidence](../../protocol/signal-evidence.md); encoding does not promote
+them to vehicle-validated signals.
 
 ### Boolean bits
 
@@ -209,7 +240,7 @@ which the value-present bit reports.
 
 Signal `i` in the [signal table](#signal-table) uses byte `13 + i / 2` (integer
 division): the low nibble for an even `i` and the high nibble for an odd `i`.
-The high nibble of the last byte, for the unused index 19, is zero.
+The high nibble of status byte 23, for the unused index 21, is zero.
 
 | Bits | Field |
 | --- | --- |
@@ -225,7 +256,7 @@ The high nibble of the last byte, for the unused index 19, is zero.
 | 4 | `Unavailable` | The provider reports the reading unavailable, for example after a fault or loss of transport health. |
 | 5 | Read failed | `read()` returned a request failure, such as `Faulted` or `Timeout`. No value is sent. |
 | 6 | Not supported | This build cannot read the signal as specified; see the outcome table below. No value is sent. |
-| 7 | Reserved | Not sent in layout version 1. The app treats it as unknown. |
+| 7 | Reserved | Not sent in layout version 2. The app treats it as unknown. |
 
 - Codes 0–4 are `vehicle_signals::Availability` copied through an explicit
   table, except the brake demotion in [invariant 2](#invariants). Codes 5
@@ -251,7 +282,7 @@ The high nibble of the last byte, for the unused index 19, is zero.
 
 ## Signal table
 
-Layout version 1 carries every signal in the controller signal catalog
+Layout version 2 carries every signal in the controller signal catalog
 (`tools/controller_signal_catalog.json`). The index in this table is
 normative; it is not the order of the catalog file. Evidence status
 and source boundaries are recorded in
@@ -281,6 +312,8 @@ as Reference-only `vehicle.speed_kph`, from that document.
 | 16 | `vehicle.doors_unlocked` | Boolean | Bit 10 | None |
 | 17 | `vehicle.wiper.low` | Boolean | Bit 11 | None |
 | 18 | `vehicle.brake_pressed` | Boolean | Bit 12 | None; brake freshness is unset, so never `Fresh`. |
+| 19 | `vehicle.acceleration.longitudinal` | Number | `acceleration_longitudinal` | None |
+| 20 | `vehicle.acceleration.lateral` | Number | `acceleration_lateral` | None |
 
 The timeout column records the default telemetry freshness policy
 (`lib/mazda/include/mazda/freshness.hpp`) for orientation only. A signal with
@@ -303,18 +336,19 @@ least cover:
 - every row of the read-outcome table maps to its code 5 or 6;
 - `vehicle.brake_pressed` and `vehicle.engine_rpm` readings from the
   production provider policy never encode as `Fresh`;
-- read failures, unsupported signals, non-finite, negative and out-of-range
-  numbers, values of the wrong type and unmapped enum values clear the
+- read failures, unsupported signals, non-finite and out-of-range numbers,
+  negative unsigned numbers, values of the wrong type and unmapped enum values clear the
   value-present bit, and an unencodable value keeps its provider availability;
 - every catalog choice has a code, and the choice-code tables match this
   document;
+- signed acceleration negative/zero/positive round trips, wire boundaries and
+  rounding, per-signal availability, version/length compatibility and MTU fit;
 - the 100 ms rate cap, the 1 s heartbeat, the first-frame timing, and
   re-sending a change whose frame the stack could not queue.
 
 ## Out of scope
 
-- Firmware and app implementation, tracked by the companion-app milestone
-  issues.
+- App implementation and display conversion to `g`.
 - Freshness timeouts for any signal, including brake.
 - A per-signal subscription mask or a configurable rate.
 - Raw CAN, diagnostic or logging streams.

@@ -8,14 +8,14 @@
 
 #include "vehicle_signals/signal_contracts.hpp"
 
-// Live signals layout version 1: the normative signal table and choice-code
+// Live signals layout version 2: the normative signal table and choice-code
 // tables. Slots are identified by catalog key; numeric SignalIds never reach
 // the wire.
 
 namespace companion_protocol {
 
-inline constexpr std::size_t kLiveSignalCount = 19;
-inline constexpr std::size_t kLiveFrameBytes = 23;
+inline constexpr std::size_t kLiveSignalCount = 21;
+inline constexpr std::size_t kLiveFrameBytes = 28;
 
 // One protocol choice code, mapped from a catalog choice key.
 struct LiveChoiceCode {
@@ -40,6 +40,8 @@ struct LiveSignalSlot {
   // no default timeout today, such as engine RPM, is not: a later reviewed
   // timeout may make its Fresh readings legitimate.
   bool freshness_unset{false};
+  // Number only: signed two's-complement i16 instead of unsigned u16.
+  bool signed_number{false};
 
   // The protocol code of an Enum choice key; std::nullopt when unmapped.
   [[nodiscard]] std::optional<std::uint8_t> choice_code(std::string_view choice_key) const noexcept;

@@ -471,7 +471,7 @@ which CoreBluetooth does automatically.
 | 0 | 1 | `protocol_major` (u8) | `1` |
 | 1 | 1 | `protocol_minor` (u8) | `0` |
 | 2 | 2 | `config_schema_version` (u16) | `1` (`kSchemaVersion`) |
-| 4 | 1 | `live_signal_layout_version` (u8) | `1` |
+| 4 | 1 | `live_signal_layout_version` (u8) | `2` |
 | 5 | 1 | `flags` (u8) | Bit 0: pairing window open. Other bits are zero. |
 | 6 | 2 | `max_config_bytes` (u16) | `4096` |
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |

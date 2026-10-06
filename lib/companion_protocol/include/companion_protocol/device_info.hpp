@@ -11,7 +11,7 @@ namespace companion_protocol {
 
 inline constexpr std::uint8_t kProtocolMajor = 1;
 inline constexpr std::uint8_t kProtocolMinor = 0;
-inline constexpr std::uint8_t kLiveSignalLayoutVersion = 1;
+inline constexpr std::uint8_t kLiveSignalLayoutVersion = 2;
 // Largest config upload, equal to the canonical override storage limit.
 inline constexpr std::uint16_t kMaxConfigBytes = 4096;
 inline constexpr std::size_t kMaxDeviceInfoTextBytes = 31;

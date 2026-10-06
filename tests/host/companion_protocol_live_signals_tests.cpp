@@ -43,7 +43,7 @@ constexpr SignalEnumChoice kGearChoices[] = {
 constexpr SignalEnumChoice kWiperChoices[] = {
     {0, "unknown"}, {3, "off"}, {2, "on"}, {1, "high"}, {4, "intermittent"}};
 
-constexpr std::array<std::string_view, kLiveSignalCount> kKeys{
+constexpr std::array<std::string_view, 21> kKeys{
     "vehicle.engine_rpm",           "vehicle.speed_kph",
     "vehicle.turn_state",           "vehicle.selector_position",
     "vehicle.actual_gear",          "vehicle.wiper.front_position",
@@ -53,7 +53,8 @@ constexpr std::array<std::string_view, kLiveSignalCount> kKeys{
     "vehicle.door.rear_right",      "vehicle.door.rear_left",
     "vehicle.door.front_left_rhd",  "vehicle.door.front_right_rhd",
     "vehicle.doors_unlocked",       "vehicle.wiper.low",
-    "vehicle.brake_pressed",
+    "vehicle.brake_pressed",        "vehicle.acceleration.longitudinal",
+    "vehicle.acceleration.lateral",
 };
 
 constexpr SignalId id_of(std::size_t slot) {
@@ -66,9 +67,11 @@ SignalMetadata entry_for(std::size_t slot) {
   entry.key = kKeys[slot];
   entry.validation = ValidationStatus::Reference;
   entry.capabilities = SignalCapability::Read | SignalCapability::Notify;
-  if (slot < 2) {
+  if (slot < 2 || slot >= 19) {
     entry.type = SignalType::Number;
-    entry.unit = slot == 0 ? SignalUnit::RevolutionsPerMinute : SignalUnit::KilometresPerHour;
+    entry.unit = slot == 0   ? SignalUnit::RevolutionsPerMinute
+                 : slot == 1 ? SignalUnit::KilometresPerHour
+                             : SignalUnit::MetresPerSecondSquared;
     return entry;
   }
   if (slot < 6) {
@@ -89,7 +92,7 @@ SignalMetadata entry_for(std::size_t slot) {
 
 std::vector<SignalMetadata> full_catalog() {
   std::vector<SignalMetadata> entries;
-  for (std::size_t slot = 0; slot < kLiveSignalCount; ++slot) {
+  for (std::size_t slot = 0; slot < kKeys.size(); ++slot) {
     entries.push_back(entry_for(slot));
   }
   return entries;
@@ -166,8 +169,8 @@ TEST_CASE("read failures map to Not supported or Read failed") {
 TEST_CASE("a frame has the layout version, sequence and telemetry-started flag") {
   Fixture fixture;
   const auto started = fixture.frame(true, 7);
-  CHECK(started.size() == 23);
-  CHECK(started[0] == 1);
+  CHECK(started.size() == 28);
+  CHECK(started[0] == 2);
   CHECK(started[1] == 7);
   CHECK(started[2] == 0x01);
   CHECK(fixture.frame(false, 255)[2] == 0x00);
@@ -180,7 +183,7 @@ TEST_CASE("a provider with no observations reports NoData and no values") {
   for (std::size_t offset = 3; offset < 13; ++offset) {
     CHECK(frame[offset] == 0);
   }
-  for (std::size_t offset = 13; offset < 23; ++offset) {
+  for (std::size_t offset = 13; offset < frame.size(); ++offset) {
     CHECK(frame[offset] == 0);
   }
 }
@@ -308,7 +311,7 @@ TEST_CASE("a catalog choice key without a protocol code is not sent") {
 }
 
 TEST_CASE("each Boolean signal uses its own bit") {
-  for (std::size_t slot = kHazard; slot < kLiveSignalCount; ++slot) {
+  for (std::size_t slot = kHazard; slot <= kBrake; ++slot) {
     Fixture fixture;
     fixture.set(slot, SignalValue::boolean(true), Availability::FreshnessUnverified);
     const auto frame = fixture.frame();
@@ -448,7 +451,7 @@ TEST_CASE("the signal table matches the specification") {
     CHECK(slots[slot].type == SignalType::Enum);
     CHECK(slots[slot].position == 7 + (slot - kTurn));
   }
-  for (std::size_t slot = kHazard; slot < kLiveSignalCount; ++slot) {
+  for (std::size_t slot = kHazard; slot <= kBrake; ++slot) {
     CHECK(slots[slot].type == SignalType::Boolean);
     CHECK(slots[slot].position == slot - kHazard);
   }
@@ -471,5 +474,130 @@ TEST_CASE("the choice-code tables match the specification") {
             std::optional<std::uint8_t>{static_cast<std::uint8_t>(choice)});
     }
     CHECK_FALSE(slot.choice_code("not_a_choice").has_value());
+  }
+}
+
+TEST_CASE("layout 2 adds two signed SI acceleration fields without moving existing fields") {
+  Fixture fixture;
+  const auto frame = fixture.frame();
+  REQUIRE(frame.size() == 28);
+  CHECK(frame[0] == 2);
+  REQUIRE(live_signal_slots().size() == 21);
+  CHECK(live_signal_slots()[19].key == "vehicle.acceleration.longitudinal");
+  CHECK(live_signal_slots()[19].position == 24);
+  CHECK(live_signal_slots()[19].scale == 100.0F);
+  CHECK(live_signal_slots()[19].signed_number);
+  CHECK(live_signal_slots()[20].key == "vehicle.acceleration.lateral");
+  CHECK(live_signal_slots()[20].position == 26);
+  CHECK(live_signal_slots()[20].scale == 1000.0F);
+  CHECK(live_signal_slots()[20].signed_number);
+  CHECK(frame[23] == 0); // index 21 is reserved
+}
+
+TEST_CASE("negative zero and positive acceleration round trip in canonical SI units") {
+  for (std::size_t slot : {19U, 20U}) {
+    const double scale = slot == 19 ? 100.0 : 1000.0;
+    const std::size_t offset = slot == 19 ? 24 : 26;
+    for (float value : {-40.0F, -4.096F, -1.234F, 0.0F, 1.234F, 4.095F, 41.91F}) {
+      if (slot == 20 && std::abs(value) > 32.0F)
+        continue;
+      Fixture fixture;
+      fixture.set(slot, SignalValue::number(value), Availability::FreshnessUnverified);
+      const auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      const std::uint16_t raw = u16(frame, offset);
+      const std::int32_t signed_raw = raw < 0x8000U ? raw : static_cast<std::int32_t>(raw) - 65536;
+      CHECK(std::abs(static_cast<double>(signed_raw) / scale - value) <= 0.5 / scale + 0.00001);
+      CHECK(present(frame, slot));
+      CHECK(code(frame, slot) == 3);
+    }
+  }
+}
+
+TEST_CASE("signed acceleration limits and rounding never overflow") {
+  for (std::size_t slot : {19U, 20U}) {
+    const float scale = slot == 19 ? 100.0F : 1000.0F;
+    const std::size_t offset = slot == 19 ? 24 : 26;
+    for (auto pair : {std::pair<float, std::uint16_t>{-32768.0F / scale, 0x8000U},
+                      {32767.0F / scale, 0x7FFFU},
+                      {-0.5F / scale - 0.000001F, 0xFFFFU},
+                      {0.5F / scale + 0.000001F, 1U},
+                      {-0.49F / scale, 0U},
+                      {-32768.49F / scale, 0x8000U},
+                      {32767.49F / scale, 0x7FFFU},
+                      {slot == 19 ? -0.125F : -0.0625F, slot == 19 ? 0xFFF3U : 0xFFC1U},
+                      {slot == 19 ? 0.125F : 0.0625F, slot == 19 ? 13U : 63U}}) {
+      Fixture fixture;
+      fixture.set(slot, SignalValue::number(pair.first), Availability::Fresh);
+      const auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      CHECK(present(frame, slot));
+      CHECK(u16(frame, offset) == pair.second);
+    }
+    for (float value :
+         {-32769.0F / scale, 32768.0F / scale, -32768.51F / scale, 32767.51F / scale,
+          std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+          -std::numeric_limits<float>::infinity(), std::numeric_limits<float>::max(),
+          -std::numeric_limits<float>::max()}) {
+      Fixture fixture;
+      fixture.set(slot, SignalValue::number(value), Availability::Stale);
+      const auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      CHECK_FALSE(present(frame, slot));
+      CHECK(u16(frame, offset) == 0);
+      CHECK(code(frame, slot) == 2);
+    }
+  }
+}
+
+TEST_CASE("each acceleration status is preserved independently of its retained value") {
+  for (std::size_t slot : {19U, 20U}) {
+    for (auto availability : {Availability::NoData, Availability::Fresh, Availability::Stale,
+                              Availability::FreshnessUnverified, Availability::Unavailable}) {
+      Fixture fixture;
+      fixture.set(slot, SignalValue::number(-1.0F), availability);
+      auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      CHECK(code(frame, slot) == static_cast<std::uint8_t>(status_code(availability)));
+      CHECK(present(frame, slot));
+      fixture.set(slot, std::nullopt, availability);
+      frame = fixture.frame();
+      CHECK(code(frame, slot) == static_cast<std::uint8_t>(status_code(availability)));
+      CHECK_FALSE(present(frame, slot));
+    }
+  }
+}
+
+TEST_CASE("unreadable acceleration follows the existing unsupported and failure codes") {
+  for (std::size_t slot : {19U, 20U}) {
+    for (int defect = 0; defect < 3; ++defect) {
+      auto catalog = full_catalog();
+      if (defect == 0)
+        catalog.erase(catalog.begin() + slot);
+      if (defect == 1)
+        catalog[slot].type = SignalType::Boolean;
+      if (defect == 2)
+        catalog[slot].capabilities = SignalCapability::Notify;
+      Fixture fixture{catalog};
+      const auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      CHECK(code(frame, slot) == 6);
+      CHECK_FALSE(present(frame, slot));
+    }
+    for (auto failure : {SignalStatus::InvalidSignal, SignalStatus::UnsupportedCapability,
+                         SignalStatus::Faulted, SignalStatus::Timeout}) {
+      Fixture fixture;
+      fixture.provider.fail_reads(id_of(slot), failure);
+      const auto frame = fixture.frame();
+      REQUIRE(frame.size() == 28);
+      CHECK(code(frame, slot) == static_cast<std::uint8_t>(status_code(failure)));
+      CHECK_FALSE(present(frame, slot));
+    }
+    Fixture fixture;
+    fixture.set(slot, SignalValue::boolean(true), Availability::Unavailable);
+    const auto frame = fixture.frame();
+    REQUIRE(frame.size() == 28);
+    CHECK(code(frame, slot) == 4);
+    CHECK_FALSE(present(frame, slot));
   }
 }
