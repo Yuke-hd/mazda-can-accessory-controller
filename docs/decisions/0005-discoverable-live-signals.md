@@ -127,8 +127,7 @@ CCCDs, actual throughput, stack headroom and CAN/LED coexistence.
 
 - [Legacy live-signal contract](../specs/companion/live-signals.md) and
   [companion BLE protocol](../specs/companion/ble-protocol.md).
-- [Extensible live-signal planning spec](../specs/companion/extensible-live-signals.md)
-  and [implementation plan](../../tasks/plan.md).
+- [Extensible live-signal planning spec](../specs/companion/extensible-live-signals.md).
 - [Firmware tracker #195](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/195),
   [shared contract #196](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/196),
   and [iOS tracker #41](https://github.com/Yuke-hd/esp-can-companion/issues/41).

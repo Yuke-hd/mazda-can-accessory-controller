@@ -4,7 +4,9 @@ Status: **Planning baseline; wire contract pending review.** The owner requested
 GitHub issue breakdown on 2026-10-06. This proposed addition does not replace
 the implemented [fixed-layout contract](live-signals.md) or claim firmware, phone,
 bench, or vehicle validation. The contract issue finalizes wire details before
-implementation; see [the implementation plan](../../../tasks/plan.md).
+implementation. Firmware work is tracked in
+[#195](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/195)
+and iOS work in [#41](https://github.com/Yuke-hd/esp-can-companion/issues/41).
 
 [ADR-0005](../../decisions/0005-discoverable-live-signals.md) records the
 accepted architectural direction and its tradeoffs; the wire details below
