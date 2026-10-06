@@ -4,6 +4,7 @@
 #include "companion_ble/config_characteristics.hpp"
 #include "companion_ble/device_info_characteristic.hpp"
 #include "companion_ble/gatt_service.hpp"
+#include "companion_ble/live_signals_characteristic.hpp"
 #include "companion_ble/security.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -38,6 +39,7 @@ internal::DeviceInfoValues served_device_info{};
 // Copied once by start(), read by the startup task.
 PairingInputs pairing_inputs{};
 ConfigInputs config_inputs{};
+const vehicle_signals::SignalProvider *live_signal_provider{nullptr};
 bool config_transfer{false};
 
 void host_task(void * /*argument*/) {
@@ -62,13 +64,16 @@ int register_services() noexcept {
                ? internal::register_companion_service(
                      {internal::device_info_characteristic(served_device_info),
                       internal::config_characteristic(), internal::config_status_characteristic(),
-                      internal::command_characteristic()})
+                      internal::command_characteristic(), internal::live_signals_characteristic()})
                : internal::register_companion_service(
-                     {internal::device_info_characteristic(served_device_info)});
+                     {internal::device_info_characteristic(served_device_info),
+                      internal::live_signals_characteristic()});
   if (rc != 0)
     return rc;
   rc = ble_svc_gap_device_name_set(kDeviceName);
-  return rc;
+  if (rc != 0)
+    return rc;
+  return internal::bind_live_signals(*live_signal_provider);
 }
 
 bool bring_up_nimble() noexcept {
@@ -111,9 +116,9 @@ void startup_task(void * /*argument*/) {
 
 } // namespace
 
-bool start(const companion_protocol::DeviceInfo &device_info, const PairingInputs &pairing,
-           const ConfigInputs &config) noexcept {
-  if (started.exchange(true))
+bool start(const companion_protocol::DeviceInfo &device_info,
+           const ServiceInputs &inputs) noexcept {
+  if (inputs.live_signals == nullptr || started.exchange(true))
     return false;
   companion_protocol::DeviceInfo served = device_info;
   served.pairing_window_open = false;
@@ -127,11 +132,14 @@ bool start(const companion_protocol::DeviceInfo &device_info, const PairingInput
   }
   served_device_info.window_closed = *closed;
   served_device_info.window_open = *open;
-  pairing_inputs = pairing;
-  config_inputs = config;
+  pairing_inputs = inputs.pairing;
+  config_inputs = inputs.config;
+  live_signal_provider = inputs.live_signals;
   const BaseType_t created = xTaskCreate(startup_task, "companion_ble", kStartupTaskStackBytes,
                                          nullptr, kStartupTaskPriority, nullptr);
   return created == pdPASS;
 }
+
+void mark_telemetry_started() noexcept { internal::mark_live_signals_telemetry_started(); }
 
 } // namespace companion_ble

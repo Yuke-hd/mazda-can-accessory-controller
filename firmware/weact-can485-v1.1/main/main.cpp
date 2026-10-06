@@ -156,17 +156,18 @@ __attribute__((noinline)) void start_companion_link() noexcept {
   device_info.hardware_id = kHardwareId;
   // Bonds need the NVS partition that the config store initialized; the
   // board samples the user key that opens the pairing window.
-  companion_ble::PairingInputs pairing{};
-  pairing.bond_storage = controller_config::persisted::nvs_initialized()
-                             ? companion_protocol::BondStorage::Available
-                             : companion_protocol::BondStorage::Unavailable;
-  pairing.user_key_pressed = board::user_key_pressed;
-  companion_ble::ConfigInputs config{};
-  config.boot = &config_service;
-  config.committer = &config_service;
-  config.reverter = &config_service;
-  config.restart = restart_after_fail_off;
-  if (!companion_ble::start(device_info, pairing, config))
+  companion_ble::ServiceInputs inputs{};
+  inputs.pairing.bond_storage = controller_config::persisted::nvs_initialized()
+                                    ? companion_protocol::BondStorage::Available
+                                    : companion_protocol::BondStorage::Unavailable;
+  inputs.pairing.user_key_pressed = board::user_key_pressed;
+  inputs.config.boot = &config_service;
+  inputs.config.committer = &config_service;
+  inputs.config.reverter = &config_service;
+  inputs.config.restart = restart_after_fail_off;
+  // The companion only reads the provider through the generic port.
+  inputs.live_signals = &signal_provider;
+  if (!companion_ble::start(device_info, inputs))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }
 
@@ -273,6 +274,9 @@ bool start_vehicle_io() noexcept {
   }
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
+  // Sets the Live signals telemetry-started flag. It only stores an atomic
+  // flag, so it never waits and never blocks the vehicle I/O startup.
+  companion_ble::mark_telemetry_started();
   return true;
 }
 

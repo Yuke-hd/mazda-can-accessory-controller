@@ -288,6 +288,10 @@ add_executable(companion_protocol_live_signals_tests companion_protocol_live_sig
 target_link_libraries(companion_protocol_live_signals_tests PRIVATE companion_protocol
                                                                     vehicle_signals_test_support
                                                                     doctest::doctest)
+add_executable(companion_protocol_live_stream_tests companion_protocol_live_stream_tests.cpp)
+target_link_libraries(companion_protocol_live_stream_tests PRIVATE companion_protocol
+                                                                   vehicle_signals_test_support
+                                                                   doctest::doctest)
 add_executable(companion_protocol_provider_tests companion_protocol_provider_tests.cpp)
 target_include_directories(companion_protocol_provider_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
@@ -300,6 +304,7 @@ add_executable(companion_protocol_pairing_tests companion_protocol_pairing_tests
 target_link_libraries(companion_protocol_pairing_tests PRIVATE companion_protocol doctest::doctest)
 foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protocol_transfer_tests
                                 companion_protocol_live_signals_tests
+                                companion_protocol_live_stream_tests
                                 companion_protocol_provider_tests
                                 companion_protocol_pairing_tests)
   target_compile_features(${companion_test} PRIVATE cxx_std_17)

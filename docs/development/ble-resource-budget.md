@@ -357,6 +357,37 @@ Upload a 4 KiB document with maximum nesting and the longest field paths,
 commit it to a nearly full NVS partition so that a page erase runs, and
 read the headroom the handler logs. Tune the stack from that measurement.
 
+## Live signals cost (#166)
+
+The Live signals characteristic samples the read-only provider on the NimBLE
+host task through one NimBLE callout and tracks its link through one GAP
+event listener. It creates no task and never waits for the stack. This is
+software evidence only; nothing here was measured on hardware.
+
+- **GATT.** It is the fifth companion characteristic, which fills
+  `kMaxCompanionCharacteristics` (5). Its CCCD is one of the three per bond
+  that `CONFIG_BT_NIMBLE_MAX_CCCDS=12` already allows for. No sdkconfig
+  setting changes.
+- **Buffers.** Each frame takes one mbuf from the NimBLE pool for as long as
+  the stack holds it. When none is free, or the stack refuses the frame, it
+  is dropped and the latest state is offered at the next 100 ms slot; frames
+  never queue behind each other in the component.
+- **Config transfer.** The sampling callout, the GAP listener and the Config
+  and Command write handlers all run on the host task, so a sample never runs
+  while a commit is in progress and needs no lock. The sampling path stays far
+  shallower than the commit path in "Host stack estimate". It neither waits
+  for nor delays the write response, the Config status notification or the
+  1 s disconnect wait; frames may continue until that disconnect completes,
+  and the restart that follows fails the lighting off as before. After Clear
+  bonds the next sample sees no accepted bond and sends nothing.
+- `idf.py size` against the #175 head (39cfcf9): static DRAM +200 B (`.bss`
+  +184 B, `.data` +16 B), IRAM unchanged, flash code +3,056 B, flash data
+  +1,008 B, image +4,080 B.
+
+**Deferred (bench):** with a bonded phone subscribed, record the host task
+headroom and the frames queued and dropped that the component logs on
+disconnect, and the worst-case `LiveSignalSampler::sample()` time.
+
 ## Remaining risks
 
 - IRAM is the tightest static resource after NimBLE, at 23,297 B free. If later

@@ -359,8 +359,12 @@ behaviour, the binding chooses the more conservative outcome:
   `link_has_accepted_bond()` is true. NimBLE's `sec_state.encrypted` and
   `sec_state.bonded` flags are not enough, because a rejected pairing is
   encrypted and bonded until its disconnect completes. The Live signals
-  notifier (#166) must use this check when it is integrated with this
-  binding.
+  notifier (#166) re-reads the check on every GAP event it receives and before
+  every sample. NimBLE calls GAP event listeners before the connection
+  callback, so at an encryption change the listener runs before this binding
+  has judged the bond, and Clear bonds revokes the bond without any GAP
+  event; the per-sample read stops the stream within one 100 ms sample slot
+  in both cases.
 - **Clear bonds.** The operation deletes each bonded peer's security, CCCD and
   address records and keeps the controller's own identity resolving key, so
   the controller's identity address does not change. Entries in the

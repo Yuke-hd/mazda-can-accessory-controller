@@ -30,11 +30,29 @@ comments, and vehicle catalog key literals are allowed only in
 
 A source scan keeps `components/companion_ble` isolated: its includes are
 limited to NimBLE, logging, the RTOS, `esp_timer`, the `companion_protocol`
-codec and its own headers, it names no CAN, Mazda, telemetry, action-engine,
-controller-config, LED-driver, GPIO or NVS symbols, and its ESP-IDF
-requirements are limited to `bt`, `companion_protocol`, `esp_timer`,
-`freertos` and `log`. It cannot include `esp_system.h`: the controlled
-restart belongs to the composition root, which fails lighting off first.
+codec, `vehicle_signals/signal_provider.hpp` and its own headers, it names no
+CAN, Mazda, telemetry, action-engine, controller-config, LED-driver, GPIO or
+NVS symbols, and its ESP-IDF requirements are limited to `bt`,
+`companion_protocol`, `esp_timer`, `freertos`, `log` and `vehicle_signals`.
+It cannot include `esp_system.h`: the controlled restart belongs to the
+composition root, which fails lighting off first. The only `vehicle_signals`
+name it may use is a `const vehicle_signals::SignalProvider`.
+`subscribe`/`unsubscribe` calls are rejected, and so are `const_cast`,
+`reinterpret_cast`, `remove_const`, `remove_cv`, `remove_cvref` and `decay`
+anywhere in the component. This is a textual, defence-in-depth check for
+honest mistakes, not a proof that no writable view exists; code review still
+owns read-only provider access. Two reviewed casts are exempt, each only in its
+own file: `const_cast<DeviceInfoValues *>` in
+`device_info_characteristic.cpp`, which hands the Device info values to
+NimBLE's `void *` access argument, and `reinterpret_cast<const std::uint8_t *>`
+in `advertising.cpp`, which passes the advertised name as bytes. The GATT
+table builder in `gatt_service.cpp` passes the registered, writable definition
+slot as the access argument, so it needs no cast. Only `security.cpp` may read
+NimBLE's `sec_state`; every other source that sends a notification or
+indication must also call `link_has_accepted_bond()`, the notification gate in
+[`ble-protocol.md`](../specs/companion/ble-protocol.md). Like the cast rule,
+this is a textual check that a gate is present, not proof that every send is
+gated.
 
 A second source scan keeps `components/companion_config` isolated: its
 includes are limited to its own headers, `companion_protocol`, controller-config
