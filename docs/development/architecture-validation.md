@@ -33,7 +33,19 @@ limited to NimBLE, logging, the RTOS, `esp_timer`, the `companion_protocol`
 codec and its own headers, it names no CAN, Mazda, telemetry, action-engine,
 controller-config, LED-driver, GPIO or NVS symbols, and its ESP-IDF
 requirements are limited to `bt`, `companion_protocol`, `esp_timer`,
-`freertos` and `log`.
+`freertos` and `log`. It cannot include `esp_system.h`: the controlled
+restart belongs to the composition root, which fails lighting off first.
+
+A second source scan keeps `components/companion_config` isolated: its
+includes are limited to its own headers, `companion_protocol`, controller-config
+persistence, `action_engine`, `local_argb_actions`, the value-only
+`local_argb/lighting_sink.hpp` contract, `vehicle_core/time.hpp` and the
+`vehicle_signals` provider contract. It names no Mazda, CAN, telemetry, RTOS,
+ESP-IDF, LED-driver, NVS or BLE symbols, never calls a sink or `attach()`, and
+its CMake requirements are limited to `action_engine`, `companion_protocol`,
+`controller_config`, `local_argb_actions`, `local_argb_sink_contract`,
+`vehicle_core` and `vehicle_signals`. The lighting sink contract is allowed
+only so the dry run can implement the discarding scratch sink.
 
 The gate owns the receive-only, board-artifact, and local-ARGB semantic
 validators, plus checks that retired raw-capture code has no active dependency.

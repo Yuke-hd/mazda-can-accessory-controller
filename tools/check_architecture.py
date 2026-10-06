@@ -460,6 +460,7 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/att_error.hpp",
     "companion_protocol/bytes.hpp",
     "companion_protocol/command.hpp",
+    "companion_protocol/config_ports.hpp",
     "companion_protocol/config_status.hpp",
     "companion_protocol/config_transfer.hpp",
     "companion_protocol/crc32.hpp",
@@ -1087,8 +1088,10 @@ COMPANION_BLE_COMPONENT = Path("components/companion_ble")
 # The companion BLE service sees NimBLE, logging, the RTOS, the monotonic
 # esp_timer clock of its pairing policy, the portable companion protocol codec
 # and its own headers; never CAN, decoding, telemetry, the action engine, the
-# controller configuration, an LED driver, GPIO or NVS. The composition root
-# hands it values, including the user key sampler and the NVS init result.
+# controller configuration, an LED driver, GPIO, NVS or esp_restart(). The
+# composition root hands it values, including the user key sampler, the NVS
+# init result, the companion protocol's config ports and the controlled
+# restart, which fails the lighting off before it restarts.
 _COMPANION_BLE_ALLOWED_INCLUDE = re.compile(
     r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|esp_timer\.h"
     r"|freertos/(?:FreeRTOS|task)\.h"
@@ -1159,6 +1162,98 @@ def _check_companion_ble_isolation(root: Path) -> None:
     print(
         "OK   companion BLE service uses only NimBLE, logging, the RTOS, esp_timer and the "
         "companion protocol codec; no CAN, telemetry, lighting, GPIO or NVS"
+    )
+
+
+COMPANION_CONFIG_COMPONENT = Path("components/companion_config")
+# The companion config service maps the companion protocol's ports onto the
+# controller configuration. It sees the protocol codec, the persisted config
+# model and store port, the action engine and LED action adapter (only to
+# build never-attached scratch copies for the dry run), the value-only
+# lighting sink contract (only to implement the discarding scratch sink), the
+# provider catalog, core time values and its own headers. It never sees the
+# renderer (local_argb), an LED driver, BLE, CAN, the RTOS, ESP-IDF or NVS
+# directly, never obtains the live renderer sink and never attaches an engine.
+_COMPANION_CONFIG_ALLOWED_INCLUDE = re.compile(
+    r"companion_config/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp"
+    r"|controller_config/persisted/[\w/]+\.hpp|action_engine/[\w/]+\.hpp"
+    r"|local_argb/lighting_sink\.hpp|local_argb_actions/[\w/]+\.hpp"
+    r"|vehicle_core/time\.hpp|vehicle_signals/signal_provider\.hpp"
+)
+_COMPANION_CONFIG_FORBIDDEN_NAMES = re.compile(
+    r"(?<![A-Za-z0-9])(?:mazda|twai|can_bus|vehicle_telemetry|freertos|esp_|led_strip|nvs"
+    r"|nimble|ble_|gpio_|rmt_|sdkconfig)",
+    re.IGNORECASE,
+)
+# The live renderer handoff (local_argb::internal::sink()) and engine
+# attachment would let a dry run reach the running lighting.
+_COMPANION_CONFIG_FORBIDDEN_CALLS = re.compile(r"(?<![A-Za-z0-9_])(sink|attach)\s*\(")
+_COMPANION_CONFIG_ALLOWED_DEPENDENCIES = frozenset(
+    (
+        "action_engine",
+        "companion_protocol",
+        "controller_config",
+        "local_argb_actions",
+        "local_argb_sink_contract",
+        "vehicle_core",
+        "vehicle_signals",
+    )
+)
+_COMPANION_CONFIG_TARGETS = ("companion_config", "${COMPONENT_LIB}")
+
+
+def _companion_config_cmake_violations(cmake: Path) -> List[str]:
+    if not cmake.is_file():
+        return ["companion_config CMakeLists.txt is missing"]
+    code = re.sub(r"#.*", "", cmake.read_text(encoding="utf-8"))
+    violations: List[str] = []
+    for target in _COMPANION_CONFIG_TARGETS:
+        for item in _target_arguments(code, "target_link_libraries", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _COMPANION_CONFIG_ALLOWED_DEPENDENCIES:
+                violations.append(f"companion_config links forbidden target {item}")
+        for item in _target_arguments(code, "target_include_directories", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
+                violations.append(f"companion_config adds forbidden include directory {item}")
+    for command in sorted(set(_LED_ACTIONS_DIRECTORY_SCOPE.findall(code))):
+        violations.append(f"companion_config uses directory-scope {command}()")
+    for item in _idf_arguments(code, ("REQUIRES", "PRIV_REQUIRES")):
+        if item not in _COMPANION_CONFIG_ALLOWED_DEPENDENCIES:
+            violations.append(f"companion_config requires forbidden component {item}")
+    for item in _idf_arguments(code, ("INCLUDE_DIRS", "PRIV_INCLUDE_DIRS")):
+        if item not in _LED_ACTIONS_ALLOWED_INCLUDE_DIRS:
+            violations.append(f"companion_config adds forbidden include directory {item}")
+    return violations
+
+
+def _check_companion_config_isolation(root: Path) -> None:
+    """Keep the companion config service off the renderer, BLE, CAN and the RTOS."""
+
+    component = root / COMPANION_CONFIG_COMPONENT
+    violations: List[str] = []
+    sources = sorted(
+        path for path in component.rglob("*") if path.suffix in _CPP_SUFFIXES and path.is_file()
+    )
+    if not sources:
+        violations.append(f"companion config sources are missing: {COMPANION_CONFIG_COMPONENT}")
+    for path in sources:
+        relative = path.relative_to(root).as_posix()
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        violations.extend(_include_violations(relative, code, _COMPANION_CONFIG_ALLOWED_INCLUDE))
+        for name in re.findall(r"^\s*#\s*include\s*<([^>]+)>", code, re.M):
+            if "/" not in name and _COMPANION_CONFIG_FORBIDDEN_NAMES.search(name):
+                violations.append(f"{relative} includes forbidden header {name}")
+        body = _STRING_LITERAL.sub('""', re.sub(r"^\s*#\s*include[^\n]*", "", code, flags=re.M))
+        for name in sorted(set(m.lower() for m in _COMPANION_CONFIG_FORBIDDEN_NAMES.findall(body))):
+            violations.append(f"{relative} uses forbidden name {name}")
+        for name in sorted(set(_COMPANION_CONFIG_FORBIDDEN_CALLS.findall(body))):
+            violations.append(f"{relative} calls forbidden {name}()")
+    violations.extend(_companion_config_cmake_violations(component / "CMakeLists.txt"))
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   companion config service uses only the protocol ports, the persisted config, "
+        "scratch engine and LED action copies and the lighting sink contract; no renderer, "
+        "BLE, CAN or RTOS"
     )
 
 
@@ -1335,6 +1430,7 @@ def check(
             _check_generic_consumer(root)
             _check_led_action_adapter(root)
             _check_companion_ble_isolation(root)
+            _check_companion_config_isolation(root)
             _check_adapter(
                 root,
                 cmake,

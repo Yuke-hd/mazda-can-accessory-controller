@@ -2,15 +2,14 @@
 #include "controller_config/persisted/names.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-#include <iomanip>
 #include <limits>
-#include <locale>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -795,12 +794,27 @@ void append_integer(std::string &output, const persisted::Integer value) {
   output += std::to_string(value);
 }
 
+// The same bytes as a classic-locale ostream with max_digits10 precision and
+// defaultfloat, which formats through "%.*g". snprintf avoids linking the C++
+// locale and stream machinery (about 180 KB of firmware flash). Neither the
+// firmware nor the host tools call setlocale(), so the C locale applies.
+//
+// The longest text is 16 bytes, such as "-1.17549435e-38": a sign, nine
+// digits, the point and a four-byte exponent. An encoding error or a
+// truncation cannot happen with this buffer; if one ever did, the assertion
+// stops debug builds, and release builds append nothing, which leaves invalid
+// JSON that the save path's re-parse rejects as a storage failure instead of
+// storing a wrong number.
 void append_float(std::string &output, const float value) {
-  std::ostringstream stream;
-  stream.imbue(std::locale::classic());
-  stream << std::setprecision(std::numeric_limits<float>::max_digits10) << std::defaultfloat
-         << value;
-  output += stream.str();
+  char buffer[32];
+  static_assert(sizeof buffer > 16U, "room for the longest %.9g float text");
+  const int length =
+      std::snprintf(buffer, sizeof buffer, "%.*g", std::numeric_limits<float>::max_digits10,
+                    static_cast<double>(value));
+  const bool formatted = length > 0 && static_cast<std::size_t>(length) < sizeof buffer;
+  assert(formatted && "float text failed or was truncated");
+  if (formatted)
+    output.append(buffer, static_cast<std::size_t>(length));
 }
 
 template <typename Enum> void append_enum(std::string &output, const Enum value) {

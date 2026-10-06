@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.16)
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/board"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/companion_ble"
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/companion_config"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_actions"

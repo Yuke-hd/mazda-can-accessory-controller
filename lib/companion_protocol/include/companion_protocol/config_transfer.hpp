@@ -84,6 +84,10 @@ struct ConfigWriteResponse {
   // True when the status `state` or `result` changed, so Config status must
   // be notified.
   bool status_changed{false};
+  // True only on the write that moved the state into RestartPending, so the
+  // integration schedules the disconnect and restart exactly once. Writes
+  // refused as Busy while the restart is pending leave it false.
+  bool entered_restart_pending{false};
   // Set by an accepted Select read page: the connection's new page offset.
   std::optional<std::uint16_t> read_page_offset{};
 };

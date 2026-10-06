@@ -4,7 +4,7 @@
 if(COMMAND idf_component_register)
   idf_component_register(
     SRCS "src/gatt_service.cpp" "src/device_info_characteristic.cpp" "src/advertising.cpp"
-         "src/companion_ble.cpp" "src/security.cpp"
+         "src/companion_ble.cpp" "src/security.cpp" "src/config_characteristics.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "private_include"
     REQUIRES companion_protocol

@@ -536,6 +536,12 @@ terminate must be issued after the handler, not from inside it. The link layer
 does not guarantee that the response reaches the central before the
 disconnection; the unknown-outcome rule covers that case.
 
+When the follow-up action is a restart, the controller first fails the
+lighting off to black and waits a bounded time, at most 120 ms, for the black
+frame to be written. It then restarts whether or not black was confirmed,
+because the boot path writes startup black again. This wait follows the 1 s
+disconnect bound and does not extend it.
+
 ### Revert to factory
 
 1. The controller calls `clear_override()`. It succeeds even when no override

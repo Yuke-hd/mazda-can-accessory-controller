@@ -91,6 +91,11 @@ public:
              std::uint32_t epoch = 0) noexcept;
   bool tick(vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] bool faulted() const noexcept { return faulted_; }
+  // True when the last frame the sink accepted was black, so the strip shows
+  // black until the next write.
+  [[nodiscard]] bool black_written() const noexcept {
+    return has_last_written_ && last_written_ == kBlackFrame;
+  }
 
 private:
   [[nodiscard]] PixelFrame frame_for(vehicle_core::MonotonicTimestamp now_us) const noexcept;

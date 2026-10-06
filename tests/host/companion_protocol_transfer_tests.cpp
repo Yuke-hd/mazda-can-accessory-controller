@@ -450,3 +450,35 @@ TEST_CASE("a maximum-size upload fills the whole buffer") {
   CHECK(fixture.write(kCommit).error == AttError::None);
   CHECK(fixture.committer.received == document);
 }
+
+TEST_CASE("only the committing write reports entering RestartPending") {
+  Fixture fixture;
+  fixture.upload(document_of(10));
+  const auto commit = fixture.write(kCommit);
+  REQUIRE(commit.error == AttError::None);
+  CHECK(commit.entered_restart_pending);
+  // Later writes, Busy or malformed, must not schedule the restart again.
+  for (const auto &pdu : {start_pdu(10, 0), kAbort, kCommit, select_pdu(0),
+                          std::vector<std::uint8_t>{}, std::vector<std::uint8_t>{0x09}}) {
+    const auto later = fixture.write(pdu);
+    CHECK_FALSE(later.entered_restart_pending);
+    CHECK_FALSE(later.status_changed);
+  }
+  CHECK(fixture.transfer->restart_pending());
+}
+
+TEST_CASE("writes that do not commit never report entering RestartPending") {
+  Fixture fixture;
+  CHECK_FALSE(fixture.write(start_pdu(10, crc32(view(document_of(10))))).entered_restart_pending);
+  fixture.committer.outcome = CommitOutcome::storage_failed();
+  REQUIRE(fixture.write(chunk_pdu(0, document_of(10), 0, 10)).error == AttError::None);
+  const auto failed = fixture.write(kCommit);
+  CHECK_FALSE(failed.entered_restart_pending);
+  CHECK_FALSE(fixture.transfer->restart_pending());
+}
+
+TEST_CASE("a revert's restart is not reported by later writes") {
+  Fixture fixture;
+  REQUIRE(fixture.transfer->enter_restart_pending());
+  CHECK_FALSE(fixture.write(start_pdu(10, 0)).entered_restart_pending);
+}

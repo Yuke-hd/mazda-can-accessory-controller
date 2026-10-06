@@ -18,6 +18,7 @@
 #include "led_strip_spi.h"
 #include "vehicle_core/signal.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -148,6 +149,10 @@ QueueHandle_t g_queue{nullptr};
 TaskHandle_t g_worker{nullptr};
 TaskHandle_t g_supervisor{nullptr};
 bool g_started{false};
+// Published by the worker after every pass for fail_off_for_restart(): the
+// pass count, and whether the strip showed black when the pass ended.
+std::atomic<std::uint32_t> g_worker_passes{0};
+std::atomic<bool> g_worker_black{false};
 
 // Logs progress transitions the supervisor applied. Runs on the worker, whose
 // stack already carries ESP_LOG calls.
@@ -173,6 +178,8 @@ void worker(void *) noexcept {
     } else if (!g_runtime.tick(now_us())) {
       ESP_LOGE(kTag, "pixel fail-off clear retry failed");
     }
+    g_worker_black.store(g_controller.black_written(), std::memory_order_seq_cst);
+    g_worker_passes.fetch_add(1, std::memory_order_seq_cst);
     report_progress();
   }
 }
@@ -339,6 +346,40 @@ void fail_off() noexcept {
   // a progress stall's closed gate. Racing publishers detect the epoch change.
   if (!g_runtime.fail_off(g_queue_sink)) {
     (void)g_sink.write(kBlack);
+  }
+}
+
+bool fail_off_for_restart(const vehicle_core::Microseconds timeout_us) noexcept {
+  if (!g_started) {
+    return false;
+  }
+  const auto deadline_us = now_us() + timeout_us;
+  const auto expired = [deadline_us]() noexcept { return now_us() >= deadline_us; };
+  // Shut first: every later gated publish is rejected, and a publisher that
+  // passed the check before the shut writes black behind its command.
+  g_gated_sink.shut();
+  while (g_gated_sink.in_flight() != 0) {
+    if (expired()) {
+      return false;
+    }
+    vTaskDelay(1);
+  }
+  // Only black can enter the queue now. Queue it and wait for a worker pass
+  // that took it: the queue is empty, a pass ended after the publish and the
+  // strip showed black at its end.
+  const std::uint32_t passes = g_worker_passes.load(std::memory_order_seq_cst);
+  if (!g_queue_sink.publish(internal::LightingCommand{})) {
+    return false;
+  }
+  for (;;) {
+    if (g_worker_passes.load(std::memory_order_seq_cst) != passes &&
+        uxQueueMessagesWaiting(g_queue) == 0 && g_worker_black.load(std::memory_order_seq_cst)) {
+      return true;
+    }
+    if (expired()) {
+      return false;
+    }
+    vTaskDelay(1);
   }
 }
 

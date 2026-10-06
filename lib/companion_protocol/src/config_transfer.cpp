@@ -91,6 +91,8 @@ ConfigWriteResponse ConfigTransfer::handle_write(ByteView pdu,
   ConfigWriteResponse response{};
   response.error = dispatch(pdu, context, response);
   response.status_changed = status_.state != state_before || status_.result != result_before;
+  response.entered_restart_pending =
+      state_before != TransferState::RestartPending && restart_pending();
   return response;
 }
 
