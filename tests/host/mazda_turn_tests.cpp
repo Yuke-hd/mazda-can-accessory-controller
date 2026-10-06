@@ -147,10 +147,11 @@ TEST_CASE("simulated replay makes turn stale after 2 s and recovery actionable")
   CHECK(stale.turn_state.is_stale());
   CHECK(stale.effective_turn_state() == TurnState::Unknown);
 
-  feeder.feed(turn_frame(3'100'000, false, false, true), [&](const vehicle_core::RawCanFrame &value) {
-    clock.set(value.timestamp_us);
-    CHECK(decode(value, store.mutable_state()) == DecodeStatus::Decoded);
-  });
+  feeder.feed(turn_frame(3'100'000, false, false, true),
+              [&](const vehicle_core::RawCanFrame &value) {
+                clock.set(value.timestamp_us);
+                CHECK(decode(value, store.mutable_state()) == DecodeStatus::Decoded);
+              });
   CHECK(feeder.delivered() == 2);
   const auto recovered = store.snapshot();
   CHECK(recovered.turn_state.is_valid());

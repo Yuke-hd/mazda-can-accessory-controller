@@ -518,9 +518,8 @@ TEST_CASE("a sparse notified turn goes stale through a timeout publication") {
   replay::LocalArgbOutputStage stage{ignored, clock};
   RecordingObserver observer;
 
-  const auto result = replay::run_replay(
-      {left_turn(0), rpm_3250(1'200'000)}, clock, stage, {&observer},
-      {mazda::kTurnFreshnessTimeoutUs + 100'000});
+  const auto result = replay::run_replay({left_turn(0), rpm_3250(1'200'000)}, clock, stage,
+                                         {&observer}, {mazda::kTurnFreshnessTimeoutUs + 100'000});
 
   REQUIRE(result.ok());
   const auto turns = observer.readings_of("vehicle.turn_state");

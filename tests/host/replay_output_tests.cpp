@@ -186,8 +186,8 @@ TEST_CASE("turn-only stale replay fails off after the inclusive freshness bounda
   replay::LocalArgbOutputStage stage{pixels, clock};
 
   constexpr auto kStaleCheckTimeUs = mazda::kTurnFreshnessTimeoutUs + local_argb::kSupervisorPollUs;
-  const auto result = replay::run_replay(
-      {turn(0, 0x20), rpm(1'200'000, 6'500)}, clock, stage, {kStaleCheckTimeUs});
+  const auto result =
+      replay::run_replay({turn(0, 0x20), rpm(1'200'000, 6'500)}, clock, stage, {kStaleCheckTimeUs});
 
   REQUIRE(result.ok());
   CHECK(is_black(frame_at(pixels.frames(), kStaleCheckTimeUs).pixels));
