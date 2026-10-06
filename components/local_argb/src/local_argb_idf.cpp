@@ -148,7 +148,9 @@ std::uint8_t g_queue_buffer[sizeof(internal::LightingCommand)]{};
 QueueHandle_t g_queue{nullptr};
 TaskHandle_t g_worker{nullptr};
 TaskHandle_t g_supervisor{nullptr};
-bool g_started{false};
+// Read by fail_off_for_restart() from other tasks, including the main task
+// after a vehicle I/O startup timeout while start() may still be running.
+std::atomic<bool> g_started{false};
 // Published by the worker after every pass for fail_off_for_restart(): the
 // pass count, and whether the strip showed black when the pass ended.
 std::atomic<std::uint32_t> g_worker_passes{0};

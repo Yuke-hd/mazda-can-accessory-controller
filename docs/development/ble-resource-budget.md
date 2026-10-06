@@ -162,13 +162,13 @@ Apply after `sdkconfig.defaults`:
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
 
-# Controller: BLE only, one link, on core 1.
+# Controller: BLE only, one link, on core 0 (ESP-IDF default; ADR-0004).
 CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
 CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
-CONFIG_BTDM_CTRL_PINNED_TO_CORE_1=y
+CONFIG_BTDM_CTRL_PINNED_TO_CORE_0=y
 
-# Host: peripheral and broadcaster roles only, one connection, on core 1.
-CONFIG_BT_NIMBLE_PINNED_TO_CORE_1=y
+# Host: peripheral and broadcaster roles only, one connection, on core 0.
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
@@ -212,8 +212,26 @@ so no extended-advertising options apply.
 
 ## Task and core placement
 
-The firmware installs the TWAI, RMT and SPI interrupts from `app_main` on
-core 0. Its application tasks are unpinned:
+ADR-0004 (Proposed) records the core layout. The candidate is layout C:
+
+- `app_main` applies the board safe defaults on core 0.
+- It then runs the vehicle I/O startup on a short-lived task pinned to
+  core 1, so the TWAI, RMT and SPI interrupts are installed there.
+- The Bluetooth controller, the NimBLE host and `esp_timer` stay on core 0
+  at their ESP-IDF defaults.
+- The startup task logs its core and its stack headroom. With
+  `CONFIG_WEACT_DUMP_INTERRUPT_ALLOCATION=y` it also prints `esp_intr_dump()`.
+
+The application tasks stay unpinned. They are created inside the startup
+task with `xTaskCreate()`, which uses `tskNO_AFFINITY`, so they do not
+inherit its pinning.
+
+The table below was measured under layout B (PR #173): BT pinned to core 1,
+and the interrupts installed from `app_main` on core 0. Layout C numbers are
+pending the bench comparison (#175, alongside #167). Under layout C,
+`app_main` no longer runs the vehicle I/O startup, so its `main` row is
+expected to have more headroom. The new `vehicle_io_start` task (6,144 B) is
+freed once startup completes.
 
 | Task | Priority | Core | Idle stack free (tuned) |
 | --- | ---: | --- | ---: |
@@ -228,17 +246,18 @@ core 0. Its application tasks are unpinned:
 | `main` (`app_main`) | 1 | 0 | 388 B of 3,584 B (392 B without BLE) |
 | `ipc0` / `ipc1` | 24 | 0 / 1 | 472 B / 288 B of 1,024 B |
 
-With ESP-IDF defaults, both `btController` and `nimble_host` run on core 0, the
-same core as the TWAI, RMT and SPI interrupts. The recommended settings move
-both tasks to core 1, and the bench task list confirms the placement. The
-ESP32 controller's interrupts follow `CONFIG_BTDM_CTRL_PINNED_TO_CORE`, so they
-also leave core 0: its high-level interrupt and ISR queue paths assert that
-they run on that core, and it uses inter-processor calls to reach it. This
-explains the lower `ipc1` headroom.
+The ESP32 controller's interrupts follow `CONFIG_BTDM_CTRL_PINNED_TO_CORE`.
+Its high-level interrupt and ISR queue paths assert that they run on that
+core, and it uses inter-processor calls to reach it. Under layout B this cut
+`ipc1` headroom from 464 B to 288 B. Under layout C the controller is back on
+core 0, as in the ESP-IDF defaults.
 
 Recommendations:
 
-- Keep the controller and host pinned to core 1.
+- Keep the controller and host at their ESP-IDF default of core 0, and keep
+  the TWAI, RMT and SPI installs on the core-1 startup task. If the bench
+  shows layout B is as good or better, ADR-0004 flips to B: the startup
+  task is dropped and both BT pinning options return to core 1.
 - Keep the BT task priorities at the ESP-IDF defaults. The controller is
   timing-critical. `argb_guard` already outranks every BT task, and `can_rx`
   shares the controller's priority while remaining free to run on core 0.
@@ -262,10 +281,10 @@ Recommendations:
   was not measured. It also requires `CONFIG_ESP_TIMER_SHOW_EXPERIMENTAL=y`
   (otherwise an overlay setting is silently dropped), and its help text warns
   that it may break other features.
-- Re-measure `main`, `nimble_host` and `ipc1` stack headroom with a
-  connected central and the GATT service. `ipc1` drops from 464 B to 288 B
-  free once BT runs on core 1. If the GATT build reduces it further, raise
-  `CONFIG_ESP_IPC_TASK_STACK_SIZE`.
+- Re-measure `main`, `nimble_host`, `ipc0` and `ipc1` stack headroom with a
+  connected central and the GATT service under layout C. Also record the
+  `vehicle_io_start` headroom log. If an IPC task drops below its layout B
+  margin, raise `CONFIG_ESP_IPC_TASK_STACK_SIZE`.
 
 ## Config transfer cost (#165)
 

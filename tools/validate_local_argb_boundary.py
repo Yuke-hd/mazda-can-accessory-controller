@@ -163,14 +163,32 @@ def _context(text: str, end: int) -> str:
     return " ".join(text[max(0, end - 80) : end].split())
 
 
-def _app_main_body(structure: str) -> Optional[str]:
-    app_main = re.search(r"\bvoid\s+app_main\s*\(", structure)
-    if app_main is None:
+def _function_body(structure: str, return_type: str, name: str) -> Optional[str]:
+    definition = re.search(rf"\b{return_type}\s+{name}\s*\(", structure)
+    if definition is None:
         return None
-    open_index = structure.find("{", app_main.end())
-    if open_index < 0:
+    close_paren = _matching_paren(structure, definition.end() - 1)
+    open_index = structure.find("{", close_paren + 1)
+    if open_index < 0 or structure[close_paren + 1 : open_index].strip() not in ("", "noexcept"):
         return None
     return structure[open_index + 1 : _matching_close(structure, open_index)]
+
+
+def _app_main_body(structure: str) -> Optional[str]:
+    return _function_body(structure, "void", "app_main")
+
+
+# The vehicle I/O startup sequence (startup black through CAN start) runs in
+# this function, on a task pinned to the driver core, so the TWAI, RMT and SPI
+# interrupts are allocated there (ADR-0004). app_main applies the board safe
+# defaults, then runs the sequence through STARTUP_RUNNER.
+STARTUP_SEQUENCE = "start_vehicle_io"
+STARTUP_TASK = "vehicle_io_startup_task"
+STARTUP_RUNNER = "start_vehicle_io_on_core1"
+
+
+def _startup_sequence_body(structure: str) -> Optional[str]:
+    return _function_body(structure, "bool", STARTUP_SEQUENCE)
 
 
 def _fail_off_failures(structure: str) -> List[str]:
@@ -181,19 +199,22 @@ def _fail_off_failures(structure: str) -> List[str]:
     by `local_argb::fail_off();`. A stopped facade publishes no Unavailable
     notice and a detached engine sends no Deactivate, so every stop or detach
     must also fail off on its success path. The rule fails closed: if either
-    start call is missing from app_main, the returns cannot be checked.
+    start call is missing from the startup sequence, the returns cannot be
+    checked.
     """
 
     failures: List[str] = []
-    body = _app_main_body(structure)
+    body = _startup_sequence_body(structure)
     if body is None:
-        failures.append("app_main is missing from vehicle integration")
+        failures.append(f"{STARTUP_SEQUENCE}() is missing from vehicle integration")
     else:
         argb_start = body.find("local_argb::start()")
         telemetry_start = body.find("telemetry.start()")
         for index, call in ((argb_start, "local_argb::start()"), (telemetry_start, "telemetry.start()")):
             if index < 0:
-                failures.append(f"{call} is not called in app_main; setup returns cannot be checked")
+                failures.append(
+                    f"{call} is not called in {STARTUP_SEQUENCE}; setup returns cannot be checked"
+                )
         if argb_start >= 0 and telemetry_start >= 0:
             region_start = _statement_end(body, argb_start)
             region_end = _statement_end(body, telemetry_start)
@@ -269,13 +290,91 @@ def _polled_sampling_failures(structure: str) -> List[str]:
     """Require the runtime loop to sample the polled rules after CAN starts."""
 
     body = _app_main_body(structure) or ""
-    telemetry_start = body.find("telemetry.start()")
+    telemetry_start = body.find(f"{STARTUP_RUNNER}()")
     runtime_loop = _loop_body(body[max(telemetry_start, 0) :], r"\bfor\s*\(\s*;\s*;\s*\)")
     if telemetry_start < 0 or runtime_loop is None or re.search(
         r"\bengine\.sample_polled_rules\s*\(\s*\)", runtime_loop
     ) is None:
         return ["the runtime loop after telemetry startup does not call engine.sample_polled_rules()"]
     return []
+
+
+def _driver_core_failures(structure: str) -> List[str]:
+    """Require app_main to run the startup sequence on a core-1 pinned task.
+
+    The board safe defaults stay first in app_main. The sequence itself must
+    only be reached through the pinned startup task, so its drivers allocate
+    their interrupts on the driver core.
+    """
+
+    failures: List[str] = []
+    app_main = _app_main_body(structure) or ""
+    board = app_main.find("board::initialize_safe_defaults()")
+    runner = app_main.find(f"{STARTUP_RUNNER}()")
+    if board < 0:
+        failures.append("board::initialize_safe_defaults() is not called in app_main")
+    if runner < 0:
+        failures.append(f"{STARTUP_RUNNER}() is not called in app_main")
+    if 0 <= runner < board:
+        failures.append("board safe defaults do not precede the vehicle I/O startup")
+    if re.search(rf"\b{STARTUP_SEQUENCE}\s*\(\s*\)", app_main):
+        failures.append(f"app_main calls {STARTUP_SEQUENCE}() directly instead of on the driver core")
+    if re.search(r"\bconstexpr\s+BaseType_t\s+kVehicleIoCore\s*=\s*1\s*;", structure) is None:
+        failures.append("the vehicle I/O driver core is not core 1: kVehicleIoCore = 1")
+    runner_body = _function_body(structure, "bool", STARTUP_RUNNER) or ""
+    pinned = re.search(
+        rf"\bxTaskCreatePinnedToCore\s*\(\s*&?{STARTUP_TASK}\b[^;]*\bkVehicleIoCore\s*\)",
+        runner_body,
+    )
+    if pinned is None:
+        failures.append(f"{STARTUP_RUNNER}() does not create {STARTUP_TASK} pinned to kVehicleIoCore")
+    # A startup timeout restarts while the sequence may still hold the LED
+    # drivers, so the restart must go through the controlled fail-off restart,
+    # which never calls an LED driver itself.
+    if re.search(r"\besp_restart\s*\(", runner_body) or re.search(
+        r"\brestart_after_fail_off\s*\(\s*\)", runner_body
+    ) is None:
+        failures.append(f"{STARTUP_RUNNER}() restarts without restart_after_fail_off()")
+    # The startup task exits, but the companion config service keeps the
+    # configuration store pointer, so the store's owner must have static
+    # storage: assign it to config_backend, never to a task-local.
+    sequence_body = _startup_sequence_body(structure) or ""
+    if re.search(
+        r"(?:^|[;{}])\s*config_backend\s*=\s*"
+        r"controller_config::persisted::make_nvs_config_store_backend\s*\(\s*\)",
+        sequence_body,
+    ) is None:
+        failures.append(
+            f"{STARTUP_SEQUENCE}() does not store the configuration store in config_backend"
+        )
+    task_body = _function_body(structure, "void", STARTUP_TASK) or ""
+    if re.search(rf"\b{STARTUP_SEQUENCE}\s*\(\s*\)", task_body) is None:
+        failures.append(f"{STARTUP_TASK} does not run {STARTUP_SEQUENCE}()")
+    # The task must be the sequence's only call site, so no other path can run
+    # it on core 0. The definition itself is the one `bool` match.
+    call_sites = [
+        call
+        for call in re.finditer(rf"\b{STARTUP_SEQUENCE}\s*\(", structure)
+        if re.search(r"\bbool\s+$", structure[: call.start()]) is None
+    ]
+    if len(call_sites) != 1:
+        failures.append(
+            f"{STARTUP_SEQUENCE}() must have exactly one call site, in {STARTUP_TASK}; "
+            f"found {len(call_sites)}"
+        )
+    # A refused or failed startup must stop app_main before the companion link
+    # and the polling loop.
+    gated = re.search(
+        rf"\bif\s*\(\s*!\s*{STARTUP_RUNNER}\s*\(\s*\)\s*\)\s*\{{[^{{}}]*\breturn\s*;[^{{}}]*\}}",
+        app_main,
+    )
+    runner_calls = len(re.findall(rf"\b{STARTUP_RUNNER}\s*\(", app_main))
+    if gated is None or runner_calls != 1:
+        failures.append(
+            f"app_main does not return when {STARTUP_RUNNER}() fails: "
+            f"use a single `if (!{STARTUP_RUNNER}()) {{ ... return; }}` guard"
+        )
+    return failures
 
 
 def main() -> int:
@@ -389,6 +488,8 @@ def main() -> int:
          "static LED action sink bound to the renderer queue"),
         ("static controller_config::persisted::ControllerConfig active_configuration{}",
          "static owning active configuration"),
+        ("static std::unique_ptr<controller_config::persisted::ConfigStoreBackend> config_backend{}",
+         "static configuration store owner"),
         ("controller_config::factory_default_config_json()", "embedded factory configuration API"),
         ("controller_config::persisted::make_nvs_config_store_backend()",
          "NVS configuration store factory"),
@@ -411,10 +512,10 @@ def main() -> int:
         if re.sub(r"\s+", "", needle) not in re.sub(r"\s+", "", structure):
             failures.append(f"{label} is missing from vehicle integration: {needle}")
 
-    # Startup order is checked inside app_main only, and fails closed: a call
-    # that app_main does not make is a violation. _fail_off_failures reports
-    # the two start calls.
-    app_main_body = _app_main_body(structure) or ""
+    # Startup order is checked inside the startup sequence only, and fails
+    # closed: a call that the sequence does not make is a violation.
+    # _fail_off_failures reports the two start calls.
+    sequence_body = _startup_sequence_body(structure) or ""
     boot_loader = "controller_config::persisted::load_boot_configuration("
     configure = re.search(r"\bbool\s+configure_engine_lighting\s*\(", structure)
     configure_body = ""
@@ -428,16 +529,13 @@ def main() -> int:
             "canonical boot configuration loader is missing from configure_engine_lighting"
         )
     for call, label in (
-        ("board::initialize_safe_defaults()", "board::initialize_safe_defaults()"),
         ("configure_engine_lighting(", "configure_engine_lighting()"),
         ("engine.attach()", "engine.attach()"),
         ("local_argb::watch_progress(", "local_argb::watch_progress()"),
     ):
-        if call not in app_main_body:
-            failures.append(f"{label} is not called in app_main")
+        if call not in sequence_body:
+            failures.append(f"{label} is not called in {STARTUP_SEQUENCE}")
     for earlier, later, label in (
-        ("board::initialize_safe_defaults()", "local_argb::start()",
-         "board safe defaults do not precede local ARGB startup"),
         ("local_argb::start()", "engine.attach()",
          "local ARGB startup does not precede engine attachment"),
         ("local_argb::start()", "configure_engine_lighting(",
@@ -453,10 +551,11 @@ def main() -> int:
         ("local_argb::watch_progress(", "telemetry.start()",
          "dispatcher progress watch does not precede telemetry/CAN startup"),
     ):
-        earlier_index = app_main_body.find(earlier)
-        later_index = app_main_body.find(later)
+        earlier_index = sequence_body.find(earlier)
+        later_index = sequence_body.find(later)
         if earlier_index >= 0 and later_index >= 0 and earlier_index > later_index:
             failures.append(label)
+    failures.extend(_driver_core_failures(structure))
     failures.extend(_fail_off_failures(structure))
     failures.extend(_binding_failures(structure))
     failures.extend(_polled_sampling_failures(structure))

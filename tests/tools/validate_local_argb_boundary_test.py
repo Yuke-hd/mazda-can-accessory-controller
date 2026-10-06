@@ -82,6 +82,97 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_repository_composition_passes(self) -> None:
         self.assert_accepted()
 
+    def test_startup_sequence_called_directly_from_app_main_is_rejected(self) -> None:
+        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {", "  if (!start_vehicle_io()) {")
+        self.assert_rejected(
+            "app_main calls start_vehicle_io() directly instead of on the driver core",
+            "start_vehicle_io_on_core1() is not called in app_main",
+        )
+
+    def test_vehicle_io_core_other_than_core_1_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "constexpr BaseType_t kVehicleIoCore = 1;",
+            "constexpr BaseType_t kVehicleIoCore = 0;",
+        )
+        self.assert_rejected("the vehicle I/O driver core is not core 1")
+
+    def test_unpinned_startup_task_is_rejected(self) -> None:
+        self.edit(MAIN, "  if (xTaskCreatePinnedToCore(", "  if (xTaskCreate(")
+        self.edit(MAIN, "ESP_TASK_MAIN_PRIO, nullptr, kVehicleIoCore)", "ESP_TASK_MAIN_PRIO, nullptr)")
+        self.assert_rejected(
+            "start_vehicle_io_on_core1() does not create vehicle_io_startup_task pinned to kVehicleIoCore"
+        )
+
+    def test_startup_task_without_the_sequence_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  const bool started = start_vehicle_io();",
+            "  const bool started = false;",
+        )
+        self.assert_rejected("vehicle_io_startup_task does not run start_vehicle_io()")
+
+    def test_board_defaults_after_vehicle_io_startup_are_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  if (!board::initialize_safe_defaults()) {",
+            "  if (!start_vehicle_io_on_core1()) {\n    return;\n  }\n"
+            "  if (!board::initialize_safe_defaults()) {",
+        )
+        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {\n    ESP_LOGE", "  if (false) {\n    ESP_LOGE")
+        self.assert_rejected("board safe defaults do not precede the vehicle I/O startup")
+
+    def test_ignored_vehicle_io_startup_result_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  if (!start_vehicle_io_on_core1()) {\n"
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
+            "    return;\n"
+            "  }\n",
+            "  (void)start_vehicle_io_on_core1();\n",
+        )
+        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+
+    def test_vehicle_io_startup_failure_without_return_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
+            "    return;\n",
+            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n',
+        )
+        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+
+    def test_startup_sequence_called_from_a_core_0_helper_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "extern \"C\" void app_main(void) {\n",
+            "void warm_up() noexcept { (void)start_vehicle_io(); }\n\n"
+            "extern \"C\" void app_main(void) {\n",
+        )
+        self.assert_rejected(
+            "start_vehicle_io() must have exactly one call site, in vehicle_io_startup_task; found 2"
+        )
+
+    def test_startup_timeout_restart_without_fail_off_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "    restart_after_fail_off();\n  }\n  return result == kVehicleIoStarted;",
+            "    esp_restart();\n  }\n  return result == kVehicleIoStarted;",
+        )
+        self.assert_rejected(
+            "start_vehicle_io_on_core1() restarts without restart_after_fail_off()"
+        )
+
+    def test_config_store_owned_by_the_exiting_startup_task_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  config_backend = controller_config::persisted::make_nvs_config_store_backend();",
+            "  auto config_backend = controller_config::persisted::make_nvs_config_store_backend();",
+        )
+        self.assert_rejected(
+            "start_vehicle_io() does not store the configuration store in config_backend"
+        )
+
     def test_legacy_sink_binding_is_rejected(self) -> None:
         self.edit(
             MAIN,
@@ -215,19 +306,19 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
         self.assert_rejected("engine.detach() is not followed by local_argb::fail_off()")
 
-    def test_start_wrapped_in_helper_after_app_main_is_rejected(self) -> None:
+    def test_start_wrapped_in_helper_outside_startup_sequence_is_rejected(self) -> None:
         for label, call, helper, message in (
             (
                 "renderer start",
                 "if (!local_argb::start()) {",
                 "bool start_renderer() noexcept { return local_argb::start(); }\n",
-                "local_argb::start() is not called in app_main",
+                "local_argb::start() is not called in start_vehicle_io",
             ),
             (
                 "telemetry start",
                 "if (!telemetry.start().ok()) {",
                 "bool start_renderer() noexcept { return telemetry.start().ok(); }\n",
-                "telemetry.start() is not called in app_main",
+                "telemetry.start() is not called in start_vehicle_io",
             ),
         ):
             original = (self.root / MAIN).read_text(encoding="utf-8")
@@ -328,7 +419,7 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
 
     def test_unreachable_shared_profile_application_is_rejected(self) -> None:
         self.edit(MAIN, "if (!configure_engine_lighting(config_backend.get())) {", "if (false) {")
-        self.assert_rejected("configure_engine_lighting() is not called in app_main")
+        self.assert_rejected("configure_engine_lighting() is not called in start_vehicle_io")
 
     def test_missing_boot_configuration_loader_is_rejected(self) -> None:
         self.edit(
