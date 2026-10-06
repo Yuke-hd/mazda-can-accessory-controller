@@ -35,8 +35,12 @@ decode_turn_switch(const vehicle_core::RawCanFrame &frame, VehicleState &state,
 decode_brake_pedal(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                    vehicle_core::DecoderObservation *observation = nullptr,
                    vehicle_core::HealthObservation *health = nullptr) noexcept;
-// Dispatches only validated, capture-confirmed messages plus the existing
-// speed candidate carried by ENGINE_DATA.
+[[nodiscard]] DecodeStatus
+decode_acceleration(const vehicle_core::RawCanFrame &frame, VehicleState &state,
+                    vehicle_core::DecoderObservation *observation = nullptr,
+                    vehicle_core::HealthObservation *health = nullptr) noexcept;
+// Dispatches the reviewed mappings, including source-only candidates whose
+// confidence remains independent of successful frame decoding.
 [[nodiscard]] DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                   std::optional<TurnEdgeEvent> *edge = nullptr,
                                   vehicle_core::DecoderObservation *observation = nullptr,

@@ -414,12 +414,58 @@ DecodeStatus decode_brake_pedal(const vehicle_core::RawCanFrame &frame, VehicleS
   return finish_observation(DecodeStatus::Decoded, observation);
 }
 
+DecodeStatus decode_acceleration(const vehicle_core::RawCanFrame &frame, VehicleState &state,
+                                 vehicle_core::DecoderObservation *observation,
+                                 vehicle_core::HealthObservation *health) noexcept {
+  const auto classification = classify_frame(frame, kAccelerationId, observation);
+  if (classification != DecodeStatus::Decoded) {
+    if (classification == DecodeStatus::Malformed)
+      record_malformed(frame, kAccelerationId, state);
+    finish_health(state, kAccelerationId, vehicle_core::SignalHealth::Unavailable, health);
+    return classification;
+  }
+
+  const auto message_result = record_healthy(frame, kAccelerationId, state);
+  if (message_result == MessageObservationResult::Idempotent) {
+    const auto signal_health = state.longitudinal_acceleration_mps2.is_valid() &&
+                                       state.lateral_acceleration_mps2.is_valid()
+                                   ? vehicle_core::SignalHealth::Available
+                                   : vehicle_core::SignalHealth::Unavailable;
+    finish_health(state, kAccelerationId, signal_health, health);
+    return finish_observation(DecodeStatus::Decoded, observation);
+  }
+  if (message_result != MessageObservationResult::Accepted) {
+    finish_health(state, kAccelerationId, vehicle_core::SignalHealth::Unavailable, health);
+    return finish_observation(DecodeStatus::Decoded, observation);
+  }
+
+  // Motorola sawtooth: X runs 5..0, 15..9; Y runs 8, 23..16, 31..28.
+  const auto raw_x =
+      static_cast<std::uint16_t>(((frame.data[0] & 0x3fU) << 7U) | (frame.data[1] >> 1U));
+  const auto raw_y = static_cast<std::uint16_t>(((frame.data[1] & 0x01U) << 12U) |
+                                                (frame.data[2] << 4U) | (frame.data[3] >> 4U));
+  const auto longitudinal = raw_x * kLongitudinalAccelerationDefinition.scale +
+                            kLongitudinalAccelerationDefinition.offset;
+  const auto lateral =
+      raw_y * kLateralAccelerationDefinition.scale + kLateralAccelerationDefinition.offset;
+  bool updated = state.longitudinal_acceleration_mps2.update(longitudinal, frame.timestamp_us);
+  updated = state.lateral_acceleration_mps2.update(lateral, frame.timestamp_us) || updated;
+  if (updated && frame.timestamp_us > state.timestamp_us)
+    state.timestamp_us = frame.timestamp_us;
+  finish_health(state, kAccelerationId, vehicle_core::SignalHealth::Available, health);
+  return finish_observation(DecodeStatus::Decoded, observation);
+}
+
 DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                     std::optional<TurnEdgeEvent> *edge,
                     vehicle_core::DecoderObservation *observation,
                     vehicle_core::HealthObservation *health) noexcept {
   if (edge != nullptr)
     edge->reset();
+  // Route acceleration before generic frame validity can be returned by an
+  // unrelated decoder, so malformed 0x078 frames fault their own record.
+  if (frame.identifier == kAccelerationId)
+    return decode_acceleration(frame, state, observation, health);
   const auto engine_status = decode_engine_data(frame, state, observation, health);
   if (engine_status != DecodeStatus::Ignored)
     return engine_status;

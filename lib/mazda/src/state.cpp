@@ -67,6 +67,8 @@ VehicleState::update_turn(const TurnState state,
 void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept {
   speed_kph.refresh(now);
   engine_rpm.refresh(now);
+  longitudinal_acceleration_mps2.refresh(now);
+  lateral_acceleration_mps2.refresh(now);
   selector_position.refresh(now);
   actual_gear.refresh(now);
   liftgate_open.refresh(now);
@@ -89,6 +91,9 @@ void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept 
 void VehicleState::apply_freshness_policy(const VehicleFreshnessPolicy &policy) noexcept {
   speed_kph.set_freshness_timeout(policy.speed_kph_timeout_us);
   engine_rpm.set_freshness_timeout(policy.engine_rpm_timeout_us);
+  longitudinal_acceleration_mps2.set_freshness_timeout(
+      policy.longitudinal_acceleration_mps2_timeout_us);
+  lateral_acceleration_mps2.set_freshness_timeout(policy.lateral_acceleration_mps2_timeout_us);
   selector_position.set_freshness_timeout(policy.selector_position_timeout_us);
   actual_gear.set_freshness_timeout(policy.actual_gear_timeout_us);
   liftgate_open.set_freshness_timeout(policy.liftgate_open_timeout_us);

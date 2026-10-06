@@ -69,9 +69,11 @@ source-line move does not establish new evidence.
 
 ## Candidate acceleration mapping: `BRAKE` (`0x078`)
 
-This section records the protocol research for #186. It is not a public channel
-inventory entry and does not add decoder metadata, freshness policy, or a
-runtime signal. The exact upstream candidate is pinned in the
+This section records the protocol research for #186 and the portable decoder
+added in #187. It is not a public facade inventory entry. The decoder exposes
+source X/Y as longitudinal/lateral acceleration candidates in SI m/s²;
+[decoder mappings](decoder-mappings.md#acceleration-contract) records the
+metadata, synthetic vectors, and unchanged confidence boundary. The exact upstream candidate is pinned in the
 [opendbc provenance matrix](opendbc-provenance.md) and comes from
 `95f3d52f474b677c28fc8f10fef3f2f0386aff92`:
 
@@ -91,8 +93,10 @@ supports the pressure-correlated `BrakePressureRaw` extraction already recorded
 in [`mazda_custom.dbc`](mazda_custom.dbc#L113-L114). It does not establish either acceleration axis, its sign convention, or the upstream scaling against an annotated vehicle event. At-rest values around 0 m/s² therefore cannot be checked from the repository evidence. The source offsets imply neutral raw codes of 4000 for X and 4096 for Y; those are expected-code calculations, not observations.
 
 Both candidate fields remain **Reference**. Synthetic vectors do not promote
-these candidates, and no firmware decoder or generic telemetry contract is
-authorized by this research record.
+these candidates. #187 adds passive decoding under this confidence boundary;
+axis and sign remain source interpretations, and the default acceleration
+freshness timeouts remain unset because no timing evidence is established.
+Generic provider wiring is a separate #188 change.
 
 ### Required validation capture
 

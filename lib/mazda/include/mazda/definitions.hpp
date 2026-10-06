@@ -18,6 +18,7 @@ constexpr std::uint32_t kGearId = kTransmissionId;
 constexpr std::uint32_t kDoorsId = 0x43e;
 constexpr std::uint32_t kTurnSwitchId = 0x091;
 constexpr std::uint32_t kBlinkInfoId = 0x09a;
+constexpr std::uint32_t kAccelerationId = 0x078;
 constexpr std::uint32_t kBrakePedalId = 0x165;
 constexpr std::uint8_t kCandidateDlc = 8;
 
@@ -134,6 +135,54 @@ inline constexpr CandidateMessageDefinition kBrakePedalDefinition{"BRAKE_PEDAL",
                                                                   std::nullopt,
                                                                   false,
                                                                   kCaptureConfirmedProvenance};
+
+// Source X/Y are exposed as longitudinal/lateral candidates only. The axis
+// and sign interpretation remains Reference; #186 establishes no timing.
+inline constexpr const char *kAccelerationEvidenceProvenance =
+    "docs/protocol/signal-evidence.md; docs/protocol/opendbc-provenance.md; "
+    "opendbc mazda_2017.dbc at 95f3d52f474b677c28fc8f10fef3f2f0386aff92; MIT";
+inline constexpr CandidateMessageDefinition kAccelerationDefinition{
+    "BRAKE",
+    kAccelerationId,
+    kCandidateDlc,
+    std::nullopt,
+    std::nullopt,
+    true,
+    kAccelerationEvidenceProvenance};
+// The pinned core has no acceleration unit enum. None does not change the
+// SI scale: these values are m/s^2, never g.
+inline constexpr CandidateSignalDefinition kLongitudinalAccelerationDefinition{
+    "VEHICLE_ACC_X",
+    kAccelerationId,
+    0,
+    13,
+    0.01F,
+    -40.0F,
+    vehicle_core::SignalUnit::None,
+    -40.0F,
+    40.0F,
+    "none declared by source; declared range is not a raw invalid-code rule",
+    5,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    nullptr,
+    kAccelerationEvidenceProvenance,
+    EvidenceConfidence::Reference};
+inline constexpr CandidateSignalDefinition kLateralAccelerationDefinition{
+    "VEHICLE_ACC_Y",
+    kAccelerationId,
+    8,
+    13,
+    0.001F,
+    -4.096F,
+    vehicle_core::SignalUnit::None,
+    -4.096F,
+    4.096F,
+    "none declared by source; declared range is not a raw invalid-code rule",
+    8,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    nullptr,
+    kAccelerationEvidenceProvenance,
+    EvidenceConfidence::Reference};
 
 inline constexpr CandidateSignalDefinition kEngineRpmDefinition{
     "EngineRPM",
