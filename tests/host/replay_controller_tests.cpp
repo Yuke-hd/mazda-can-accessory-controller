@@ -231,7 +231,7 @@ TEST_CASE("an explicit timeout publication makes a held turn stale and renders b
   REQUIRE(controller.tick_output() == replay::ReplayControllerStatus::Ok);
   REQUIRE_FALSE(is_black(pixels.frames().back()));
 
-  REQUIRE(clock.advance_to(250'001));
+  REQUIRE(clock.advance_to(2'000'001));
   const auto timeout = controller.process_timeout();
   REQUIRE(timeout.status == replay::ReplayControllerStatus::Ok);
   CHECK(timeout.input == replay::ReplayInputResult::Timeout);

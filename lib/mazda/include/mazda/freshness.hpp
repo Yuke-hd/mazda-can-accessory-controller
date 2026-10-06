@@ -6,8 +6,8 @@
 
 namespace mazda {
 
-constexpr vehicle_core::Microseconds kTurnFreshnessTimeoutUs = 250'000;
-constexpr vehicle_core::Microseconds kRequestFreshnessTimeoutUs = 250'000;
+constexpr vehicle_core::Microseconds kTurnFreshnessTimeoutUs = 2'000'000;
+constexpr vehicle_core::Microseconds kRequestFreshnessTimeoutUs = 2'000'000;
 
 // Only turn/request freshness has a confirmed default. The supplied DBC has
 // no cycle-time declarations, so the remaining policies stay unconfigured.

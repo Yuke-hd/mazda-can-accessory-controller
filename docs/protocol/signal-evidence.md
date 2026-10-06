@@ -151,7 +151,7 @@ The status of a field does not silently promote values that were not observed.
 
 The DBC has no `GenMsgCycleTime` or equivalent period declaration. No message
 period, signal period, or freshness timeout is inferred from the tables above.
-The current 250,000 us turn/request freshness policy is operational policy,
+The current 2,000,000 us turn/request freshness policy is operational policy,
 not evidence that the source emits at that interval.
 
 ## Evidence and attribution references

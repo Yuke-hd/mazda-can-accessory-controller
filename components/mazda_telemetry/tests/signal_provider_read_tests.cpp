@@ -638,9 +638,9 @@ void test_clock_advance_past_freshness_timeout_is_stale() {
   EXPECT(wait_for_read(harness.provider, ids::kTurnRequestLeft, Availability::Fresh));
   EXPECT(wait_for_value(harness.provider, ids::kLiftgateOpen));
 
-  // Turn/request freshness is 250 ms. At the boundary the value is still
-  // fresh; one microsecond later it is stale but keeps its value. Transport
-  // silence (1 s by default) has not elapsed.
+  // Turn/request freshness is 2 s. At the boundary the value is still
+  // fresh; one microsecond later it is stale but keeps its value. This read
+  // exercises the per-signal clock independently of transport health.
   harness.clock.set(1'000 + mazda::kTurnFreshnessTimeoutUs);
   EXPECT(harness.provider.read(ids::kTurnState).value->availability == Availability::Fresh);
   harness.clock.set(1'000 + mazda::kTurnFreshnessTimeoutUs + 1);

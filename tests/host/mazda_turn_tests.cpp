@@ -125,7 +125,7 @@ TEST_CASE("duplicate turn states do not create duplicate semantic edges") {
   CHECK_FALSE(state.update_turn(mazda::TurnState::Hazard, 21).has_value());
 }
 
-TEST_CASE("simulated replay makes turn stale after 250 ms and recovery actionable") {
+TEST_CASE("simulated replay makes turn stale after 2 s and recovery actionable") {
   using namespace mazda;
   using namespace mazda::candidate;
 
@@ -141,13 +141,13 @@ TEST_CASE("simulated replay makes turn stale after 250 ms and recovery actionabl
   CHECK(store.snapshot().turn_state.is_valid());
   CHECK(store.snapshot().effective_turn_state() == TurnState::Left);
 
-  CHECK(store.state().snapshot(251'000).turn_state.is_valid());
-  clock.set(251'001);
+  CHECK(store.state().snapshot(2'001'000).turn_state.is_valid());
+  clock.set(2'001'001);
   const auto stale = store.snapshot();
   CHECK(stale.turn_state.is_stale());
   CHECK(stale.effective_turn_state() == TurnState::Unknown);
 
-  feeder.feed(turn_frame(301'000, false, false, true), [&](const vehicle_core::RawCanFrame &value) {
+  feeder.feed(turn_frame(3'100'000, false, false, true), [&](const vehicle_core::RawCanFrame &value) {
     clock.set(value.timestamp_us);
     CHECK(decode(value, store.mutable_state()) == DecodeStatus::Decoded);
   });
@@ -155,7 +155,7 @@ TEST_CASE("simulated replay makes turn stale after 250 ms and recovery actionabl
   const auto recovered = store.snapshot();
   CHECK(recovered.turn_state.is_valid());
   CHECK(recovered.effective_turn_state() == TurnState::Right);
-  CHECK(recovered.timestamp_us == 301'000);
+  CHECK(recovered.timestamp_us == 3'100'000);
 }
 
 TEST_CASE("decoder emits recovery edges after freshness loss, including same direction") {
@@ -170,17 +170,17 @@ TEST_CASE("decoder emits recovery edges after freshness loss, including same dir
   CHECK(edge->previous == TurnState::Unknown);
   CHECK(edge->current == TurnState::Left);
 
-  state.refresh(251'001);
+  state.refresh(2'001'001);
   CHECK(state.turn_state.is_stale());
-  CHECK(decode_turn_switch(turn_frame(251'002, false, true, false), state, &edge) ==
+  CHECK(decode_turn_switch(turn_frame(2'001'002, false, true, false), state, &edge) ==
         DecodeStatus::Decoded);
   REQUIRE(edge.has_value());
   CHECK(edge->previous == TurnState::Unknown);
   CHECK(edge->current == TurnState::Left);
 
-  state.refresh(501'003);
+  state.refresh(4'001'003);
   CHECK(state.turn_state.is_stale());
-  CHECK(decode_turn_switch(turn_frame(501'004, false, false, true), state, &edge) ==
+  CHECK(decode_turn_switch(turn_frame(4'001'004, false, false, true), state, &edge) ==
         DecodeStatus::Decoded);
   REQUIRE(edge.has_value());
   CHECK(edge->previous == TurnState::Unknown);
@@ -205,7 +205,7 @@ TEST_CASE("confirmed switch definitions document capture provenance") {
   using namespace mazda::candidate;
   CHECK(kTurnSwitchDefinition.identifier == 0x091);
   CHECK(kTurnSwitchDefinition.expected_dlc == 8);
-  CHECK(kTurnSwitchDefinition.freshness_timeout_us.value() == 250'000);
+  CHECK(kTurnSwitchDefinition.freshness_timeout_us.value() == 2'000'000);
   CHECK_FALSE(kTurnSwitchDefinition.pending_validation);
   CHECK(kBlinkInfoDefinition.identifier == 0x09a);
   CHECK_FALSE(kBlinkInfoDefinition.freshness_timeout_us.has_value());

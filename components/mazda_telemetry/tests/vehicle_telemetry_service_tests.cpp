@@ -1346,6 +1346,7 @@ void test_lighting_startup_black_deadline_heartbeat_and_failure_retry() {
   mazda::internal::HostAcquisitionSource source;
   FakeLightingSink lighting;
   mazda::TelemetryConfig config{};
+  config.transport_silence_timeout_us = 3'000'000;
   config.callback_stop_timeout_us = 20'000;
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
   EXPECT(service.start().ok());
@@ -1361,7 +1362,7 @@ void test_lighting_startup_black_deadline_heartbeat_and_failure_retry() {
   EXPECT(lighting.size() >= 2);
   const auto left = lighting.at(1);
   EXPECT(left.turn == mazda::TurnState::Left);
-  EXPECT(left.valid_until_us == 250'001);
+  EXPECT(left.valid_until_us == 2'000'001);
 
   // A heartbeat is at most 100 ms and carries the earliest semantic or
   // transport deadline even when no new frame arrives.

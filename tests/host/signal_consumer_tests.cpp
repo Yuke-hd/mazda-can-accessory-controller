@@ -310,7 +310,7 @@ TEST_CASE("generic consumer resolves canonical keys and matches typed RPM reads"
 
 TEST_CASE("generic turn notices match typed notices including all flags") {
   // Short transport silence gives one direct usable -> Unavailable transition
-  // before the 250 ms turn freshness timeout could publish Stale.
+  // before the 2 s turn freshness timeout could publish Stale.
   auto config = Harness::test_config();
   config.transport_silence_timeout_us = 100;
   Harness harness{config};

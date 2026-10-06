@@ -33,7 +33,7 @@ preserve retained values, and report `FreshnessUnverified` when no timeout
 evidence is configured. The mutating `refresh(now)` compatibility path still
 produces a conservative raw `Stale` view for legacy callers. Unknown signals
 remain `NoData` until their first update; an explicitly invalidated retained
-value is `Unavailable`. The initial turn/request policy is 250 ms.
+value is `Unavailable`. The initial turn/request policy is 2 s.
 
 `mazda::VehicleState` provides speed, RPM, selector position, actual transmission
 gear, liftgate/door state, central unlock state, indicator-lamp state,

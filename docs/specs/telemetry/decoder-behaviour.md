@@ -34,5 +34,5 @@ The supplied DBC has no cycle-time declaration. Other signals therefore have
 unconfigured freshness by default; callers can set per-signal timeouts through
 `VehicleFreshnessPolicy`. `Signal::refresh()` marks an unconfigured value stale
 when time advances, and snapshots do not mutate the source state. Turn/request
-normalization and its 250 ms freshness policy are specified in
+normalization and its 2 s freshness policy are specified in
 [turn state](turn-state.md).

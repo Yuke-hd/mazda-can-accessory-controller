@@ -295,13 +295,13 @@ as Reference-only `vehicle.speed_kph`, from that document.
 | ---: | --- | --- | --- | --- |
 | 0 | `vehicle.engine_rpm` | Number | `engine_rpm` | None |
 | 1 | `vehicle.speed_kph` | Number | `speed_kph` | None |
-| 2 | `vehicle.turn_state` | Enum | `turn_state` | 250 ms |
+| 2 | `vehicle.turn_state` | Enum | `turn_state` | 2 s |
 | 3 | `vehicle.selector_position` | Enum | `selector_position` | None |
 | 4 | `vehicle.actual_gear` | Enum | `actual_gear` | None |
 | 5 | `vehicle.wiper.front_position` | Enum | `front_wiper_position` | None |
-| 6 | `vehicle.hazard_request` | Boolean | Bit 0 | 250 ms |
-| 7 | `vehicle.turn_request.left` | Boolean | Bit 1 | 250 ms |
-| 8 | `vehicle.turn_request.right` | Boolean | Bit 2 | 250 ms |
+| 6 | `vehicle.hazard_request` | Boolean | Bit 0 | 2 s |
+| 7 | `vehicle.turn_request.left` | Boolean | Bit 1 | 2 s |
+| 8 | `vehicle.turn_request.right` | Boolean | Bit 2 | 2 s |
 | 9 | `vehicle.indicator_lamp.left` | Boolean | Bit 3 | None |
 | 10 | `vehicle.indicator_lamp.right` | Boolean | Bit 4 | None |
 | 11 | `vehicle.liftgate_open` | Boolean | Bit 5 | None |

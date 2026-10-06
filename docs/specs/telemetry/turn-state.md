@@ -21,11 +21,13 @@ coordinates are in [Mazda decoder mappings](../../protocol/decoder-mappings.md).
 ## Freshness and edge events
 
 Hazard therefore takes precedence over both directions. A fresh frame keeps
-the state valid for 250,000 microseconds; after more than 250,000
+the state valid for 2,000,000 microseconds; after more than 2,000,000
 microseconds without an accepted update, the signal is `Stale`. Unknown and
 stale states are non-actionable: `VehicleState::effective_turn_state()` returns
 `Unknown`, which gives indicator consumers fail-off semantics. The stored raw
-value is retained for diagnostics while its status is stale.
+value is retained for diagnostics while its status is stale. This per-signal
+deadline is independent of transport and message health, which can make the
+reading unavailable sooner.
 
 `mazda::VehicleState::update_turn()` emits a `mazda::TurnEdgeEvent` only when the semantic
 state changes. Equal states and duplicate frames do not create duplicate
