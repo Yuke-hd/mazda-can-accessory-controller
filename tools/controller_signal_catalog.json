@@ -49,6 +49,8 @@
       "capabilities": ["read", "notify"],
       "choices": ["unknown", "off", "on", "high", "intermittent"]
     },
-    "vehicle.brake_pressed": {"type": "boolean", "capabilities": ["read", "notify"]}
+    "vehicle.brake_pressed": {"type": "boolean", "capabilities": ["read", "notify"]},
+    "vehicle.acceleration.longitudinal": {"type": "number", "capabilities": ["read"]},
+    "vehicle.acceleration.lateral": {"type": "number", "capabilities": ["read"]}
   }
 }

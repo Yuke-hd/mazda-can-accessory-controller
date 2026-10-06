@@ -484,7 +484,7 @@ TEST_CASE("replay observer receives the production catalog once before any readi
   REQUIRE(result.ok());
   CHECK(observer.catalog_calls() == 1);
   CHECK(observer.catalog_before_readings());
-  CHECK(observer.catalog().size() == 19);
+  CHECK(observer.catalog().size() == 21);
   CHECK(observer.catalog().find("vehicle.engine_rpm") != nullptr);
   CHECK(observer.catalog().find("vehicle.turn_state") != nullptr);
 }
@@ -758,6 +758,26 @@ TEST_CASE("a notified record precedes the same-timestamp signal sample records")
       line_index(records, "\"timestamp_us\":300000,\"signal\":\"vehicle.speed_kph\"");
   CHECK(turn < rpm);
   CHECK(rpm < speed);
+}
+
+TEST_CASE("acceleration records retain SI units and numeric sign") {
+  std::ostringstream stream;
+  replay::JsonlSignalRecordWriter writer{stream};
+  const SignalMetadata acceleration{SignalId{20},
+                                    "vehicle.acceleration.longitudinal",
+                                    SignalType::Number,
+                                    SignalUnit::MetresPerSecondSquared,
+                                    ValidationStatus::Reference,
+                                    SignalCapability::Read};
+  writer.on_reading(100, acceleration,
+                    {SignalValue::number(-10.0F), Availability::FreshnessUnverified,
+                     ValidationStatus::Reference});
+  REQUIRE(writer.good());
+  CHECK(
+      stream.str() ==
+      "{\"type\":\"signal\",\"timestamp_us\":100,\"signal\":\"vehicle.acceleration.longitudinal\","
+      "\"value\":-10,\"unit\":\"m/s^2\",\"freshness\":\"unverified\","
+      "\"availability\":\"freshness_unverified\",\"validation\":\"reference\"}\n");
 }
 
 TEST_CASE("signal records spell out value, unit, freshness and availability") {

@@ -123,16 +123,25 @@ template <typename T> struct PollingDescriptor final {
 };
 
 #if defined(ESP_PLATFORM)
-using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>>;
+using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>,
+                                          PollingDescriptor<float>, PollingDescriptor<float>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
                              candidate::kEngineDataId, ValidationStatus::Reference},
     PollingDescriptor<float>{signal_ids::kEngineRpm, "engine_rpm", &VehicleState::engine_rpm,
-                             candidate::kEngineDataId, ValidationStatus::Confirmed}};
+                             candidate::kEngineDataId, ValidationStatus::Confirmed},
+    PollingDescriptor<float>{
+        signal_ids::kAccelerationLongitudinal, "longitudinal_acceleration_mps2",
+        &VehicleState::longitudinal_acceleration_mps2, candidate::kAccelerationId,
+        candidate::kLongitudinalAccelerationDefinition.confidence},
+    PollingDescriptor<float>{signal_ids::kAccelerationLateral, "lateral_acceleration_mps2",
+                             &VehicleState::lateral_acceleration_mps2, candidate::kAccelerationId,
+                             candidate::kLateralAccelerationDefinition.confidence}};
 #else
 using PollingDescriptorTuple = std::tuple<PollingDescriptor<float>, PollingDescriptor<float>,
-                                          PollingDescriptor<FrontWiperPosition>>;
+                                          PollingDescriptor<FrontWiperPosition>,
+                                          PollingDescriptor<float>, PollingDescriptor<float>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
@@ -141,7 +150,14 @@ inline constexpr PollingDescriptorTuple kPollingDescriptors{
                              candidate::kEngineDataId, ValidationStatus::Confirmed},
     PollingDescriptor<FrontWiperPosition>{vehicle_signals::SignalId{}, "test_front_wiper",
                                           &VehicleState::front_wiper, candidate::kTurnSwitchId,
-                                          ValidationStatus::Observed}};
+                                          ValidationStatus::Observed},
+    PollingDescriptor<float>{
+        signal_ids::kAccelerationLongitudinal, "longitudinal_acceleration_mps2",
+        &VehicleState::longitudinal_acceleration_mps2, candidate::kAccelerationId,
+        candidate::kLongitudinalAccelerationDefinition.confidence},
+    PollingDescriptor<float>{signal_ids::kAccelerationLateral, "lateral_acceleration_mps2",
+                             &VehicleState::lateral_acceleration_mps2, candidate::kAccelerationId,
+                             candidate::kLateralAccelerationDefinition.confidence}};
 #endif
 
 template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor final {

@@ -72,19 +72,21 @@ constexpr std::string_view kLockedKeys[] = {
     "vehicle.wiper.low",
     "vehicle.wiper.front_position",
     "vehicle.brake_pressed",
+    "vehicle.acceleration.longitudinal",
+    "vehicle.acceleration.lateral",
 };
 
 constexpr SignalCatalogView kCatalog{kSignalCatalog};
 
 static_assert(kCatalog.well_formed());
-static_assert(kCatalog.size() == 19);
-static_assert(kSignalCatalogSize == 19);
+static_assert(kCatalog.size() == 21);
+static_assert(kSignalCatalogSize == 21);
 static_assert(std::size(kLockedKeys) == kSignalCatalogSize);
 
 constexpr bool ids_nonzero_unique_and_sequential() noexcept {
   for (std::size_t index = 0; index < kCatalog.size(); ++index) {
     const SignalId id = kCatalog.at(index)->id;
-    // Ids are assigned 1..19 in locked-key order.
+    // Ids are assigned 1..21 in locked-key order.
     if (!id.valid() || id.value() != index + 1)
       return false;
     for (std::size_t other = index + 1; other < kCatalog.size(); ++other) {
@@ -138,6 +140,21 @@ static_assert(kCatalog.find(ids::kDoorsUnlocked)->key == "vehicle.doors_unlocked
 static_assert(kCatalog.find(ids::kWiperLow)->key == "vehicle.wiper.low");
 static_assert(kCatalog.find(ids::kWiperFrontPosition)->key == "vehicle.wiper.front_position");
 
+// Existing ids retain their assignments; acceleration is appended in SI units.
+constexpr bool acceleration_numbers_are_read_only() noexcept {
+  for (const auto id : {ids::kAccelerationLongitudinal, ids::kAccelerationLateral}) {
+    const auto *entry = kCatalog.find(id);
+    if (entry == nullptr || entry->type != SignalType::Number ||
+        entry->unit != SignalUnit::MetresPerSecondSquared ||
+        entry->validation != ValidationStatus::Reference ||
+        entry->capabilities != SignalCapabilities{SignalCapability::Read} ||
+        entry->choices != nullptr || entry->choice_count != 0)
+      return false;
+  }
+  return ids::kAccelerationLongitudinal.value() == 20 && ids::kAccelerationLateral.value() == 21;
+}
+static_assert(acceleration_numbers_are_read_only());
+
 // RPM and speed are Number/Read only with their engineering units.
 constexpr bool polled_numbers_are_read_only() noexcept {
   const SignalMetadata &rpm = *kCatalog.find(ids::kEngineRpm);
@@ -152,7 +169,7 @@ static_assert(polled_numbers_are_read_only());
 constexpr bool others_are_read_notify() noexcept {
   std::size_t count = 0;
   for (const SignalMetadata &entry : kCatalog) {
-    if (entry.id == ids::kEngineRpm || entry.id == ids::kSpeedKph)
+    if (entry.type == SignalType::Number)
       continue;
     if (entry.capabilities != (SignalCapability::Read | SignalCapability::Notify) ||
         entry.unit != SignalUnit::None || entry.type == SignalType::Number)
@@ -371,6 +388,8 @@ constexpr ExpectedBinding kExpectedBindings[] = {
     {ids::kWiperLow, candidate::kBlinkInfoId, internal::kWiperLowNotificationChannel},
     {ids::kWiperFrontPosition, candidate::kTurnSwitchId, internal::kFrontWiperNotificationChannel},
     {ids::kBrakePressed, candidate::kBrakePedalId, internal::kBrakeNotificationChannel},
+    {ids::kAccelerationLongitudinal, candidate::kAccelerationId, kPolling},
+    {ids::kAccelerationLateral, candidate::kAccelerationId, kPolling},
 };
 static_assert(std::size(kExpectedBindings) == kSignalCatalogSize);
 
@@ -382,6 +401,8 @@ template <typename T> struct ExpectedMember final {
 constexpr ExpectedMember<float> kFloatMembers[] = {
     {ids::kEngineRpm, &VehicleState::engine_rpm},
     {ids::kSpeedKph, &VehicleState::speed_kph},
+    {ids::kAccelerationLongitudinal, &VehicleState::longitudinal_acceleration_mps2},
+    {ids::kAccelerationLateral, &VehicleState::lateral_acceleration_mps2},
 };
 constexpr ExpectedMember<bool> kBoolMembers[] = {
     {ids::kHazardRequest, &VehicleState::hazard_request},
@@ -526,7 +547,7 @@ void check_descriptor_bindings() {
     check(tally.matches[index] == 1, "catalog row matches exactly one production descriptor",
           kCatalog.at(index)->key);
   }
-  check(tally.polling_rows == 2, "two catalog rows are bound to polling descriptors");
+  check(tally.polling_rows == 4, "four catalog rows are bound to polling descriptors");
   check(tally.notification_rows == 17, "seventeen catalog rows are bound to notification channels");
 
   // The host build carries one test polling descriptor and test channel 18.
