@@ -150,4 +150,9 @@ static_assert(is_configuration_valid(),
 // call fails.
 bool initialize_safe_defaults();
 
+// Samples the user key (GPIO0) once. The key pulls the strapping pin low
+// against its pull-up, so a low level reads as pressed. Call it only after
+// initialize_safe_defaults() configured the pin as an input.
+bool user_key_pressed();
+
 } // namespace board

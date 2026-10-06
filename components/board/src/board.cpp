@@ -65,4 +65,8 @@ bool initialize_safe_defaults() {
   return ok;
 }
 
+bool user_key_pressed() {
+  return gpio_get_level(static_cast<gpio_num_t>(kWeActCan485V11.auxiliary.user_key)) == 0;
+}
+
 } // namespace board

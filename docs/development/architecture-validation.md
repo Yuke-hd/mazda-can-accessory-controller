@@ -29,10 +29,11 @@ comments, and vehicle catalog key literals are allowed only in
 `lib/companion_protocol/src/live_signal_layout.cpp`.
 
 A source scan keeps `components/companion_ble` isolated: its includes are
-limited to NimBLE, logging, the RTOS, the `companion_protocol` codec and its
-own headers, it names no CAN, Mazda, telemetry, action-engine,
-controller-config, LED-driver or NVS symbols, and its ESP-IDF requirements are
-limited to `bt`, `companion_protocol`, `freertos` and `log`.
+limited to NimBLE, logging, the RTOS, `esp_timer`, the `companion_protocol`
+codec and its own headers, it names no CAN, Mazda, telemetry, action-engine,
+controller-config, LED-driver, GPIO or NVS symbols, and its ESP-IDF
+requirements are limited to `bt`, `companion_protocol`, `esp_timer`,
+`freertos` and `log`.
 
 The gate owns the receive-only, board-artifact, and local-ARGB semantic
 validators, plus checks that retired raw-capture code has no active dependency.

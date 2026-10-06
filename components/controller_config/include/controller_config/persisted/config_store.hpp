@@ -106,4 +106,10 @@ struct BootConfigurationResult final {
 // interface. NVS handles and APIs remain private to its implementation.
 [[nodiscard]] std::unique_ptr<ConfigStoreBackend> make_nvs_config_store_backend() noexcept;
 
+// Whether make_nvs_config_store_backend() initialized the NVS partition this
+// boot, independent of whether the configuration namespace opened. Other NVS
+// users, such as the BLE bond store, reuse that initialization and must not
+// initialize the partition themselves. Always false on the host.
+[[nodiscard]] bool nvs_initialized() noexcept;
+
 } // namespace controller_config::persisted

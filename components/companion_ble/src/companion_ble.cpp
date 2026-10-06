@@ -3,6 +3,7 @@
 #include "companion_ble/advertising.hpp"
 #include "companion_ble/device_info_characteristic.hpp"
 #include "companion_ble/gatt_service.hpp"
+#include "companion_ble/security.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,9 +28,11 @@ constexpr std::uint32_t kStartupTaskStackBytes = 4096U;
 constexpr UBaseType_t kStartupTaskPriority = 1U;
 
 std::atomic<bool> started{false};
-// The encoded Device info value is served from here for the lifetime of the
-// host. It is written once, before the startup task exists.
-companion_protocol::EncodedDeviceInfo served_device_info{};
+// The encoded Device info values are served from here for the lifetime of the
+// host. They are written once, before the startup task exists.
+internal::DeviceInfoValues served_device_info{};
+// Copied once by start(), read by the startup task.
+PairingInputs pairing_inputs{};
 
 void host_task(void * /*argument*/) {
   nimble_port_run();
@@ -37,6 +40,7 @@ void host_task(void * /*argument*/) {
 }
 
 void on_host_sync() {
+  internal::on_host_synced();
   const int rc = ble_hs_util_ensure_addr(0);
   if (rc != 0) {
     ESP_LOGW(kTag, "no usable BLE identity address (rc=%d)", rc);
@@ -68,6 +72,9 @@ bool bring_up_nimble() noexcept {
     nimble_port_deinit();
     return false;
   }
+  // After registration, so a failed registration deinitializes NimBLE before
+  // any policy timer exists.
+  internal::configure_security(pairing_inputs);
   ble_hs_cfg.sync_cb = on_host_sync;
   ble_hs_cfg.reset_cb = on_host_reset;
   nimble_port_freertos_init(host_task);
@@ -84,19 +91,23 @@ void startup_task(void * /*argument*/) {
 
 } // namespace
 
-bool start(const companion_protocol::DeviceInfo &device_info) noexcept {
+bool start(const companion_protocol::DeviceInfo &device_info,
+           const PairingInputs &pairing) noexcept {
   if (started.exchange(true))
     return false;
   companion_protocol::DeviceInfo served = device_info;
-  // The pairing window does not exist until #164, so the flag stays clear.
   served.pairing_window_open = false;
-  const auto encoded = companion_protocol::encode_device_info(served);
-  if (!encoded.has_value()) {
+  const auto closed = companion_protocol::encode_device_info(served);
+  served.pairing_window_open = true;
+  const auto open = companion_protocol::encode_device_info(served);
+  if (!closed.has_value() || !open.has_value()) {
     ESP_LOGW(kTag, "Device info string longer than %u bytes",
              static_cast<unsigned>(companion_protocol::kMaxDeviceInfoTextBytes));
     return false;
   }
-  served_device_info = *encoded;
+  served_device_info.window_closed = *closed;
+  served_device_info.window_open = *open;
+  pairing_inputs = pairing;
   const BaseType_t created = xTaskCreate(startup_task, "companion_ble", kStartupTaskStackBytes,
                                          nullptr, kStartupTaskPriority, nullptr);
   return created == pdPASS;

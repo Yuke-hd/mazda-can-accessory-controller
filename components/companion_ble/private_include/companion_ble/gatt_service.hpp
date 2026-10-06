@@ -9,18 +9,29 @@
 
 namespace companion_ble::internal {
 
+// Who may access a characteristic (ble-protocol.md, access control).
+enum class AttributeSecurity : std::uint8_t {
+  // Readable before pairing; only Device info.
+  Open,
+  // Every read, write and CCCD write needs an encrypted link with an
+  // accepted, stored bond. The service module enforces it before `access`
+  // runs, so characteristics never check it themselves.
+  EncryptedBonded,
+};
+
 // One characteristic of the companion service. Each characteristic lives in
 // its own translation unit and returns its definition; the service module
 // turns the definitions into the NimBLE attribute table. Later
-// characteristics (Command and pairing checks #164, Config and Config status
-// #165, Live signals #166) add a definition here without changing the
-// service, advertising or startup code.
+// characteristics (Command, Config and Config status #165, Live signals
+// #166) add a definition here without changing the service, advertising or
+// startup code.
 struct CharacteristicDefinition {
   // The attribute has no default: every characteristic names its own UUID.
   explicit constexpr CharacteristicDefinition(const CompanionAttribute companion_attribute) noexcept
       : attribute(companion_attribute) {}
 
   CompanionAttribute attribute;
+  AttributeSecurity security{AttributeSecurity::EncryptedBonded};
   // NimBLE properties and permissions, for example BLE_GATT_CHR_F_READ.
   ble_gatt_chr_flags flags{0U};
   ble_gatt_access_fn *access{nullptr};

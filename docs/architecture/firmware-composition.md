@@ -63,7 +63,11 @@ that task and on the NimBLE host task, never on `app_main`. A failure at any
 stage is logged and leaves the controller without a companion link. It does
 not stop CAN, telemetry, LED rendering or fail-off, which are already
 running. NVS is already initialized by the configuration store; the companion
-component does not initialize or write NVS. Its protocol is specified in
+component never initializes or erases NVS, and only NimBLE's own bond store
+writes to it, in the `nimble_bond` namespace. The composition root also passes
+`companion_ble::PairingInputs`: whether bonds can be stored
+(`controller_config::persisted::nvs_initialized()`) and the
+`board::user_key_pressed()` sampler that opens the pairing window. Its protocol is specified in
 [`ble-protocol.md`](../specs/companion/ble-protocol.md) and its resource
 budget in [`ble-resource-budget.md`](../development/ble-resource-budget.md).
 

@@ -355,6 +355,48 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("companion_ble links forbidden target mazda_telemetry", detail)
         self.assertIn("companion_ble uses directory-scope include_directories()", detail)
 
+    def test_companion_ble_pairing_clock_passes_but_gpio_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            cmake = root / "components/companion_ble/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8").replace(
+                    "PRIV_REQUIRES bt freertos log", "PRIV_REQUIRES bt esp_timer freertos log"
+                ),
+                encoding="utf-8",
+            )
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + '#include "esp_timer.h"\n'
+                + "long long probe_clock() { return esp_timer_get_time(); }\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_ble_isolation(root)
+            self.assertIn("OK   companion BLE service", output.getvalue())
+
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8").replace(
+                    "esp_timer freertos", "esp_timer esp_driver_gpio freertos"
+                ),
+                encoding="utf-8",
+            )
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + '#include "driver/gpio.h"\n'
+                + "int probe_key() { return gpio_get_level(GPIO_NUM_0); }\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_ble requires forbidden component esp_driver_gpio", detail)
+        self.assertIn("includes forbidden header driver/gpio.h", detail)
+        self.assertIn("uses forbidden name gpio_", detail)
+
 
     def test_clean_generic_consumer_passes(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-consumer-fixture-") as directory:

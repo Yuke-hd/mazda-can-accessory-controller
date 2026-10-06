@@ -209,8 +209,9 @@ Because the fallback may write keys to NVS and then delete them, the
 controller disconnects a link after its first rejected pairing, so one
 connection cannot drive repeated NVS writes. A nearby device that reconnects
 and retries still causes writes, and only connection setup and pairing time
-limit how often that can happen. Keeping outside-window pairings from writing
-to NVS at all is an implementation choice for issue #164.
+limit how often that can happen. The NimBLE binding goes further: an
+outside-window pairing never writes to NVS (see
+[implementation notes](#nimble-implementation-notes)).
 
 The fallback alone does not protect existing bonds, because a host may make
 room for a new bond before key exchange. NimBLE, for example, checks bond
@@ -264,6 +265,114 @@ still pair; that remains an accepted exposure of protocol version 1.
   [enforcement fallback](#enforcement-fallback)), so physical presence is
   needed to displace an existing bond.
 - The Clear bonds command deletes every stored bond.
+
+### App pairing flow
+
+The app pairs through the operating system's pairing prompt; it never handles
+keys itself.
+
+1. Connect and read Device info. It is readable without pairing. Check the
+   protocol version, then read `flags` bit 0 (pairing window open).
+2. If the app has no bond with this controller and bit 0 is `0`, ask the user
+   to press the controller's user key, then read Device info again (or
+   reconnect) until bit 0 is `1`. The window stays open for 120 s, and another
+   press restarts it.
+3. Read a protected attribute, for example Config status. The controller
+   answers `Insufficient Authentication` (`0x05`), and iOS shows its pairing
+   alert. Use a read, not a subscription, as the trigger: NimBLE rejects an
+   unencrypted CCCD write before the controller's access check runs, so that
+   rejection does not restart the 30 s period. When the user accepts, Just Works LE Secure
+   Connections pairing runs and the bond is stored. The window then closes.
+4. Retry the protected access. It succeeds once the link is encrypted with the
+   accepted bond.
+5. On later connections a bonded central re-encrypts by itself: the controller
+   sends a Security Request, or answers `Insufficient Encryption` (`0x0F`) to an
+   unencrypted protected access. No window is needed.
+
+The app must allow for:
+
+- a disconnect instead of an SMP `Pairing Failed` when it pairs outside the
+  window, or when its link stays unencrypted for the time limits in
+  [roles and connections](#roles-and-connections);
+- `Insufficient Authentication` (`0x05`) followed by a disconnect when the link
+  is encrypted but its bond was not accepted, for example a stale bond after
+  Clear bonds;
+- a re-encryption failure after Clear bonds or a lost bond, which means the user
+  must remove the controller in iOS Settings and pair again inside a window.
+
+### NimBLE implementation notes
+
+The firmware binds this section to NimBLE in `components/companion_ble`
+(issue #164). The decisions themselves (the window, the user-key debouncing,
+the unbonded-link limits and the access verdicts) are portable, host-tested
+code in `lib/companion_protocol`. Where NimBLE offers no hook for the preferred
+behaviour, the binding chooses the more conservative outcome:
+
+- **Pairing rejection.** Outside the window NimBLE's `sm_sec_lvl` is set to
+  `1` (no security), which makes NimBLE reject a Pairing Request with SMP reason `Command Not Supported` (`0x07`) before any key
+  exchange, rather than the preferred `Pairing Not Supported` (`0x05`). This
+  rejection raises no GAP event, so the link is not disconnected at once. The
+  unbonded-link time limit, or the first protected access, closes it.
+- **Repeat pairing outside the window.** The same rejection fires before
+  NimBLE's repeat-pairing check, so a bonded central that lost its keys gets
+  `0x07`, and its existing bond is untouched. The `BLE_GAP_EVENT_REPEAT_PAIRING`
+  handler still returns `IGNORE` and disconnects if it is ever reached outside
+  the window.
+- **No NVS writes outside the window.** The bond store's write callback refuses
+  pairing records (both security records and the peer address record) unless
+  the window is open. It checks the window's deadline itself, so a pairing
+  accepted in the moment between the deadline and the window timer stores no
+  keys and is then rejected. ESP-IDF forces NimBLE's host-based privacy, so
+  NimBLE writes a peer device record for a peer using a resolvable address
+  straight to NVS, outside the store callbacks. When the guard refused that
+  pairing's peer address record, the binding deletes the peer device record
+  with `ble_store_util_delete_peer()` once the link reports encryption, or at
+  disconnect. No resolving-list entry is created, because NimBLE adds one only
+  after the peer security record is stored. NimBLE re-initializes its store callbacks at
+  every host sync (its default-IRK setup calls `ble_store_config_init()`), so
+  the binding re-installs this guard at each sync and checks it on every GAP
+  event. If no store callback exists to guard, the window stays closed. The
+  store-full handler
+  refuses to evict a bond outside it (the pairing then fails with
+  `Unspecified Reason`, `0x08`). An outside-window pairing therefore never
+  writes, evicts or deletes a bond.
+- **Unbonded-link timing.** NimBLE reports no received SMP PDUs, so the 30 s
+  period restarts on the connection, on the first protected-attribute
+  rejection, on a repeat pairing accepted inside the window and on pairing
+  completion. A store-full event inside the window does not restart it. The
+  90 s cap is unchanged. An unencrypted CCCD write is rejected by NimBLE's
+  stock permission check before the access check, so it does not restart the
+  period either. Whether 30 s after the first rejection suits the iOS pairing
+  alert still needs a bench trace.
+- **Accepted bond.** A link has an accepted bond only when it is encrypted with
+  a 16-byte key and its peer has a stored bond. A bond counts as new only when
+  this link wrote its keys during the window, and only then does the window
+  close. Any other encryption result disconnects the link, and keys written by
+  a rejected pairing are deleted.
+- **CCCD writes.** NimBLE checks CCCD writes itself, so notify characteristics
+  use NimBLE's encrypted and authorized CCCD permissions. An unencrypted CCCD
+  write gets `0x05` or `0x0F` as above. An encrypted CCCD write without an
+  accepted bond is refused through the authorization hook, which NimBLE
+  reports as `Insufficient Authorization` (`0x08`) rather than `0x05`, and the
+  link is then disconnected.
+- **Notification gate.** A protected notifier sends only to a link for which
+  `link_has_accepted_bond()` is true. NimBLE's `sec_state.encrypted` and
+  `sec_state.bonded` flags are not enough, because a rejected pairing is
+  encrypted and bonded until its disconnect completes. The Live signals
+  notifier (#166) must use this check when it is integrated with this
+  binding.
+- **Clear bonds.** The operation deletes each bonded peer's security, CCCD and
+  address records and keeps the controller's own identity resolving key, so
+  the controller's identity address does not change. Entries in the
+  controller's address-resolution list stay until the next reboot. The
+  operation does not disconnect by itself; the Command characteristic (#165)
+  sends its write response and then disconnects. Protocol version 1 has no
+  physical trigger for Clear bonds; without the app, bonds can be removed only
+  by erasing flash with a serial tool.
+- **User key.** The board samples GPIO0 every 20 ms from a host-task timer. It
+  treats a low level as pressed and needs three equal samples to change state.
+  A key held from boot does not count until it is released. The active-low
+  reading is taken from the hardware record and still needs a bench check.
 
 ## GATT profile
 

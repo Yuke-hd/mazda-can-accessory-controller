@@ -1,6 +1,7 @@
 #include "companion_ble/advertising.hpp"
 
 #include "companion_ble/nimble_uuid.hpp"
+#include "companion_ble/security.hpp"
 #include "esp_log.h"
 #include "host/ble_hs.h"
 #include "services/gap/ble_svc_gap.h"
@@ -54,7 +55,12 @@ int begin_advertising() noexcept {
 }
 
 int handle_gap_event(ble_gap_event *const event, void * /*argument*/) {
+  // The pairing policy sees every event first; only repeat pairing and
+  // authorization take its answer.
+  const int security_result = handle_security_event(*event);
   switch (event->type) {
+  case BLE_GAP_EVENT_REPEAT_PAIRING:
+    return security_result;
   case BLE_GAP_EVENT_CONNECT:
     // A connected central stops advertising; a failed attempt resumes it.
     if (event->connect.status != 0)

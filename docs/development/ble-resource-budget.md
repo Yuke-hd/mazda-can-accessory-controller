@@ -191,11 +191,12 @@ CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
 CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
 ```
 
-The firmware's `sdkconfig.defaults` applies these settings except the security
-block, which waits for the pairing window (#164). Until then it sets
-`CONFIG_BT_NIMBLE_SECURITY_ENABLE=n`: NimBLE answers every pairing request
-with Pairing Not Supported and writes no bonds to NVS, so no pairing succeeds
-outside a pairing window.
+The firmware's `sdkconfig.defaults` applies these settings, including the
+security block, which ships with the pairing window (#164). The companion
+service keeps pairing closed outside the window at run time: it rejects every
+Pairing Request and refuses bond-store writes, so no bond reaches the
+`nimble_bond` namespace outside a window (see the
+[NimBLE implementation notes](../specs/companion/ble-protocol.md#nimble-implementation-notes)).
 
 `CONFIG_BT_NIMBLE_MAX_CCCDS=12` was added after measurement; the tuned images
 used the default of 8. The four extra 16-byte store slots add 64 B of static
