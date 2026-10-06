@@ -275,6 +275,38 @@ endif()
 doctest_discover_tests(action_engine_tests)
 doctest_discover_tests(action_engine_composition_tests)
 
+# Portable companion BLE protocol codec (#162). The codec, transfer and live
+# signal tests use only the codec, the provider fake and fixture catalogs; the
+# provider test alone reuses the private host-service seam, like
+# signal_consumer_tests, to sample the production Mazda provider policy.
+add_executable(companion_protocol_codec_tests companion_protocol_codec_tests.cpp)
+target_link_libraries(companion_protocol_codec_tests PRIVATE companion_protocol doctest::doctest)
+add_executable(companion_protocol_transfer_tests companion_protocol_transfer_tests.cpp)
+target_link_libraries(companion_protocol_transfer_tests PRIVATE companion_protocol
+                                                                doctest::doctest)
+add_executable(companion_protocol_live_signals_tests companion_protocol_live_signals_tests.cpp)
+target_link_libraries(companion_protocol_live_signals_tests PRIVATE companion_protocol
+                                                                    vehicle_signals_test_support
+                                                                    doctest::doctest)
+add_executable(companion_protocol_provider_tests companion_protocol_provider_tests.cpp)
+target_include_directories(companion_protocol_provider_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+)
+target_link_libraries(companion_protocol_provider_tests PRIVATE companion_protocol mazda_telemetry
+                                                                doctest::doctest)
+foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protocol_transfer_tests
+                                companion_protocol_live_signals_tests
+                                companion_protocol_provider_tests)
+  target_compile_features(${companion_test} PRIVATE cxx_std_17)
+  if(MSVC)
+    target_compile_options(${companion_test} PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(${companion_test} PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  doctest_discover_tests(${companion_test})
+endforeach()
+
 add_executable(board_config_tests board_config_tests.cpp)
 target_include_directories(board_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/components/board/include)
 target_compile_features(board_config_tests PRIVATE cxx_std_17)

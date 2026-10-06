@@ -191,6 +191,24 @@ def check_action_engine_fixture(root: Path) -> str:
     return output.getvalue()
 
 
+def write_companion_protocol_fixture(root: Path) -> None:
+    """Add the real companion_protocol to the action_engine fixture."""
+
+    write_action_engine_fixture(root)
+    shutil.copytree(
+        REPOSITORY / "lib/companion_protocol", root / "lib/companion_protocol"
+    )
+
+
+def check_companion_protocol_fixture(root: Path) -> str:
+    work_dir = root / "work"
+    work_dir.mkdir()
+    output = io.StringIO()
+    with redirect_stdout(output), redirect_stderr(io.StringIO()):
+        check_architecture._check_companion_protocol_only(root, "cmake", ("c++",), work_dir)
+    return output.getvalue()
+
+
 def prepend(path: Path, text: str) -> None:
     content = path.read_text(encoding="utf-8").replace("#pragma once\n", "", 1)
     path.write_text("#pragma once\n" + text + content, encoding="utf-8")
@@ -590,6 +608,83 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("Mazda catalog key literal: vehicle.turn_state", detail)
         for token in ("wled", "twai", "argb", "can_bus", "freertos"):
             self.assertIn(f"rules.cpp references forbidden {token} outside comments", detail)
+
+    def test_clean_companion_protocol_passes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-companion-fixture-") as directory:
+            root = Path(directory)
+            write_companion_protocol_fixture(root)
+            output = check_companion_protocol_fixture(root)
+        self.assertIn("OK   companion_protocol builds on vehicle_signals alone", output)
+
+    def test_companion_protocol_header_reaching_mazda_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-companion-fixture-") as directory:
+            root = Path(directory)
+            write_companion_protocol_fixture(root)
+            library = root / "lib/companion_protocol"
+            cmake = library / "CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8")
+                + "target_include_directories(companion_protocol PUBLIC\n"
+                + "  ${CMAKE_CURRENT_SOURCE_DIR}/../mazda/include)\n",
+                encoding="utf-8",
+            )
+            prepend(
+                library / "include/companion_protocol/live_signals.hpp",
+                '#include "mazda/types.hpp"\n',
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_companion_protocol_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("forbidden companion_protocol target include directory", detail)
+        self.assertIn("forbidden companion_protocol consumer include directory", detail)
+        self.assertIn("live_signals.hpp references Mazda outside comments", detail)
+        self.assertIn("forbidden companion_protocol dependency", detail)
+        self.assertIn("lib/mazda/include/mazda/types.hpp", detail)
+
+    def test_companion_protocol_link_to_ble_or_mazda_target_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-companion-fixture-") as directory:
+            root = Path(directory)
+            write_companion_protocol_fixture(root)
+            cmake = root / "lib/companion_protocol/CMakeLists.txt"
+            cmake.write_text(
+                cmake.read_text(encoding="utf-8")
+                + "target_link_libraries(companion_protocol PUBLIC mazda_telemetry companion_ble)\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_companion_protocol_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("forbidden companion_protocol target link target: mazda_telemetry", detail)
+        self.assertIn("forbidden companion_protocol target link target: companion_ble", detail)
+
+    def test_companion_protocol_keys_outside_layout_and_stack_tokens_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-companion-fixture-") as directory:
+            root = Path(directory)
+            write_companion_protocol_fixture(root)
+            source = root / "lib/companion_protocol/src/live_signals.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "// nimble and twai in a comment are fine.\n"
+                + "namespace companion_protocol {\n"
+                + "enum class TurnState { Off };\n"
+                + 'inline constexpr const char *kTurnKey = "vehicle.turn_state";\n'
+                + "inline constexpr int nimble_handle = 1;\n"
+                + "inline constexpr int twai_mode = 0;\n"
+                + "}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_companion_protocol_fixture(root)
+        detail = str(raised.exception)
+        self.assertIn("live_signals.cpp names Mazda type TurnState", detail)
+        self.assertIn(
+            "live_signals.cpp contains a Mazda catalog key literal: vehicle.turn_state", detail
+        )
+        self.assertNotIn("live_signal_layout.cpp contains a Mazda catalog key literal", detail)
+        for token in ("nimble", "twai"):
+            self.assertIn(
+                f"live_signals.cpp references forbidden {token} outside comments", detail
+            )
 
     def test_vehicle_core_target_private_mazda_dependency_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-core-fixture-") as directory:

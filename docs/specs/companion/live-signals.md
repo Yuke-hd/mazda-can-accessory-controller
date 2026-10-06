@@ -16,16 +16,23 @@ These apply in addition to the
 [core safety invariants](ble-protocol.md#safety-invariants).
 
 1. **Availability is copied, never derived.** Each signal's availability code
-   is the provider's `Availability` for that reading, unchanged. The encoder
-   never promotes a reading, never computes its own freshness and never sends
+   is the provider's `Availability` for that reading, unchanged, with the one
+   brake exception in invariant 2. The encoder never promotes a reading, never computes its own freshness and never sends
    `Fresh` for a reading the provider did not report as `Fresh`. A failed
    read and an unsupported signal are never `Fresh`. A value the frame cannot
    encode is dropped, not the availability: the code stays the provider's,
    and the app shows no value for that signal.
 2. **Brake freshness stays unset.** `vehicle.brake_pressed` has no freshness
    timeout, so the provider never reports it as `Fresh`, and the frame never
-   does either. The owner-approved `fresh_or_unverified` brake rule opt-in
-   affects only lighting rules; it does not change the reported availability.
+   does either. As defence in depth, the encoder sends a `Fresh` brake reading
+   as `FreshnessUnverified` (code 2): such a reading is a provider defect, and
+   demoting it can only lower confidence. This is the only availability the
+   encoder changes. It applies only to signals whose freshness is
+   intentionally unset by policy, which is brake alone; a signal that merely
+   has no default timeout today, such as `vehicle.engine_rpm`, is copied
+   through, so a later reviewed timeout needs no protocol change. The
+   owner-approved `fresh_or_unverified` brake rule opt-in affects only
+   lighting rules; it does not change the reported availability.
 3. **Live signals are read-only observation.** Sampling uses the provider's
    latest-state `read()`. It never subscribes, starts or stops the provider,
    and never requests data from the vehicle or causes a CAN transmission.
@@ -211,8 +218,8 @@ The high nibble of the last byte, for the unused index 19, is zero.
 | 7 | Reserved | Not sent in layout version 1. The app treats it as unknown. |
 
 - Codes 0–4 are `vehicle_signals::Availability` copied through an explicit
-  table. Codes 5 and 6 are protocol codes for readings the provider did not
-  produce:
+  table, except the brake demotion in [invariant 2](#invariants). Codes 5
+  and 6 are protocol codes for readings the provider did not produce:
 
   | Outcome | Code |
   | --- | --- |

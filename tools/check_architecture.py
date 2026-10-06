@@ -5,7 +5,8 @@ This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
 the portable ``vehicle_signals`` contracts must build against that core alone
 and reach only its value-only telemetry contracts, the generic
-``action_engine`` must build on those contracts alone, the host generic consumer
+``action_engine`` and ``companion_protocol`` must build on those contracts
+alone, the host generic consumer
 must include only the public provider and ``vehicle_signals`` headers, the
 vehicle binding must compile and exercise its project-owned listen-only
 contract, and retired capture code must stay absent. The
@@ -308,6 +309,9 @@ class PortableLayer:
     include_roots: Tuple[str, ...]
     # Repository directory whose compiled sources are checked, if any.
     source_dir: Optional[str] = None
+    # Repository files that may hold vehicle catalog key literals. Every other
+    # layer file must stay key-free.
+    key_literal_files: Tuple[str, ...] = ()
 
 
 VEHICLE_SIGNALS_HEADERS = (
@@ -339,8 +343,8 @@ _FORBIDDEN_SIGNALS_SEGMENTS = frozenset(
 _FORBIDDEN_SIGNALS_DEFINITION = re.compile(
     r"mazda|freertos|esp_platform|esp_idf|sdkconfig|twai", re.IGNORECASE
 )
-# Output, transport, CAN-driver and RTOS names a portable layer never uses.
-_FORBIDDEN_LAYER_TOKENS = re.compile(r"wled|argb|twai|can_bus|freertos", re.IGNORECASE)
+# Output, transport, CAN-driver, BLE-stack and RTOS names a portable layer never uses.
+_FORBIDDEN_LAYER_TOKENS = re.compile(r"wled|argb|twai|can_bus|freertos|nimble", re.IGNORECASE)
 _CPP_SUFFIXES = frozenset((".c", ".cc", ".cpp", ".h", ".hpp", ".inl", ".ipp"))
 
 _VEHICLE_SIGNALS_PROBE_BODY = (
@@ -451,6 +455,76 @@ _ACTION_ENGINE_PROBE_BODY = (
     "}\n"
 )
 
+COMPANION_PROTOCOL_HEADERS = (
+    "companion_protocol/active_document.hpp",
+    "companion_protocol/att_error.hpp",
+    "companion_protocol/bytes.hpp",
+    "companion_protocol/command.hpp",
+    "companion_protocol/config_status.hpp",
+    "companion_protocol/config_transfer.hpp",
+    "companion_protocol/crc32.hpp",
+    "companion_protocol/device_info.hpp",
+    "companion_protocol/live_signal_layout.hpp",
+    "companion_protocol/live_signals.hpp",
+    "companion_protocol/read_back.hpp",
+)
+
+# Uploads, verifies and commits one document through a probe-local commit
+# port, encodes Device info, and samples live signals from a provider with an
+# empty catalog, so the probe links and runs the codec's compiled sources.
+_COMPANION_PROTOCOL_PROBE_BODY = (
+    "#include <array>\n"
+    "#include <cstdint>\n"
+    "namespace {\n"
+    "using namespace companion_protocol;\n"
+    "using namespace vehicle_signals;\n"
+    "class ProbeCommitter final : public ConfigCommitter {\n"
+    "public:\n"
+    "  CommitOutcome commit(ByteView document) noexcept override {\n"
+    "    return CommitOutcome::saved(\n"
+    "        SavedDocument{static_cast<std::uint16_t>(document.size()), crc32(document)});\n"
+    "  }\n"
+    "};\n"
+    "class EmptyProvider final : public SignalProvider {\n"
+    "public:\n"
+    "  SignalCatalogView catalog() const noexcept override { return {}; }\n"
+    "  SignalResult<SignalReading> read(SignalId) const noexcept override {\n"
+    "    return SignalResult<SignalReading>::failure(SignalStatus::InvalidSignal);\n"
+    "  }\n"
+    "  SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback,\n"
+    "                                             void *) noexcept override {\n"
+    "    return SignalResult<SignalSubscription>::failure(SignalStatus::InvalidSignal);\n"
+    "  }\n"
+    "  SignalStatusResult unsubscribe(SignalSubscription) noexcept override {\n"
+    "    return SignalStatusResult::failure(SignalStatus::InvalidSignal);\n"
+    "  }\n"
+    "};\n"
+    "} // namespace\n"
+    "int main() {\n"
+    "  const std::array<std::uint8_t, 4> document{0x7B, 0x7D, 0x0A, 0x0A};\n"
+    "  const std::uint32_t crc = crc32(document);\n"
+    "  const std::array<std::uint8_t, 7> start{\n"
+    "      0x01, 0x04, 0x00, static_cast<std::uint8_t>(crc), static_cast<std::uint8_t>(crc >> 8U),\n"
+    "      static_cast<std::uint8_t>(crc >> 16U), static_cast<std::uint8_t>(crc >> 24U)};\n"
+    "  const std::array<std::uint8_t, 7> chunk{0x02, 0x00, 0x00, 0x7B, 0x7D, 0x0A, 0x0A};\n"
+    "  const std::array<std::uint8_t, 1> commit{0x03};\n"
+    "  ProbeCommitter committer{};\n"
+    "  ConfigTransfer transfer{committer, ConfigTransferEnvironment{true, ActiveDocument{}}};\n"
+    "  const ConfigWriteContext context{247, TransferClock{0}};\n"
+    "  const bool uploaded = transfer.handle_write(start, context).error == AttError::None &&\n"
+    "                        transfer.handle_write(chunk, context).error == AttError::None &&\n"
+    "                        transfer.handle_write(commit, context).error == AttError::None &&\n"
+    "                        transfer.status().result == TransferResult::Saved;\n"
+    "  const bool described = encode_device_info(DeviceInfo{1, false, \"probe\", \"probe\"})\n"
+    "                             .has_value();\n"
+    "  EmptyProvider provider{};\n"
+    "  const LiveSignalSampler sampler{provider};\n"
+    "  const auto frame = sampler.sample(true).frame(7);\n"
+    "  const bool sampled = frame[0] == kLiveSignalLayoutVersion && frame[1] == 7;\n"
+    "  return uploaded && described && sampled ? 0 : 1;\n"
+    "}\n"
+)
+
 VEHICLE_SIGNALS_LAYER = PortableLayer(
     name="vehicle_signals",
     directories=("lib/vehicle_signals",),
@@ -467,6 +541,18 @@ ACTION_ENGINE_LAYER = PortableLayer(
     target_links=("vehicle_signals",),
     include_roots=("lib/action_engine/include", "lib/vehicle_signals/include"),
     source_dir="lib/action_engine/src",
+)
+COMPANION_PROTOCOL_LAYER = PortableLayer(
+    name="companion_protocol",
+    directories=("lib/vehicle_signals", "lib/companion_protocol"),
+    headers=COMPANION_PROTOCOL_HEADERS,
+    probe_body=_COMPANION_PROTOCOL_PROBE_BODY,
+    target_links=("vehicle_signals",),
+    include_roots=("lib/companion_protocol/include", "lib/vehicle_signals/include"),
+    source_dir="lib/companion_protocol/src",
+    # The live-signal layout names the generic catalog keys it streams; the
+    # keys stay in this one table.
+    key_literal_files=("lib/companion_protocol/src/live_signal_layout.cpp",),
 )
 
 
@@ -635,7 +721,7 @@ def _layer_source_violations(root: Path, layer: PortableLayer) -> List[str]:
         if path.suffix in _CPP_SUFFIXES:
             code, literals = _strip_cpp_comments(text)
             for literal in literals:
-                if literal.startswith("vehicle."):
+                if literal.startswith("vehicle.") and label not in layer.key_literal_files:
                     violations.append(f"{label} contains a Mazda catalog key literal: {literal}")
             for name in type_names:
                 if re.search(rf"\b{re.escape(name)}\b", code):
@@ -800,6 +886,20 @@ def _check_action_engine_only(
     print(
         "OK   action_engine builds on vehicle_signals alone without Mazda, CAN, RTOS or "
         "output dependencies"
+    )
+
+
+def _check_companion_protocol_only(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    core_root: Optional[Path] = None,
+) -> None:
+    _check_portable_layer(root, cmake, compiler, work_dir, COMPANION_PROTOCOL_LAYER, core_root)
+    print(
+        "OK   companion_protocol builds on vehicle_signals alone without Mazda, BLE stack, "
+        "CAN, RTOS or output dependencies"
     )
 
 
@@ -1148,6 +1248,7 @@ def check(
             _check_core_only(root, cmake, compiler, work_dir, core_root)
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
             _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
+            _check_companion_protocol_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
             _check_led_action_adapter(root)
             _check_adapter(

@@ -21,6 +21,13 @@ component inputs. It also builds and runs the project-owned vehicle receive
 adapter tests against a test-only TWAI seam, checking listen-only mode, fixed
 pins, and the disabled data-frame queue.
 
+The portable `vehicle_signals`, `action_engine`, and `companion_protocol`
+layers are each built and run in their own probe project against the core
+alone. `companion_protocol` may link only `vehicle_signals`; its sources must
+not name Mazda types, the BLE stack, CAN drivers, RTOS, or LED outputs outside
+comments, and vehicle catalog key literals are allowed only in
+`lib/companion_protocol/src/live_signal_layout.cpp`.
+
 The gate owns the receive-only, board-artifact, and local-ARGB semantic
 validators, plus checks that retired raw-capture code has no active dependency.
 Those source validators are not separately registered or repeated by firmware
@@ -60,7 +67,8 @@ python3 tests/header_boundary/check_public_headers_test.py --compiler c++ --cmak
 
 The header checker and its fixture regression are registered once as
 `public_header_boundary` and `public_header_checker_regression`. The stricter
-isolated `vehicle_signals` and `action_engine` dependency checks belong to
+isolated `vehicle_signals`, `action_engine`, and `companion_protocol`
+dependency checks belong to
 `architecture_contracts`.
 
 The public-header gate verifies compilation and dependency boundaries. It does
