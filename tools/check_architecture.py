@@ -1079,6 +1079,80 @@ def _check_led_action_adapter(root: Path) -> None:
     )
 
 
+COMPANION_BLE_COMPONENT = Path("components/companion_ble")
+# The companion BLE service sees NimBLE, logging, the RTOS, the portable
+# companion protocol codec and its own headers; never CAN, decoding, telemetry, the action engine, the controller
+# configuration, an LED driver or NVS. The composition root hands it values.
+_COMPANION_BLE_ALLOWED_INCLUDE = re.compile(
+    r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|freertos/(?:FreeRTOS|task)\.h"
+    r"|host/[\w/]+\.h|nimble/[\w/]+\.h|services/(?:gap|gatt)/[\w/]+\.h"
+)
+_COMPANION_BLE_FORBIDDEN_NAMES = re.compile(
+    r"(?<![A-Za-z0-9])(?:mazda|twai|can_bus|vehicle_telemetry|vehicle_signals|action_engine"
+    r"|controller_config|local_argb|led_strip|gpio_|rmt_|nvs)",
+    re.IGNORECASE,
+)
+_COMPANION_BLE_ALLOWED_REQUIRES = frozenset(("bt", "companion_protocol", "freertos", "log"))
+_COMPANION_BLE_ALLOWED_INCLUDE_DIRS = frozenset(
+    ("${CMAKE_CURRENT_SOURCE_DIR}/include", "include", "private_include")
+)
+_COMPANION_BLE_TARGETS = ("companion_ble_uuids", "${COMPONENT_LIB}")
+_STRING_LITERAL = re.compile(r'"(?:\\.|[^"\\])*"')
+
+
+def _companion_ble_cmake_violations(cmake: Path) -> List[str]:
+    if not cmake.is_file():
+        return ["companion_ble CMakeLists.txt is missing"]
+    code = re.sub(r"#.*", "", cmake.read_text(encoding="utf-8"))
+    violations: List[str] = []
+    for target in _COMPANION_BLE_TARGETS:
+        for item in _target_arguments(code, "target_link_libraries", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS:
+                violations.append(f"companion_ble links forbidden target {item}")
+        for item in _target_arguments(code, "target_include_directories", target):
+            if item not in _LED_ACTIONS_CMAKE_KEYWORDS | _COMPANION_BLE_ALLOWED_INCLUDE_DIRS:
+                violations.append(f"companion_ble adds forbidden include directory {item}")
+    for command in sorted(set(_LED_ACTIONS_DIRECTORY_SCOPE.findall(code))):
+        violations.append(f"companion_ble uses directory-scope {command}()")
+    for item in _idf_arguments(code, ("REQUIRES", "PRIV_REQUIRES")):
+        if item not in _COMPANION_BLE_ALLOWED_REQUIRES:
+            violations.append(f"companion_ble requires forbidden component {item}")
+    for item in _idf_arguments(code, ("INCLUDE_DIRS", "PRIV_INCLUDE_DIRS")):
+        if item not in _COMPANION_BLE_ALLOWED_INCLUDE_DIRS:
+            violations.append(f"companion_ble adds forbidden include directory {item}")
+    return violations
+
+
+def _check_companion_ble_isolation(root: Path) -> None:
+    """Keep the companion BLE service off CAN, telemetry, lighting and NVS."""
+
+    component = root / COMPANION_BLE_COMPONENT
+    violations: List[str] = []
+    sources = sorted(
+        path for path in component.rglob("*") if path.suffix in _CPP_SUFFIXES and path.is_file()
+    )
+    if not sources:
+        violations.append(f"companion BLE sources are missing: {COMPANION_BLE_COMPONENT}")
+    for path in sources:
+        relative = path.relative_to(root).as_posix()
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        violations.extend(_include_violations(relative, code, _COMPANION_BLE_ALLOWED_INCLUDE))
+        for name in re.findall(r"^\s*#\s*include\s*<([^>]+)>", code, re.M):
+            if "/" not in name and _COMPANION_BLE_FORBIDDEN_NAMES.search(name):
+                violations.append(f"{relative} includes forbidden header {name}")
+        # String literals such as the advertised device name are data, not code.
+        body = _STRING_LITERAL.sub('""', re.sub(r"^\s*#\s*include[^\n]*", "", code, flags=re.M))
+        for name in sorted(set(m.lower() for m in _COMPANION_BLE_FORBIDDEN_NAMES.findall(body))):
+            violations.append(f"{relative} uses forbidden name {name}")
+    violations.extend(_companion_ble_cmake_violations(component / "CMakeLists.txt"))
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   companion BLE service uses only NimBLE, logging, the RTOS and the companion "
+        "protocol codec; no CAN, telemetry, lighting or NVS"
+    )
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -1251,6 +1325,7 @@ def check(
             _check_companion_protocol_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
             _check_led_action_adapter(root)
+            _check_companion_ble_isolation(root)
             _check_adapter(
                 root,
                 cmake,

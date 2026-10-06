@@ -67,6 +67,7 @@ add_subdirectory(lib/companion_protocol)
 add_subdirectory(components/local_argb_actions)
 add_subdirectory(components/controller_config)
 add_subdirectory(components/mazda_telemetry)
+add_subdirectory(components/companion_ble)
 add_subdirectory(lib/replay)
 
 if(MAZDA_BUILD_HOST_TESTS)

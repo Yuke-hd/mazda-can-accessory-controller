@@ -1,10 +1,13 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
+#include "companion_ble/companion_ble.hpp"
 #include "controller_config/factory_default.hpp"
 #include "controller_config/persisted/application.hpp"
 #include "controller_config/persisted/config_store.hpp"
 #include "controller_config/persisted/json_loader.hpp"
+#include "controller_config/persisted/model.hpp"
 #include "controller_config/timing.hpp"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -99,6 +102,31 @@ void log_configuration_diagnostic(
     const char *const prefix, const controller_config::persisted::ConfigDiagnostic &diagnostic) {
   ESP_LOGE(kTag, "%s: code=%u path=%s message=%s", prefix, static_cast<unsigned>(diagnostic.code),
            diagnostic.path.c_str(), diagnostic.message.c_str());
+}
+
+constexpr char kHardwareId[] = "weact-can485-v1.1";
+static_assert(controller_config::persisted::kSchemaVersion >= 0 &&
+                  controller_config::persisted::kSchemaVersion <= UINT16_MAX,
+              "the companion Device info carries the schema version as u16");
+static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes ==
+                  companion_protocol::kMaxConfigBytes,
+              "the companion upload limit must equal the stored config limit");
+
+// Starts the optional companion BLE link. It runs on its own startup task, so
+// a failure here or later only loses the companion link; CAN, telemetry, the
+// LED renderer and fail-off are already running and are not affected. Not
+// inlined, so the Device info value stays out of app_main's own frame; this
+// call chain still runs on the main task stack, but is shallower than the
+// configure_engine_lighting() and logging path, so it sets no new stack peak.
+__attribute__((noinline)) void start_companion_link() noexcept {
+  // Both strings have static storage; start() encodes them before returning.
+  companion_protocol::DeviceInfo device_info{};
+  device_info.config_schema_version =
+      static_cast<std::uint16_t>(controller_config::persisted::kSchemaVersion);
+  device_info.firmware_version = esp_app_get_description()->version;
+  device_info.hardware_id = kHardwareId;
+  if (!companion_ble::start(device_info))
+    ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }
 
 // Loads and applies one boot-time JSON configuration while the engine is
@@ -200,6 +228,9 @@ extern "C" void app_main(void) {
   }
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
+  // The companion link starts only after startup black, NVS initialization and
+  // CAN start, and its result never gates lighting.
+  start_companion_link();
   for (;;) {
     const auto speed = telemetry.speed_kph();
     const auto engine_rpm = telemetry.engine_rpm();
