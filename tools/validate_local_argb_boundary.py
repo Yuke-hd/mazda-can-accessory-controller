@@ -377,6 +377,35 @@ def _driver_core_failures(structure: str) -> List[str]:
     return failures
 
 
+TELEMETRY_STARTED_MARK = "companion_ble::mark_telemetry_started"
+
+
+def _telemetry_started_mark_failures(structure: str) -> List[str]:
+    """Require the Live signals telemetry-started mark on the driver core.
+
+    The mark reports that the telemetry facade has started, so it must follow
+    a successful `telemetry.start()` inside the core-1 startup sequence and
+    have no other call site (app_main would report it before or without the
+    start).
+    """
+
+    failures: List[str] = []
+    calls = list(re.finditer(rf"\b{TELEMETRY_STARTED_MARK}\s*\(\s*\)", structure))
+    if len(calls) != 1:
+        failures.append(
+            f"{TELEMETRY_STARTED_MARK}() must have exactly one call site, in "
+            f"{STARTUP_SEQUENCE}(); found {len(calls)}"
+        )
+    sequence_body = _startup_sequence_body(structure) or ""
+    mark = re.search(rf"\b{TELEMETRY_STARTED_MARK}\s*\(\s*\)", sequence_body)
+    start = sequence_body.find("telemetry.start()")
+    if mark is None:
+        failures.append(f"{STARTUP_SEQUENCE}() does not call {TELEMETRY_STARTED_MARK}()")
+    elif start < 0 or mark.start() < start:
+        failures.append(f"{TELEMETRY_STARTED_MARK}() does not follow telemetry.start()")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
@@ -556,6 +585,7 @@ def main() -> int:
         if earlier_index >= 0 and later_index >= 0 and earlier_index > later_index:
             failures.append(label)
     failures.extend(_driver_core_failures(structure))
+    failures.extend(_telemetry_started_mark_failures(structure))
     failures.extend(_fail_off_failures(structure))
     failures.extend(_binding_failures(structure))
     failures.extend(_polled_sampling_failures(structure))

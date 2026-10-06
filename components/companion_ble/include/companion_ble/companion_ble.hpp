@@ -6,13 +6,15 @@
 // This component owns NimBLE initialization, advertising, the companion GATT
 // service and its pairing policy (ADR-0003). It has no CAN, telemetry, LED,
 // GPIO or NVS dependency: the composition root hands it the user key sampler,
-// the NVS initialization result and the config ports. A BLE failure leaves the controller
-// without a companion link and never affects lighting.
+// the NVS initialization result, the config ports and the read-only live
+// signal provider. A BLE failure leaves the controller without a companion
+// link and never affects lighting.
 
 #include "companion_protocol/config_ports.hpp"
 #include "companion_protocol/config_transfer.hpp"
 #include "companion_protocol/device_info.hpp"
 #include "companion_protocol/pairing_window.hpp"
+#include "vehicle_signals/signal_provider.hpp"
 
 namespace companion_ble {
 
@@ -48,6 +50,17 @@ struct ConfigInputs {
   ControlledRestart restart{nullptr};
 };
 
+// Everything the composition root hands to start().
+struct ServiceInputs {
+  PairingInputs pairing{};
+  ConfigInputs config{};
+  // The read-only source of the Live signals characteristic
+  // (docs/specs/companion/live-signals.md). Required. It is sampled with
+  // SignalProvider::read() only, from the NimBLE host task, so it must
+  // outlive the NimBLE host; the service never subscribes to it.
+  const vehicle_signals::SignalProvider *live_signals{nullptr};
+};
+
 // Starts the companion BLE service on its own low-priority startup task and
 // returns without waiting for the stack, so the caller's stack and timing are
 // unaffected. Call it once, after startup black, NVS initialization and CAN
@@ -57,12 +70,16 @@ struct ConfigInputs {
 // served pairing window flag reflects the live window state, whatever
 // `device_info.pairing_window_open` says.
 //
-// Returns false when start() already ran, a Device info string is longer than
-// the protocol allows, or the startup task could not be created. Stack, GATT
-// and advertising failures after that are logged by the component and leave
-// the controller without a companion link.
+// Returns false when start() already ran, `inputs.live_signals` is null, a
+// Device info string is longer than the protocol allows, or the startup task
+// could not be created. Stack, GATT and advertising failures after that are
+// logged by the component and leave the controller without a companion link.
 [[nodiscard]] bool start(const companion_protocol::DeviceInfo &device_info,
-                         const PairingInputs &pairing,
-                         const ConfigInputs &config = ConfigInputs{}) noexcept;
+                         const ServiceInputs &inputs) noexcept;
+
+// Records that the telemetry facade started successfully during this boot, so
+// live signal frames set flags bit 0 from then on. Safe from any task and
+// before or after start(); it never fails and never waits.
+void mark_telemetry_started() noexcept;
 
 } // namespace companion_ble

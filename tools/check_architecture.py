@@ -468,6 +468,7 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/hook_guard.hpp",
     "companion_protocol/link_security.hpp",
     "companion_protocol/live_signal_layout.hpp",
+    "companion_protocol/live_signal_stream.hpp",
     "companion_protocol/live_signals.hpp",
     "companion_protocol/pairing_window.hpp",
     "companion_protocol/read_back.hpp",
@@ -1085,25 +1086,67 @@ def _check_led_action_adapter(root: Path) -> None:
 
 
 COMPANION_BLE_COMPONENT = Path("components/companion_ble")
-# The companion BLE service sees NimBLE, logging, the RTOS, the monotonic
-# esp_timer clock of its pairing policy, the portable companion protocol codec
-# and its own headers; never CAN, decoding, telemetry, the action engine, the
-# controller configuration, an LED driver, GPIO, NVS or esp_restart(). The
-# composition root hands it values, including the user key sampler, the NVS
-# init result, the companion protocol's config ports and the controlled
-# restart, which fails the lighting off before it restarts.
+# The companion BLE service sees NimBLE, logging, the RTOS, the esp_timer
+# clock of its pairing policy and live-signal pacing, the portable companion
+# protocol codec, its own headers and the generic provider port it samples
+# live signals through; never CAN, decoding, telemetry, the
+# action engine, the controller configuration, an LED driver, GPIO, NVS or
+# esp_restart(). The composition root hands it values, including the user key
+# sampler, the NVS init result, the companion protocol's config ports, the
+# controlled restart, which fails the lighting off before it restarts, and the
+# read-only provider.
 _COMPANION_BLE_ALLOWED_INCLUDE = re.compile(
     r"companion_ble/[\w/]+\.hpp|companion_protocol/[\w/]+\.hpp|esp_log\.h|esp_timer\.h"
     r"|freertos/(?:FreeRTOS|task)\.h"
     r"|host/[\w/]+\.h|nimble/[\w/]+\.h|services/(?:gap|gatt)/[\w/]+\.h"
+    r"|vehicle_signals/signal_provider\.hpp"
 )
 _COMPANION_BLE_FORBIDDEN_NAMES = re.compile(
     r"(?<![A-Za-z0-9])(?:mazda|twai|can_bus|vehicle_telemetry|vehicle_signals|action_engine"
     r"|controller_config|local_argb|led_strip|gpio_|rmt_|nvs)",
     re.IGNORECASE,
 )
+# The one vehicle_signals name the service may use: the provider port, only
+# through a const view, so live-signal sampling is limited to read().
+_COMPANION_BLE_READ_ONLY_PROVIDER = re.compile(
+    r"\bconst\s+vehicle_signals::SignalProvider\b(?!\s*::)"
+)
+# Provider subscription calls would give the service a write path into
+# telemetry.
+_COMPANION_BLE_PROVIDER_WRITES = re.compile(r"\b(?:subscribe|unsubscribe)\s*\(")
+# Casts and type traits that strip const or reinterpret a type are rejected
+# anywhere in the component, not only next to the provider name. This is a
+# textual, defence-in-depth check that catches honest mistakes; it is not a
+# proof that no writable view of the provider can exist, so code review still
+# owns that.
+_COMPANION_BLE_CONST_REMOVAL = re.compile(
+    r"\b(?:const_cast|reinterpret_cast|remove_const(?:_t)?|remove_cv(?:_t)?"
+    r"|remove_cvref(?:_t)?|decay(?:_t)?)\b"
+)
+# Reviewed exceptions, each limited to one exact cast in one file:
+# - NimBLE's access callback argument is a plain void *, so the read-only
+#   Device info values are handed over as one and only read back as const by
+#   their access callback.
+# - NimBLE's advertising name field is a const std::uint8_t *, so the
+#   advertised name is reinterpreted as bytes without dropping const.
+_COMPANION_BLE_ALLOWED_CASTS = {
+    "components/companion_ble/src/device_info_characteristic.cpp": re.compile(
+        r"\bconst_cast\s*<\s*DeviceInfoValues\s*\*\s*>"
+    ),
+    "components/companion_ble/src/advertising.cpp": re.compile(
+        r"\breinterpret_cast\s*<\s*const\s+std::uint8_t\s*\*\s*>"
+    ),
+}
+# Only the security module judges a link: it reads the NimBLE security state
+# and records whether the peer's bond is accepted. Every notifying source gates
+# on that judgement through link_has_accepted_bond(), never on its own reading
+# of the encryption or bonding flags (ble-protocol.md, "Notification gate").
+_COMPANION_BLE_SECURITY_SOURCE = "components/companion_ble/src/security.cpp"
+_COMPANION_BLE_SECURITY_STATE = re.compile(r"\bsec_state\b")
+_COMPANION_BLE_NOTIFY = re.compile(r"\bble_gatts_(?:notify|indicate)\w*\s*\(")
+_COMPANION_BLE_BOND_GATE = re.compile(r"\blink_has_accepted_bond\s*\(")
 _COMPANION_BLE_ALLOWED_REQUIRES = frozenset(
-    ("bt", "companion_protocol", "esp_timer", "freertos", "log")
+    ("bt", "companion_protocol", "esp_timer", "freertos", "log", "vehicle_signals")
 )
 _COMPANION_BLE_ALLOWED_INCLUDE_DIRS = frozenset(
     ("${CMAKE_CURRENT_SOURCE_DIR}/include", "include", "private_include")
@@ -1154,14 +1197,29 @@ def _check_companion_ble_isolation(root: Path) -> None:
                 violations.append(f"{relative} includes forbidden header {name}")
         # String literals such as the advertised device name are data, not code.
         body = _STRING_LITERAL.sub('""', re.sub(r"^\s*#\s*include[^\n]*", "", code, flags=re.M))
+        if _COMPANION_BLE_PROVIDER_WRITES.search(body):
+            violations.append(f"{relative} uses a provider write path")
+        allowed_cast = _COMPANION_BLE_ALLOWED_CASTS.get(relative)
+        unexempted = allowed_cast.sub("", body) if allowed_cast else body
+        for name in sorted(set(_COMPANION_BLE_CONST_REMOVAL.findall(unexempted))):
+            violations.append(f"{relative} removes constness with {name}")
+        if relative != _COMPANION_BLE_SECURITY_SOURCE:
+            if _COMPANION_BLE_SECURITY_STATE.search(body):
+                violations.append(
+                    f"{relative} reads the link security state; gate on link_has_accepted_bond()"
+                )
+            if _COMPANION_BLE_NOTIFY.search(body) and not _COMPANION_BLE_BOND_GATE.search(body):
+                violations.append(f"{relative} notifies without the link_has_accepted_bond() gate")
+        body = _COMPANION_BLE_READ_ONLY_PROVIDER.sub("const ReadOnlyProvider", body)
         for name in sorted(set(m.lower() for m in _COMPANION_BLE_FORBIDDEN_NAMES.findall(body))):
             violations.append(f"{relative} uses forbidden name {name}")
     violations.extend(_companion_ble_cmake_violations(component / "CMakeLists.txt"))
     if violations:
         raise ArchitectureFailure("\n".join(violations))
     print(
-        "OK   companion BLE service uses only NimBLE, logging, the RTOS, esp_timer and the "
-        "companion protocol codec; no CAN, telemetry, lighting, GPIO or NVS"
+        "OK   companion BLE service uses only NimBLE, logging, the RTOS, esp_timer, the "
+        "companion protocol codec and a read-only provider port; no CAN, telemetry, lighting, "
+        "GPIO or NVS"
     )
 
 

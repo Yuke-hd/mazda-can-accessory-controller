@@ -7,8 +7,10 @@ the UUIDs, properties, security, versioning and ATT MTU rules that this
 document builds on. Device info reports the layout as
 `live_signal_layout_version` `1`.
 
-This is a specification only. No firmware or app implementation exists yet, and
-nothing here has been validated on hardware, on a phone, or in a vehicle.
+The firmware side is implemented by `companion_protocol::LiveSignalSampler`,
+`companion_protocol::LiveSignalStream` and the `companion_ble` Live signals
+characteristic (issues #162 and #166); no app implementation exists yet.
+Nothing here has been validated on hardware, on a phone, or in a vehicle.
 
 ## Invariants
 
@@ -90,6 +92,14 @@ Rate rules:
   other, so a slow link sees fewer, current frames rather than old ones.
 - A config commit runs on the BLE host context, so frames can pause while it
   runs. The 100 ms and 1 s timings do not apply during that pause.
+- Live signals frames and the Config characteristics run on the same BLE
+  host context, so no frame is sent while a Config or Command write is being
+  handled, and the stream never waits for the stack. It therefore does not
+  delay a write response, a Config status notification or the
+  [disconnect and restart sequence](ble-protocol.md#disconnect-and-restart-sequence).
+  Frames may continue until the disconnect completes after a commit or a
+  revert to factory. After Clear bonds they stop at the next sample, because
+  the bond is no longer accepted.
 
 The app treats the stream as stalled when no frame has arrived for **2 s**.
 While it is stalled, the app shows every signal as unknown, not as its last

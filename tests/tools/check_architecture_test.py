@@ -280,15 +280,27 @@ def write_companion_ble_fixture(root: Path) -> None:
         '#include "esp_log.h"\n#include "freertos/task.h"\n'
         '#include "host/ble_hs.h"\n#include "nimble/nimble_port.h"\n'
         '#include "services/gap/ble_svc_gap.h"\n'
-        'constexpr const char *kDeviceName = "Mazda CAN Controller";\n',
+        '#include "esp_timer.h"\n#include "vehicle_signals/signal_provider.hpp"\n'
+        'constexpr const char *kDeviceName = "Mazda CAN Controller";\n'
+        "void bind(const vehicle_signals::SignalProvider &provider);\n"
+        "const vehicle_signals::SignalProvider *live_provider = nullptr;\n",
+        encoding="utf-8",
+    )
+    # The two reviewed casts, each in the one file allowed to make it.
+    (component / "src/device_info_characteristic.cpp").write_text(
+        "void *context = const_cast<DeviceInfoValues *>(&encoded);\n",
+        encoding="utf-8",
+    )
+    (component / "src/advertising.cpp").write_text(
+        "const auto *bytes = reinterpret_cast<const std::uint8_t *>(name);\n",
         encoding="utf-8",
     )
     (component / "CMakeLists.txt").write_text(
         "if(COMMAND idf_component_register)\n"
         '  idf_component_register(SRCS "src/companion_ble.cpp" INCLUDE_DIRS "include"\n'
         '                         PRIV_INCLUDE_DIRS "private_include"\n'
-        "                         REQUIRES companion_protocol\n"
-        "                         PRIV_REQUIRES bt freertos log)\n"
+        "                         REQUIRES companion_protocol vehicle_signals\n"
+        "                         PRIV_REQUIRES bt esp_timer freertos log)\n"
         "  return()\n"
         "endif()\n"
         "add_library(companion_ble_uuids INTERFACE)\n"
@@ -427,6 +439,149 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
         self.assertIn("uses forbidden name nvs", detail)
         self.assertNotIn("uses forbidden name mazda", detail)
 
+    def test_companion_ble_provider_access_is_read_only(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "void mutate(vehicle_signals::SignalProvider &provider);\n"
+                + "void listen(const vehicle_signals::SignalProvider &p) { p.subscribe(nullptr); }\n"
+                + "auto *writable = const_cast<vehicle_signals::SignalProvider *>(live_provider);\n"
+                + "vehicle_signals::SignalKey key{};\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_ble.cpp uses a provider write path", detail)
+        self.assertIn("companion_ble.cpp uses forbidden name vehicle_signals", detail)
+        self.assertIn("companion_ble.cpp removes constness with const_cast", detail)
+
+    def test_companion_ble_const_removal_is_rejected_through_aliases(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "using P = const vehicle_signals::SignalProvider;\n"
+                + "auto &m = const_cast<std::remove_const_t<P> &>(*live_provider);\n"
+                + "using Q = std::remove_cv<P>::type;\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_ble.cpp removes constness with const_cast", detail)
+        self.assertIn("companion_ble.cpp removes constness with remove_const_t", detail)
+        self.assertIn("companion_ble.cpp removes constness with remove_cv", detail)
+
+    def test_companion_ble_decay_cvref_and_reinterpret_cast_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "using P = const vehicle_signals::SignalProvider;\n"
+                + "using A = std::decay_t<P>;\nusing B = std::decay<P>::type;\n"
+                + "using C = std::remove_cvref_t<P &>;\nusing D = std::remove_cvref<P &>::type;\n"
+                + "auto *raw = reinterpret_cast<char *>(live_provider);\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        for name in ("decay_t", "decay", "remove_cvref_t", "remove_cvref", "reinterpret_cast"):
+            self.assertIn(f"companion_ble.cpp removes constness with {name}\n", detail + "\n")
+
+    def test_companion_ble_cast_exemptions_are_file_scoped(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            component = root / "components/companion_ble/src"
+            # The exact reviewed casts are rejected outside their own files.
+            (component / "live_signals_characteristic.cpp").write_text(
+                "void *context = const_cast<DeviceInfoValues *>(&encoded);\n"
+                "const auto *bytes = reinterpret_cast<const std::uint8_t *>(name);\n",
+                encoding="utf-8",
+            )
+            # Inside an exempt file only the one reviewed cast is allowed.
+            advertising = component / "advertising.cpp"
+            advertising.write_text(
+                advertising.read_text(encoding="utf-8")
+                + "auto *writable = reinterpret_cast<std::uint8_t *>(name);\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("live_signals_characteristic.cpp removes constness with const_cast", detail)
+        self.assertIn(
+            "live_signals_characteristic.cpp removes constness with reinterpret_cast", detail
+        )
+        self.assertIn("advertising.cpp removes constness with reinterpret_cast", detail)
+        self.assertNotIn("device_info_characteristic.cpp", detail)
+
+    def test_companion_ble_notification_gate_uses_the_accepted_bond(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            component = root / "components/companion_ble/src"
+            (component / "security.cpp").write_text(
+                "bool bonded(const ble_gap_conn_desc &d) { return d.sec_state.bonded != 0U; }\n",
+                encoding="utf-8",
+            )
+            live = component / "live_signals_characteristic.cpp"
+            live.write_text(
+                "void send(std::uint16_t c, std::uint16_t h, os_mbuf *om) {\n"
+                "  if (link_has_accepted_bond(c)) (void)ble_gatts_notify_custom(c, h, om);\n}\n",
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_ble_isolation(root)
+            self.assertIn("OK   companion BLE service", output.getvalue())
+
+            live.write_text(
+                "void send(std::uint16_t c, std::uint16_t h, os_mbuf *om,\n"
+                "          const ble_gap_conn_desc &d) {\n"
+                "  if (d.sec_state.encrypted && d.sec_state.bonded)\n"
+                "    (void)ble_gatts_notify_custom(c, h, om);\n}\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn(
+            "live_signals_characteristic.cpp reads the link security state; "
+            "gate on link_has_accepted_bond()",
+            detail,
+        )
+        self.assertIn(
+            "live_signals_characteristic.cpp notifies without the link_has_accepted_bond() gate",
+            detail,
+        )
+        self.assertNotIn("security.cpp", detail.replace("live_signals_characteristic.cpp", ""))
+
+    def test_companion_ble_non_const_provider_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_fixture(root)
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8")
+                + "void mutate(vehicle_signals::SignalProvider &provider);\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_isolation(root)
+        detail = str(raised.exception)
+        self.assertIn("companion_ble.cpp uses forbidden name vehicle_signals", detail)
+        self.assertNotIn("provider write path", detail)
+
     def test_companion_ble_build_escapes_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
             root = Path(directory)
@@ -434,7 +589,7 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             cmake = root / "components/companion_ble/CMakeLists.txt"
             cmake.write_text(
                 cmake.read_text(encoding="utf-8").replace(
-                    "PRIV_REQUIRES bt freertos log", "PRIV_REQUIRES bt freertos log local_argb nvs_flash"
+                    "PRIV_REQUIRES bt esp_timer freertos log", "PRIV_REQUIRES bt esp_timer freertos log local_argb nvs_flash"
                 )
                 + "target_link_libraries(companion_ble_uuids INTERFACE mazda_telemetry)\n"
                 + "include_directories(../vehicle_can_rx/include)\n",

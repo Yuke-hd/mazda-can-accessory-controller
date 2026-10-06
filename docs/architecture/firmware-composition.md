@@ -9,6 +9,7 @@ board::initialize_safe_defaults()  # app_main, core 0
         -> load NVS override or embedded factory JSON, then apply it
         -> typed turn subscription, ActionEngine::attach()
         -> VehicleTelemetry::start()    # facade starts strict vehicle CAN
+        -> companion_ble::mark_telemetry_started()  # atomic flag only
     -> companion_ble::start()       # optional; asynchronous; never gates lighting
     -> application polling cadence
 ```
@@ -110,6 +111,30 @@ even when black is not confirmed, and the boot path writes startup black
 again. Its protocol is specified in
 [`ble-protocol.md`](../specs/companion/ble-protocol.md) and its resource
 budget in [`ble-resource-budget.md`](../development/ble-resource-budget.md).
+
+The composition root also passes the Mazda provider to `companion_ble::start()`
+as a `const vehicle_signals::SignalProvider &` and calls
+`companion_ble::mark_telemetry_started()` from the core-1 vehicle I/O
+startup task right after the facade has started, which sets the Live signals
+frame's telemetry-started flag. The call only stores an atomic flag, so it
+never waits, and it runs before `companion_ble::start()`;
+`tools/validate_local_argb_boundary.py` requires it to follow
+`telemetry.start()` inside `start_vehicle_io()` and to have no other call
+site. The companion samples
+that provider with `read()` only, on the NimBLE host task, through a NimBLE
+callout; it never subscribes, creates no task, and never runs on the CAN,
+telemetry or LED tasks. `companion_protocol::LiveSignalStream` paces the
+[Live signals](../specs/companion/live-signals.md) notifications: frames
+flow only while the client is subscribed on a link for which
+`link_has_accepted_bond()` is true, with an ATT MTU of at least 64, at most one sample per 100 ms, on change or a 1 s
+heartbeat. A frame NimBLE cannot queue is dropped, never waited for, and the
+latest state is offered at the next slot. The stream re-reads the
+accepted-bond gate on every GAP event it receives and before every sample,
+because NimBLE delivers GAP listener events before the security binding has
+judged a new encryption, and Clear bonds revokes the bond without a GAP
+event. On
+disconnect the component logs the frames queued and dropped and the host task
+stack high-water mark.
 
 ## Application boundary
 

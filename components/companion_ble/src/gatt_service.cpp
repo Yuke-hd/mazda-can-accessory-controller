@@ -42,7 +42,10 @@ int guarded_access(const std::uint16_t connection, const std::uint16_t attribute
   return definition.access(connection, attribute, context, definition.context);
 }
 
-ble_gatt_chr_def nimble_characteristic(const CharacteristicDefinition &definition,
+// `definition` is the registered slot itself: NimBLE hands it back to
+// guarded_access as a plain void *, so it is taken without const instead of
+// casting const away.
+ble_gatt_chr_def nimble_characteristic(CharacteristicDefinition &definition,
                                        const ble_uuid128_t &uuid) noexcept {
   ble_gatt_chr_def characteristic{};
   characteristic.uuid = &uuid.u;
@@ -52,7 +55,7 @@ ble_gatt_chr_def nimble_characteristic(const CharacteristicDefinition &definitio
   characteristic.val_handle = definition.value_handle;
   if (definition.security == AttributeSecurity::EncryptedBonded) {
     characteristic.access_cb = guarded_access;
-    characteristic.arg = const_cast<CharacteristicDefinition *>(&definition);
+    characteristic.arg = &definition;
     // NimBLE handles CCCD writes without an access callback: the stock check
     // requires encryption (0x05 or 0x0F like the guard), and authorization
     // asks the pairing policy for an accepted bond.

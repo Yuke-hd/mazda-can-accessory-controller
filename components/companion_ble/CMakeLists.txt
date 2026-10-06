@@ -1,13 +1,15 @@
 # Companion BLE service: the NimBLE binding for the portable companion
 # protocol codec in lib/companion_protocol. It owns NimBLE initialization,
-# advertising and GATT registration; the codec owns every wire value.
+# advertising and GATT registration; the codec owns every wire value. Live
+# signals are sampled through the read-only vehicle_signals provider port.
 if(COMMAND idf_component_register)
   idf_component_register(
     SRCS "src/gatt_service.cpp" "src/device_info_characteristic.cpp" "src/advertising.cpp"
          "src/companion_ble.cpp" "src/security.cpp" "src/config_characteristics.cpp"
+         "src/live_signals_characteristic.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "private_include"
-    REQUIRES companion_protocol
+    REQUIRES companion_protocol vehicle_signals
     PRIV_REQUIRES bt esp_timer freertos log
   )
   return()

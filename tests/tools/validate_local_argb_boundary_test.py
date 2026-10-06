@@ -30,6 +30,9 @@ ATTACH_FAILURE = (
     '    ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");\n'
 )
 POLL_DELAY = "    vTaskDelay(pdMS_TO_TICKS(controller_config::kPolledRuleSamplePeriodUs / 1'000));\n"
+APP_MAIN_STARTUP = "  if (!start_vehicle_io_on_core1()) {"
+TELEMETRY_START = "  if (!telemetry.start().ok()) {"
+TELEMETRY_MARK = "  companion_ble::mark_telemetry_started();\n"
 BEFORE_CAN_START = '  ESP_LOGI(kTag,\n           "WeAct CAN485 DevBoard V1.1'
 
 
@@ -111,6 +114,23 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
             "  const bool started = false;",
         )
         self.assert_rejected("vehicle_io_startup_task does not run start_vehicle_io()")
+
+    def test_telemetry_started_mark_in_app_main_is_rejected(self) -> None:
+        self.edit(MAIN, "  companion_ble::mark_telemetry_started();\n  return true;", "  return true;")
+        self.edit(MAIN, APP_MAIN_STARTUP, TELEMETRY_MARK + APP_MAIN_STARTUP)
+        self.assert_rejected("start_vehicle_io() does not call companion_ble::mark_telemetry_started()")
+
+    def test_telemetry_started_mark_before_telemetry_start_is_rejected(self) -> None:
+        self.edit(MAIN, "  companion_ble::mark_telemetry_started();\n  return true;", "  return true;")
+        self.edit(MAIN, TELEMETRY_START, TELEMETRY_MARK + TELEMETRY_START)
+        self.assert_rejected("companion_ble::mark_telemetry_started() does not follow telemetry.start()")
+
+    def test_second_telemetry_started_mark_is_rejected(self) -> None:
+        self.edit(MAIN, APP_MAIN_STARTUP, TELEMETRY_MARK + APP_MAIN_STARTUP)
+        self.assert_rejected(
+            "companion_ble::mark_telemetry_started() must have exactly one call site, in "
+            "start_vehicle_io(); found 2"
+        )
 
     def test_board_defaults_after_vehicle_io_startup_are_rejected(self) -> None:
         self.edit(
