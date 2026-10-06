@@ -153,6 +153,26 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
             "start_vehicle_io() must have exactly one call site, in vehicle_io_startup_task; found 2"
         )
 
+    def test_startup_timeout_restart_without_fail_off_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "    restart_after_fail_off();\n  }\n  return result == kVehicleIoStarted;",
+            "    esp_restart();\n  }\n  return result == kVehicleIoStarted;",
+        )
+        self.assert_rejected(
+            "start_vehicle_io_on_core1() restarts without restart_after_fail_off()"
+        )
+
+    def test_config_store_owned_by_the_exiting_startup_task_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "  config_backend = controller_config::persisted::make_nvs_config_store_backend();",
+            "  auto config_backend = controller_config::persisted::make_nvs_config_store_backend();",
+        )
+        self.assert_rejected(
+            "start_vehicle_io() does not store the configuration store in config_backend"
+        )
+
     def test_legacy_sink_binding_is_rejected(self) -> None:
         self.edit(
             MAIN,

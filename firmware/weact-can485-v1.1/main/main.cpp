@@ -105,6 +105,11 @@ static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 static controller_config::persisted::ControllerConfig active_configuration{};
+// The NVS config store. The vehicle I/O startup task creates it and then
+// exits, but the companion config service keeps using it for commits and
+// Revert to factory, so its owner has static storage. Null when NVS is
+// unavailable.
+static std::unique_ptr<controller_config::persisted::ConfigStoreBackend> config_backend{};
 // The companion config ports. A commit dry-runs the upload on a scratch,
 // never-attached engine and LED sink whose lighting sink discards every
 // command, so it never touches the live engine or the renderer queue.
@@ -125,13 +130,14 @@ static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes 
                   companion_protocol::kMaxConfigBytes,
               "the companion upload limit must equal the stored config limit");
 
-// The controlled restart after a companion commit or Revert to factory. It
-// runs on the NimBLE host task. The lighting layer shuts its gate, queues
-// black and waits a bounded time for its own worker to write it, so this task
-// never calls the LED driver; the restart follows either way.
+// The controlled restart after a companion commit or Revert to factory, on
+// the NimBLE host task, or after a vehicle I/O startup timeout, on the main
+// task. The lighting layer shuts its gate, queues black and waits a bounded
+// time for its own worker to write it, so the calling task never calls the
+// LED driver; the restart follows either way.
 [[noreturn]] void restart_after_fail_off() noexcept {
   if (!local_argb::fail_off_for_restart(local_argb::kRestartFailOffWaitUs))
-    ESP_LOGW(kTag, "black frame not confirmed before the companion restart");
+    ESP_LOGW(kTag, "black frame not confirmed before the controlled restart");
   esp_restart();
 }
 
@@ -174,7 +180,7 @@ bool configure_engine_lighting(
     store.emplace(*backend);
   auto selected = controller_config::persisted::load_boot_configuration(
       store ? &*store : nullptr, controller_config::factory_default_config_json());
-  // `backend` is owned by app_main, which never returns once lighting starts.
+  // `backend` is null or the static config_backend, which outlives the service.
   config_service.record_boot(selected, backend);
   if (!selected.ok()) {
     if (selected.override_diagnostic.has_value())
@@ -228,7 +234,7 @@ bool start_vehicle_io() noexcept {
     return false;
   }
 
-  auto config_backend = controller_config::persisted::make_nvs_config_store_backend();
+  config_backend = controller_config::persisted::make_nvs_config_store_backend();
   if (config_backend == nullptr)
     ESP_LOGW(kTag, "NVS configuration storage unavailable; using factory configuration");
   if (!configure_engine_lighting(config_backend.get())) {
@@ -309,9 +315,10 @@ void vehicle_io_startup_task(void *const waiting_task) noexcept {
 // Runs start_vehicle_io() on core 1 and waits for its result. Returns true only
 // when vehicle I/O started. A refused sequence has already failed off. If no
 // result arrives in time, the sequence may be blocked inside a driver or the
-// facade, so app_main must not touch the LED drivers concurrently; the device
-// restarts instead, and the next boot runs safe defaults and startup black
-// again before CAN can start.
+// facade, so app_main must not touch the LED drivers concurrently; it restarts
+// through restart_after_fail_off(), which only queues black for the renderer
+// worker (if the renderer started) and never calls a driver itself. The next
+// boot runs safe defaults and startup black again before CAN can start.
 bool start_vehicle_io_on_core1() noexcept {
   // Drop any stale notification so only the startup task's result is read.
   (void)xTaskNotifyStateClear(nullptr);
@@ -328,7 +335,7 @@ bool start_vehicle_io_on_core1() noexcept {
       pdTRUE) {
     ESP_LOGE(kTag, "vehicle I/O startup gave no result within %lu ms; restarting",
              static_cast<unsigned long>(kVehicleIoStartupTimeoutMs));
-    esp_restart();
+    restart_after_fail_off();
   }
   return result == kVehicleIoStarted;
 }

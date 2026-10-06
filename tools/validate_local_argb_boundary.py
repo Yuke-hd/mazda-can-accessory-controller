@@ -328,6 +328,25 @@ def _driver_core_failures(structure: str) -> List[str]:
     )
     if pinned is None:
         failures.append(f"{STARTUP_RUNNER}() does not create {STARTUP_TASK} pinned to kVehicleIoCore")
+    # A startup timeout restarts while the sequence may still hold the LED
+    # drivers, so the restart must go through the controlled fail-off restart,
+    # which never calls an LED driver itself.
+    if re.search(r"\besp_restart\s*\(", runner_body) or re.search(
+        r"\brestart_after_fail_off\s*\(\s*\)", runner_body
+    ) is None:
+        failures.append(f"{STARTUP_RUNNER}() restarts without restart_after_fail_off()")
+    # The startup task exits, but the companion config service keeps the
+    # configuration store pointer, so the store's owner must have static
+    # storage: assign it to config_backend, never to a task-local.
+    sequence_body = _startup_sequence_body(structure) or ""
+    if re.search(
+        r"(?:^|[;{}])\s*config_backend\s*=\s*"
+        r"controller_config::persisted::make_nvs_config_store_backend\s*\(\s*\)",
+        sequence_body,
+    ) is None:
+        failures.append(
+            f"{STARTUP_SEQUENCE}() does not store the configuration store in config_backend"
+        )
     task_body = _function_body(structure, "void", STARTUP_TASK) or ""
     if re.search(rf"\b{STARTUP_SEQUENCE}\s*\(\s*\)", task_body) is None:
         failures.append(f"{STARTUP_TASK} does not run {STARTUP_SEQUENCE}()")
@@ -469,6 +488,8 @@ def main() -> int:
          "static LED action sink bound to the renderer queue"),
         ("static controller_config::persisted::ControllerConfig active_configuration{}",
          "static owning active configuration"),
+        ("static std::unique_ptr<controller_config::persisted::ConfigStoreBackend> config_backend{}",
+         "static configuration store owner"),
         ("controller_config::factory_default_config_json()", "embedded factory configuration API"),
         ("controller_config::persisted::make_nvs_config_store_backend()",
          "NVS configuration store factory"),

@@ -101,8 +101,10 @@ Bluetooth pinning options return to core 1.
     safe defaults still hold the outputs low, and `app_main` refuses to
     continue.
   - If no result arrives within 10 s, the task may be blocked inside a
-    driver. `app_main` then restarts the device rather than calling the LED
-    drivers concurrently. The next boot repeats the safe defaults and
+    driver. `app_main` then restarts the device through
+    `restart_after_fail_off()` rather than calling the LED drivers
+    concurrently: `local_argb::fail_off_for_restart()` only queues black for
+    the renderer worker, if the renderer started, and waits a bounded time. The next boot repeats the safe defaults and
     startup black. A hang that persists on every boot would become a restart
     loop with the outputs off.
 - The composition validator (`tools/validate_local_argb_boundary.py`)

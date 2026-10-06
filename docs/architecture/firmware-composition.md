@@ -20,8 +20,9 @@ Bluetooth controller, the NimBLE host and `esp_timer`. ADR-0004 (Proposed)
 records this layout and the pending bench comparison. The task reports
 started or refused through a task notification, logs its core, and exits.
 `app_main` continues only on started. If no result arrives within 10 s,
-`app_main` restarts the device rather than touching the LED drivers
-concurrently. If the task cannot be created, nothing has started and the
+`app_main` restarts the device through `restart_after_fail_off()` rather than
+touching the LED drivers concurrently: it only queues black for the renderer
+worker, if the renderer started, and never calls a driver itself. If the task cannot be created, nothing has started and the
 board safe defaults still hold the outputs low.
 
 `firmware/weact-can485-v1.1/main/main.cpp` is the only code that knows the
@@ -89,8 +90,9 @@ The composition root also passes `companion_ble::ConfigInputs`, the three
 `companion_protocol` config ports, all implemented by one static
 `companion_config::ConfigService`. Right after
 `load_boot_configuration()`, `configure_engine_lighting()` records the boot
-selection and the NVS config backend in the service, which `app_main` owns
-and never releases. The service serializes the active configuration once,
+selection and the NVS config backend in the service. The backend's owner is
+the static `config_backend` in `main.cpp`, never released: the vehicle I/O
+startup task that creates it exits, and the service keeps using it. The service serializes the active configuration once,
 on the companion startup task, into the canonical document that Config status
 and read-back both report. A commit parses the upload, dry-runs
 `apply_controller_config()` on a static `companion_config::ScratchApplyCheck`
