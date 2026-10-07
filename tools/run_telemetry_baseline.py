@@ -70,6 +70,7 @@ def summarize(reports: List[Dict[str, str]]) -> str:
         lines.append(
             f"scenario={scenario} profiler={profiler} samples={len(entries)} "
             f"wall_ns[min/median/max]={_range(entries, 'wall_ns')} "
+            f"process_cpu_ns[min/median/max]={_range(entries, 'process_cpu_ns')} "
             f"receive_wait_ns[min/median/max]={_range(entries, 'receive_wait')} "
             f"enqueue_to_process_ns[min/median/max]={_range(entries, 'enqueue_to_process')} "
             f"dequeue_to_process_ns[min/median/max]={_range(entries, 'dequeue_to_process')} "

@@ -45,7 +45,11 @@ public:
 
   // Publish and reset are the private lifecycle handoff used by S2-A. Both
   // operations replace fixed storage under one short critical section. Reset
-  // intentionally clears old-run samples before a restart.
+  // intentionally clears old-run samples before a restart. Diagnostics-only
+  // publication retains the last semantic state for transport/accounting
+  // updates that did not mutate a signal or message-health record. State
+  // supplied to publish() must already carry the configured freshness policy;
+  // policy application belongs to configuration and lifecycle transitions.
   // Pass the receive watermark for every acquired frame, including frames the
   // decoder ignores. Callers must pass std::nullopt when no frame was
   // acquired; there is intentionally no overload without this basis. The
@@ -56,6 +60,7 @@ public:
   void publish(const VehicleState &state, LifecycleState lifecycle,
                vehicle_core::TransportHealth transport, const AcquisitionMetrics &acquisition,
                std::optional<vehicle_core::MonotonicTimestamp> last_transport_receive_us) noexcept;
+  void publish_diagnostics(const Diagnostics &diagnostics) noexcept;
   void reset(const Diagnostics &diagnostics = {}) noexcept;
 
   // Typed RPM/speed polling are fixed bindings onto read_descriptor_signal().

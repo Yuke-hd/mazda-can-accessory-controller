@@ -23,7 +23,6 @@ void PublicationStore::publish(
     const std::optional<vehicle_core::MonotonicTimestamp> last_transport_receive_us) noexcept {
   std::lock_guard<std::mutex> lock{mutex_};
   published_.state = state;
-  published_.state.apply_freshness_policy(config_.freshness);
   published_.diagnostics = diagnostics;
   (void)last_transport_receive_us;
 }
@@ -37,6 +36,11 @@ void PublicationStore::publish(
   diagnostics.transport = transport;
   diagnostics.acquisition = acquisition;
   publish(state, diagnostics, last_transport_receive_us);
+}
+
+void PublicationStore::publish_diagnostics(const Diagnostics &diagnostics) noexcept {
+  std::lock_guard<std::mutex> lock{mutex_};
+  published_.diagnostics = diagnostics;
 }
 
 void PublicationStore::reset(const Diagnostics &diagnostics) noexcept {

@@ -999,23 +999,144 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
   mazda::internal::HostAcquisitionSource source;
   FakeLightingSink lighting;
   mazda::TelemetryConfig config{};
-  config.transport_silence_timeout_us = 100;
+  config.transport_silence_timeout_us = 10;
+  config.freshness.speed_kph_timeout_us = 100;
   config.callback_stop_timeout_us = 20'000;
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
   EXPECT(service.start().ok());
-  clock.set(50);
-  EXPECT(source.inject(frame(0x7ff, 50, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
-  while (std::chrono::steady_clock::now() < deadline &&
-         service.diagnostics().acquisition.frames_processed == 0)
-    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  clock.set(10);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 10,
+                             {0, 0, 0x2e, 0xe0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_reading(service));
   EXPECT(service.diagnostics().acquisition.frames_received == 1);
   EXPECT(service.diagnostics().acquisition.frames_processed == 1);
   EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
-  clock.set(151);
+  EXPECT(service.speed_kph().value == 120.0F);
+
+  clock.set(21);
   EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::TimedOut);
+  EXPECT(wait_for_flag([&service] {
+    const auto reading = service.speed_kph();
+    return reading.value == 120.0F && reading.availability == mazda::Availability::Unavailable;
+  }));
+
+  // An ignored frame is still receive progress. Diagnostics-only publication
+  // must recover transport without replacing the retained semantic value.
+  clock.set(30);
+  EXPECT(source.inject(frame(0x7ff, 30, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag([&service] {
+    const auto reading = service.speed_kph();
+    return service.diagnostics().acquisition.frames_processed >= 2 && reading.value == 120.0F &&
+           reading.availability == mazda::Availability::Fresh;
+  }));
+
+  // A later ignored frame keeps transport live at the point where the
+  // original signal observation expires, proving its timestamp was retained.
+  clock.set(111);
+  EXPECT(source.inject(frame(0x7ff, 111, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag([&service] {
+    const auto reading = service.speed_kph();
+    return service.diagnostics().acquisition.frames_processed >= 3 && reading.value == 120.0F &&
+           reading.availability == mazda::Availability::Stale;
+  }));
   EXPECT(service.stop().ok());
+}
+
+void test_accepted_and_rejected_message_timestamps_control_publication() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.freshness.speed_kph_timeout_us = 100;
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  EXPECT(service.start().ok());
+
+  const std::initializer_list<std::uint8_t> kEngine{0x09, 0x5b, 0, 0, 0, 0, 0, 0};
+  clock.set(10);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 10, kEngine)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_reading(service));
+  clock.set(110);
+  EXPECT(service.speed_kph().availability == mazda::Availability::Fresh);
+  clock.set(111);
+  EXPECT(service.speed_kph().availability == mazda::Availability::Stale);
+
+  // The semantic value is unchanged, but the strictly newer accepted message
+  // refreshes both the signal and message-health watermark.
+  clock.set(200);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 200, kEngine)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag(
+      [&service] { return service.diagnostics().acquisition.frames_processed >= 2; }));
+  clock.set(250);
+  EXPECT(service.speed_kph().availability == mazda::Availability::Fresh);
+
+  // Equal and older malformed observations are transport/accounting events,
+  // but cannot replace the accepted healthy publication.
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 200, {0})) == mazda::ResultCode::Ok);
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 199, {0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag(
+      [&service] { return service.diagnostics().acquisition.frames_processed >= 4; }));
+  EXPECT(service.speed_kph().availability == mazda::Availability::Fresh);
+
+  // A newer malformed observation does mutate message health and must make
+  // the retained value unavailable.
+  EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 201, {0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag([&service] {
+    return service.diagnostics().acquisition.frames_processed >= 5 &&
+           service.speed_kph().availability == mazda::Availability::Unavailable;
+  }));
+  EXPECT(service.speed_kph().value.has_value() && *service.speed_kph().value == 0.0F);
+  EXPECT(service.stop().ok());
+}
+
+void test_malformed_message_before_first_sample_is_published() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_lighting_count(lighting, 1));
+
+  clock.set(1);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 1, {0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag(
+      [&service] { return service.diagnostics().acquisition.frames_processed >= 1; }));
+  EXPECT(wait_for_lighting_count(lighting, 2));
+  EXPECT(lighting.at(1).turn == mazda::TurnState::Unknown);
+  EXPECT(lighting.at(1).availability == mazda::Availability::NoData);
+  EXPECT(service.stop().ok());
+}
+
+void test_configured_policy_survives_start_reset_and_restart() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting};
+  mazda::TelemetryConfig config{};
+  config.freshness.speed_kph_timeout_us = 100;
+  config.callback_stop_timeout_us = 20'000;
+  EXPECT(service.configure(config).ok());
+
+  const auto exercise_run = [&](const vehicle_core::MonotonicTimestamp observation_us) {
+    EXPECT(service.start().ok());
+    clock.set(observation_us);
+    EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, observation_us,
+                               {0x09, 0x5b, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
+    EXPECT(wait_for_reading(service));
+    clock.set(observation_us + 100);
+    EXPECT(service.speed_kph().availability == mazda::Availability::Fresh);
+    clock.set(observation_us + 101);
+    EXPECT(service.speed_kph().availability == mazda::Availability::Stale);
+    EXPECT(service.stop().ok());
+  };
+
+  exercise_run(10);
+  exercise_run(1'000);
 }
 
 void test_sustained_bounded_overload_services_expiry_and_latest_state() {
@@ -1519,6 +1640,9 @@ int main() {
   test_partial_source_start_cleanup_failure_is_retried_by_stop();
   test_immediate_worker_receive_fault_is_not_overwritten_by_running();
   test_unknown_frame_is_transport_traffic_and_expires();
+  test_accepted_and_rejected_message_timestamps_control_publication();
+  test_malformed_message_before_first_sample_is_published();
+  test_configured_policy_survives_start_reset_and_restart();
   test_sustained_bounded_overload_services_expiry_and_latest_state();
   test_transport_liveness_uses_acquisition_clock();
   test_notifications_coalesce_and_recover();

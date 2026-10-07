@@ -41,6 +41,7 @@ int main() {
 
   constexpr vehicle_core::MonotonicTimestamp observation_us = 123'456'700;
   mazda::VehicleState state{};
+  state.apply_freshness_policy(config.freshness);
   state.speed_kph.update(42.0F, observation_us);
   mazda::Diagnostics diagnostics{};
   diagnostics.lifecycle = mazda::LifecycleState::Running;
