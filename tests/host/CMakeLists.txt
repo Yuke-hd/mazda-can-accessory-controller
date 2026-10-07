@@ -275,6 +275,51 @@ endif()
 doctest_discover_tests(action_engine_tests)
 doctest_discover_tests(action_engine_composition_tests)
 
+# The performance baseline exercises the production Runtime/Mazda service and
+# its opt-in aggregate hooks. Keep it out of ordinary builds unless the hooks
+# were compiled into mazda_telemetry; the accounting checks intentionally
+# compare runtime hook dispatch on and off within that focused build.
+if(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  set(MAZDA_BASELINE_BUILD_REVISION "unknown" CACHE STRING
+      "Source revision recorded by the host telemetry baseline")
+  set(MAZDA_BASELINE_SOURCE_DIRTY "unknown" CACHE STRING
+      "Whether the source tree had uncommitted changes for the host baseline")
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" _mazda_baseline_build_type_upper)
+  set(_mazda_baseline_flags
+      "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_mazda_baseline_build_type_upper}}")
+  string(REPLACE ";" " " _mazda_baseline_flags "${_mazda_baseline_flags}")
+  if(MSVC)
+    set(_mazda_baseline_target_flags "/W4 /permissive-")
+  else()
+    set(_mazda_baseline_target_flags "-Wall -Wextra -Wpedantic")
+  endif()
+  add_executable(telemetry_baseline_tests telemetry_baseline_tests.cpp)
+  target_include_directories(telemetry_baseline_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+    ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+  )
+  target_link_libraries(telemetry_baseline_tests PRIVATE
+    action_engine
+    local_argb_actions
+    mazda_telemetry
+    doctest::doctest
+  )
+  target_compile_features(telemetry_baseline_tests PRIVATE cxx_std_17)
+  target_compile_definitions(telemetry_baseline_tests PRIVATE
+    MAZDA_BASELINE_BUILD_REVISION="${MAZDA_BASELINE_BUILD_REVISION}"
+    MAZDA_BASELINE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    MAZDA_BASELINE_SOURCE_DIRTY="${MAZDA_BASELINE_SOURCE_DIRTY}"
+    MAZDA_BASELINE_CXX_FLAGS="${_mazda_baseline_flags}"
+    MAZDA_BASELINE_TARGET_FLAGS="${_mazda_baseline_target_flags}"
+  )
+  if(MSVC)
+    target_compile_options(telemetry_baseline_tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(telemetry_baseline_tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  doctest_discover_tests(telemetry_baseline_tests)
+endif()
+
 # Portable companion BLE protocol codec (#162). The codec, transfer and live
 # signal tests use only the codec, the provider fake and fixture catalogs; the
 # provider test alone reuses the private host-service seam, like

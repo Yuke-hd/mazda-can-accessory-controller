@@ -275,6 +275,30 @@ public:
 struct HostServiceOptions final {
   HostPublicationControl *publication_control{nullptr};
   bool manual_notification_dispatch{false};
+  // Host-only aggregate hooks. They are intentionally function pointers so
+  // the production service does not own a profiler or perform allocation.
+  struct TelemetryProfilerHooks *profiler{nullptr};
+};
+
+// The baseline profiler is an opt-in host seam. Each callback is bounded and
+// runs on the service/runtime context that owns the corresponding stage.
+// Implementations must not log individual frames or allocate.
+struct TelemetryProfilerHooks final {
+  void *context{nullptr};
+  void (*decode_begin)(void *context) noexcept {nullptr};
+  void (*decode_end)(void *context, const vehicle_core::RawCanFrame &frame,
+                     vehicle_telemetry::ProcessStatus status) noexcept {nullptr};
+  void (*frame_processed)(void *context, const vehicle_core::RawCanFrame &frame,
+                          vehicle_telemetry::ProcessStatus status) noexcept {nullptr};
+  void (*diagnostics_begin)(void *context) noexcept {nullptr};
+  void (*diagnostics_end)(void *context) noexcept {nullptr};
+  void (*publication_begin)(void *context) noexcept {nullptr};
+  void (*publication_end)(void *context) noexcept {nullptr};
+  void (*state_copy)(void *context) noexcept {nullptr};
+  void (*notification_evaluation_begin)(void *context) noexcept {nullptr};
+  void (*notification_evaluation_end)(void *context, std::size_t evaluations) noexcept {nullptr};
+  void (*notification_dispatch_begin)(void *context) noexcept {nullptr};
+  void (*notification_dispatch_end)(void *context, std::size_t delivered) noexcept {nullptr};
 };
 #endif
 

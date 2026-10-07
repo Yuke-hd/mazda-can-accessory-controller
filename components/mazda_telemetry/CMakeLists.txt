@@ -24,6 +24,11 @@ add_library(mazda_telemetry STATIC
   src/signal_provider_read.cpp
   src/signal_provider_subscriptions.cpp
 )
+option(MAZDA_ENABLE_TELEMETRY_PROFILING
+       "Compile the opt-in host telemetry baseline hooks" OFF)
+if(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  target_compile_definitions(mazda_telemetry PRIVATE MAZDA_ENABLE_TELEMETRY_PROFILING=1)
+endif()
 find_package(Threads REQUIRED)
 target_include_directories(
   mazda_telemetry

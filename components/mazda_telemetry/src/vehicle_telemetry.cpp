@@ -635,6 +635,11 @@ bool VehicleTelemetryService::stop_channels() noexcept {
 }
 
 std::size_t VehicleTelemetryService::dispatch_channels_once() noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_dispatch_begin != nullptr)
+    host_options_.profiler->notification_dispatch_begin(host_options_.profiler->context);
+#endif
   const std::size_t index =
       dispatch_cursor_.fetch_add(1, std::memory_order_relaxed) % kNotificationChannelCount;
   std::size_t delivered = 0;
@@ -647,6 +652,11 @@ std::size_t VehicleTelemetryService::dispatch_channels_once() noexcept {
          ...);
       },
       notification_descriptors());
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_dispatch_end != nullptr)
+    host_options_.profiler->notification_dispatch_end(host_options_.profiler->context, delivered);
+#endif
   return delivered;
 }
 
@@ -849,30 +859,57 @@ void VehicleTelemetryService::reset() noexcept {
 
 vehicle_telemetry::ProcessResult
 VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->decode_begin != nullptr)
+    host_options_.profiler->decode_begin(host_options_.profiler->context);
+#endif
   std::optional<TurnEdgeEvent> edge{};
   vehicle_core::DecoderObservation observation{};
   vehicle_core::HealthObservation health{};
   const auto status = candidate::decode(frame, processing_state_, &edge, &observation, &health);
+  vehicle_telemetry::ProcessResult result{};
   switch (status) {
   case vehicle_core::DecodeValidity::Decoded:
-    return {vehicle_telemetry::ProcessStatus::Processed};
+    result = {vehicle_telemetry::ProcessStatus::Processed};
+    break;
   case vehicle_core::DecodeValidity::Malformed:
-    return {vehicle_telemetry::ProcessStatus::Malformed};
+    result = {vehicle_telemetry::ProcessStatus::Malformed};
+    break;
   case vehicle_core::DecodeValidity::Ignored:
-    return {vehicle_telemetry::ProcessStatus::Ignored};
+    result = {vehicle_telemetry::ProcessStatus::Ignored};
+    break;
+  default:
+    result = {vehicle_telemetry::ProcessStatus::Fault};
+    break;
   }
-  return {vehicle_telemetry::ProcessStatus::Fault};
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->decode_end != nullptr)
+    host_options_.profiler->decode_end(host_options_.profiler->context, frame, result.status);
+#endif
+  return result;
 }
 
 void VehicleTelemetryService::on_frame_processed(
-    const vehicle_core::RawCanFrame &, const vehicle_telemetry::ProcessResult &) noexcept {
+    const vehicle_core::RawCanFrame &frame,
+    const vehicle_telemetry::ProcessResult &result) noexcept {
   // Runtime invokes on_diagnostics immediately after this callback. Keeping
   // publication there gives Mazda consumers one coherent state/transport
   // snapshot and avoids a second receive worker in this component.
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->frame_processed != nullptr)
+    host_options_.profiler->frame_processed(host_options_.profiler->context, frame, result.status);
+#else
+  (void)frame;
+  (void)result;
+#endif
 }
 
 void VehicleTelemetryService::on_diagnostics(
     const vehicle_telemetry::TransportDiagnostics &diagnostics) noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->diagnostics_begin != nullptr)
+    host_options_.profiler->diagnostics_begin(host_options_.profiler->context);
+#endif
   runtime_diagnostics_ = diagnostics;
   lifecycle_state_.store(diagnostics.lifecycle == vehicle_telemetry::LifecycleState::Running
                              ? LifecycleState::Running
@@ -885,6 +922,10 @@ void VehicleTelemetryService::on_diagnostics(
   if (diagnostics.has_last_frame)
     last_transport_receive_us_ = diagnostics.last_frame_us;
   publish_current(diagnostics.has_last_frame);
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->diagnostics_end != nullptr)
+    host_options_.profiler->diagnostics_end(host_options_.profiler->context);
+#endif
 #if !defined(ESP_PLATFORM)
   if (host_options_.publication_control != nullptr)
     host_options_.publication_control->publication_completed();
@@ -930,11 +971,34 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
   const auto acquisition = acquisition_metrics(runtime_diagnostics_);
   const auto lifecycle = lifecycle_state_.load(std::memory_order_acquire);
   const Diagnostics diagnostics{lifecycle, runtime_diagnostics_.transport, acquisition};
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->publication_begin != nullptr)
+    host_options_.profiler->publication_begin(host_options_.profiler->context);
+#endif
   publication_.publish(processing_state_, diagnostics,
                        received_frame ? last_transport_receive_us_ : std::nullopt);
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->state_copy != nullptr)
+    host_options_.profiler->state_copy(host_options_.profiler->context);
+  if (host_options_.profiler != nullptr && host_options_.profiler->publication_end != nullptr)
+    host_options_.profiler->publication_end(host_options_.profiler->context);
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_evaluation_begin != nullptr)
+    host_options_.profiler->notification_evaluation_begin(host_options_.profiler->context);
+#endif
   const auto now_us = clock_->now();
   const auto snapshot = publication_.snapshot();
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->state_copy != nullptr)
+    host_options_.profiler->state_copy(host_options_.profiler->context);
+#endif
   publish_notifications(snapshot, now_us);
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_evaluation_end != nullptr)
+    host_options_.profiler->notification_evaluation_end(host_options_.profiler->context,
+                                                        kNotificationChannelCount);
+#endif
 }
 
 template <typename T, std::uint16_t ChannelId>
