@@ -1,5 +1,5 @@
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/vehicle_telemetry.cpp"
+  idf_component_register(SRCS "src/clock.cpp" "src/vehicle_telemetry.cpp"
                          "src/public_contract_consumer.cpp"
                          "src/local_argb_binding.cpp"
                          "src/signal_provider.cpp"
@@ -9,7 +9,7 @@ if(COMMAND idf_component_register)
                          PRIV_INCLUDE_DIRS "private_include"
                                          "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda/internal_include"
                          REQUIRES vehicle_core mazda vehicle_telemetry vehicle_signals
-                         PRIV_REQUIRES local_argb local_argb_sink_contract)
+                         PRIV_REQUIRES local_argb local_argb_sink_contract esp_timer)
   return()
 endif()
 
@@ -17,6 +17,7 @@ endif()
 # target. S2-A can consume its fixed publish/reset handoff without exporting
 # private state, task handles, synchronization, or clock seams.
 add_library(mazda_telemetry STATIC
+  src/clock.cpp
   src/vehicle_telemetry.cpp
   src/public_contract_consumer.cpp
   src/local_argb_binding.cpp
@@ -77,6 +78,27 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   target_compile_features(mazda_telemetry_publication_tests PRIVATE cxx_std_17)
   add_test(NAME mazda_telemetry_publication_tests
            COMMAND mazda_telemetry_publication_tests)
+
+  # Compile the production clock translation unit through its ESP branch with
+  # a test-only esp_timer header/function stub. This checks the selected
+  # platform implementation itself without changing the host library's
+  # injected-clock behavior or exposing a public clock seam.
+  add_executable(mazda_telemetry_esp_clock_tests
+    tests/esp_clock_tests.cpp
+    src/clock.cpp
+  )
+  target_compile_definitions(mazda_telemetry_esp_clock_tests PRIVATE ESP_PLATFORM=1)
+  target_include_directories(mazda_telemetry_esp_clock_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/esp_timer_stub
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
+  )
+  target_link_libraries(mazda_telemetry_esp_clock_tests PRIVATE mazda_telemetry
+                                                               Threads::Threads)
+  target_compile_features(mazda_telemetry_esp_clock_tests PRIVATE cxx_std_17)
+  add_test(NAME mazda_telemetry_esp_clock_tests
+           COMMAND mazda_telemetry_esp_clock_tests)
 
   add_executable(mazda_telemetry_service_tests
     tests/vehicle_telemetry_service_tests.cpp

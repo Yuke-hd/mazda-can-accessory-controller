@@ -101,7 +101,6 @@ void HostRuntimeSource::fail() noexcept {
 
 namespace {
 
-constexpr std::uint64_t kNanosecondsPerMicrosecond = 1'000;
 constexpr vehicle_core::Microseconds kLightingHeartbeatUs = 100'000;
 #if defined(ESP_PLATFORM)
 constexpr char kLightingTag[] = "mazda_telemetry";
@@ -190,15 +189,6 @@ void configure_runtime(vehicle_telemetry::Runtime &runtime,
 }
 
 } // namespace
-
-vehicle_core::MonotonicTimestamp SteadyClock::now() const noexcept {
-  // steady_clock is monotonic by contract. The cast is intentionally kept
-  // local to this implementation seam; public callers only receive values.
-  const auto duration = std::chrono::steady_clock::now().time_since_epoch();
-  return static_cast<vehicle_core::MonotonicTimestamp>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count() /
-      kNanosecondsPerMicrosecond);
-}
 
 PublicationStore::PublicationStore() noexcept : clock_(&steady_clock_) {}
 

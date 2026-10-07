@@ -20,9 +20,11 @@ transport receive watermark and silence timeout. `RawCanFrame::timestamp_us`
 remains the source observation timestamp used by decoder message and signal
 ordering. Equal or older observations therefore cannot extend, clear, or
 recover semantic state, while every successfully acquired frame still proves
-transport liveness. Both clocks are monotonic in production; host tests use a
-deterministic fake clock, and backwards readings are clamped rather than
-moving a timeout watermark backwards.
+transport liveness. On ESP-IDF, the default Mazda `SteadyClock`, the
+application clock, and the CAN source all use the boot-scoped microsecond
+domain returned by `esp_timer_get_time()`. Host tests use a deterministic
+injected clock, and backwards readings are clamped rather than moving a
+timeout watermark backwards.
 
 The task is the only producer for a fixed-capacity, 64-frame SPSC ring. One
 consumer task owns the public `receive()` calls; callers must serialize those
