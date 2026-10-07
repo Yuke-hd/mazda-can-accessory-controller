@@ -21,6 +21,7 @@ current requirements unless a task explicitly references them.
 | Component ownership or public headers | [Module boundaries](architecture/module-boundaries.md), [signal layering](architecture/signal-layering.md), [architecture validation](development/architecture-validation.md). |
 | Frame, signal or state model | [Domain model](architecture/domain-model.md), [telemetry contracts](specs/telemetry/telemetry-contracts.md). |
 | CAN acquisition or safety boundary | [Receive-only boundary](architecture/receive-only-boundary.md), [acquisition](specs/can/acquisition.md). |
+| Freshness anomaly or `0x091` stale report | [CAN freshness debug runbook](development/can-freshness-debug.md), [acquisition](specs/can/acquisition.md). |
 | Mazda decoder or signal confidence | [Decoder behaviour](specs/telemetry/decoder-behaviour.md), [decoder mappings](protocol/decoder-mappings.md), [signal evidence](protocol/signal-evidence.md), [turn state](specs/telemetry/turn-state.md). |
 | DBC/provenance verification | [DBC metadata verification](protocol/dbc-metadata-verification.md), [opendbc provenance](protocol/opendbc-provenance.md). |
 | Generic rules or local lighting | [Action engine](specs/action-engine.md), [local LED actions](specs/lighting/local-led-actions.md), [renderer runtime](specs/lighting/renderer-runtime.md). |

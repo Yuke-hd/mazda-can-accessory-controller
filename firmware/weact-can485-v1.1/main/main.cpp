@@ -24,6 +24,10 @@
 #include "mazda/vehicle_telemetry.hpp"
 #include "sdkconfig.h"
 
+#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+#include "freshness_debug_logger.hpp"
+#endif
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -104,6 +108,9 @@ static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(
 static mazda::VehicleTelemetry telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
+#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+static weact_can485::freshness_debug::Logger freshness_debug_logger{telemetry};
+#endif
 static controller_config::persisted::ControllerConfig active_configuration{};
 // The NVS config store. The vehicle I/O startup task creates it and then
 // exits, but the companion config service keeps using it for commits and
@@ -272,6 +279,11 @@ bool start_vehicle_io() noexcept {
     ESP_LOGE(kTag, "strict listen-only telemetry startup failed; refusing to continue");
     return false;
   }
+
+#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+  if (!freshness_debug_logger.start())
+    ESP_LOGW(kTag, "CAN freshness debug logger task could not be created; telemetry continues");
+#endif
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
   // Sets the Live signals telemetry-started flag. It only stores an atomic

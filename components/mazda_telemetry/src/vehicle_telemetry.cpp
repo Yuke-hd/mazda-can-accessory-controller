@@ -18,11 +18,22 @@
 
 #if defined(ESP_PLATFORM)
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
+#endif
+
+#if defined(MAZDA_ENABLE_DEBUG_TELEMETRY) || defined(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
+#define MAZDA_TELEMETRY_DEBUG_ENABLED 1
 #endif
 
 namespace mazda::internal {
+
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+inline constexpr vehicle_core::MonotonicTimestamp kDebugAggregateRefreshPeriodUs =
+    5'000'000;
+#endif
 
 #if !defined(ESP_PLATFORM)
 
@@ -697,6 +708,21 @@ StatusResult VehicleTelemetryService::start() noexcept {
   published_health_initialized_ = false;
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  debug_recorder_.reset();
+  debug_frame_pending_ = false;
+  debug_frame_recorded_ = false;
+  debug_pending_frame_ = {};
+  debug_pending_status_ = vehicle_telemetry::ProcessStatus::Ignored;
+  debug_pending_processing_timestamp_us_ = 0;
+  debug_pending_update_not_advanced_ = false;
+  debug_global_event_pending_ = false;
+  debug_due_observation_.reset();
+  debug_diagnostics_sample_timestamp_us_ = 0;
+  debug_diagnostics_sample_source_ = DebugSampleSource::None;
+  debug_observer_frame_callback_ = false;
+  debug_last_aggregate_refresh_us_ = 0;
+#endif
   lighting_sent_ = false;
   lighting_failure_ = false;
   const auto now_us = clock_->now();
@@ -844,6 +870,22 @@ Diagnostics VehicleTelemetryService::diagnostics() const noexcept {
   return diagnostics;
 }
 
+DebugSnapshot VehicleTelemetryService::debug_snapshot() const noexcept {
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  return debug_recorder_.snapshot();
+#else
+  return {};
+#endif
+}
+
+DebugSnapshot VehicleTelemetryService::debug_stale_snapshot() const noexcept {
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  return debug_recorder_.stale_snapshot();
+#else
+  return {};
+#endif
+}
+
 void VehicleTelemetryService::reset() noexcept {
   processing_state_ = VehicleState{};
   processing_state_.apply_freshness_policy(config_.freshness);
@@ -853,12 +895,32 @@ void VehicleTelemetryService::reset() noexcept {
   pending_observation_identifier_.reset();
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  debug_recorder_.reset();
+  debug_frame_pending_ = false;
+  debug_frame_recorded_ = false;
+  debug_pending_frame_ = {};
+  debug_pending_status_ = vehicle_telemetry::ProcessStatus::Ignored;
+  debug_pending_processing_timestamp_us_ = 0;
+  debug_pending_update_not_advanced_ = false;
+  debug_global_event_pending_ = false;
+  debug_due_observation_.reset();
+  debug_diagnostics_sample_timestamp_us_ = 0;
+  debug_diagnostics_sample_source_ = DebugSampleSource::None;
+  debug_observer_frame_callback_ = false;
+  debug_last_aggregate_refresh_us_ = 0;
+#endif
   lighting_sent_ = false;
   lighting_failure_ = false;
 }
 
 vehicle_telemetry::ProcessResult
 VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcept {
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  const bool is_turn_switch = frame.identifier == candidate::kTurnSwitchId;
+  const bool turn_had_value = processing_state_.turn_state.has_value;
+  const auto turn_last_update_us = processing_state_.turn_state.last_update_us;
+#endif
   // Service freshness before decoding. A frame can arrive after a signal's
   // deadline but before the previous unavailable notice has been dispatched;
   // publishing the pre-observation state first preserves both the due
@@ -894,6 +956,22 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
     result = {vehicle_telemetry::ProcessStatus::Fault};
     break;
   }
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  if (is_turn_switch) {
+    const bool update_not_advanced =
+        !processing_state_.turn_state.has_value ||
+        (turn_had_value && processing_state_.turn_state.last_update_us <= turn_last_update_us);
+    debug_pending_frame_ = frame;
+    debug_pending_status_ = result.status;
+    debug_pending_processing_timestamp_us_ = clock_->now();
+    debug_pending_update_not_advanced_ = update_not_advanced;
+    debug_frame_recorded_ =
+        debug_recorder_.record_processed(debug_pending_frame_, debug_pending_status_,
+                                         debug_pending_processing_timestamp_us_,
+                                         debug_pending_update_not_advanced_);
+    debug_frame_pending_ = true;
+  }
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->decode_end != nullptr)
     host_options_.profiler->decode_end(host_options_.profiler->context, frame, result.status);
@@ -904,6 +982,9 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
 void VehicleTelemetryService::on_frame_processed(
     const vehicle_core::RawCanFrame &frame,
     const vehicle_telemetry::ProcessResult &result) noexcept {
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  debug_observer_frame_callback_ = true;
+#endif
   // Runtime invokes on_diagnostics immediately after this callback. Keeping
   // publication there gives Mazda consumers one coherent state/transport
   // snapshot and avoids a second receive worker in this component.
@@ -929,10 +1010,21 @@ void VehicleTelemetryService::on_diagnostics(
                              ? LifecycleState::Stopping
                          : diagnostics.lifecycle == vehicle_telemetry::LifecycleState::Faulted
                              ? LifecycleState::Faulted
-                             : LifecycleState::Stopped,
+                         : LifecycleState::Stopped,
                          std::memory_order_release);
   if (diagnostics.has_last_frame)
     last_transport_receive_us_ = diagnostics.last_frame_us;
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  debug_diagnostics_sample_timestamp_us_ = clock_->now();
+  debug_diagnostics_sample_source_ = debug_observer_frame_callback_
+                                        ? DebugSampleSource::TelemetryObserverFrame
+                                        : DebugSampleSource::TelemetryObserverTimeout;
+  debug_observer_frame_callback_ = false;
+  // Runtime reports receive timeouts as diagnostics even when no frame is
+  // available. Capture the due transition without dispatching production
+  // notifications; debug recording must not change policy semantics.
+  record_debug_due_snapshot(clock_->now());
+#endif
   publish_current(diagnostics.has_last_frame);
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->diagnostics_end != nullptr)
@@ -1010,6 +1102,38 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
     host_options_.profiler->notification_evaluation_begin(host_options_.profiler->context);
 #endif
   const auto now_us = clock_->now();
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  if (debug_frame_pending_ && !debug_frame_recorded_) {
+    debug_frame_recorded_ =
+        debug_recorder_.record_processed(debug_pending_frame_, debug_pending_status_,
+                                         debug_pending_processing_timestamp_us_,
+                                         debug_pending_update_not_advanced_);
+  }
+  if (global_health_transition)
+    debug_global_event_pending_ = true;
+  const bool aggregate_refresh_due =
+      debug_last_aggregate_refresh_us_ == 0 ||
+      now_us >= saturating_add(debug_last_aggregate_refresh_us_,
+                               kDebugAggregateRefreshPeriodUs);
+  if ((debug_frame_pending_ && debug_frame_recorded_) || debug_global_event_pending_ ||
+      aggregate_refresh_due) {
+#if defined(ESP_PLATFORM)
+    const auto esp_timer_us = static_cast<vehicle_core::MonotonicTimestamp>(esp_timer_get_time());
+#else
+    const auto esp_timer_us = now_us;
+#endif
+    const bool recorded = debug_recorder_.record_published(
+        processing_state_, diagnostics, now_us, now_us, esp_timer_us, now_us,
+        last_transport_receive_us_, debug_diagnostics_sample_timestamp_us_,
+        debug_diagnostics_sample_source_);
+    if (recorded) {
+      debug_frame_pending_ = false;
+      debug_frame_recorded_ = false;
+      debug_global_event_pending_ = false;
+      debug_last_aggregate_refresh_us_ = now_us;
+    }
+  }
+#endif
   const auto evaluations =
       publish_notifications(processing_state_, diagnostics, now_us, pending_observation_identifier_,
                             global_health_transition, true);
@@ -1041,6 +1165,9 @@ void VehicleTelemetryService::service_due_notifications(
 #endif
   const auto evaluations =
       publish_notifications(processing_state_, diagnostics, now_us, std::nullopt, false, false);
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+  record_debug_due_snapshot(now_us);
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr &&
       host_options_.profiler->notification_evaluation_end != nullptr)
@@ -1050,6 +1177,34 @@ void VehicleTelemetryService::service_due_notifications(
   (void)evaluations;
 #endif
 }
+
+#if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
+void VehicleTelemetryService::record_debug_due_snapshot(
+    const vehicle_core::MonotonicTimestamp now_us) noexcept {
+  if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Running)
+    return;
+  const auto acquisition = acquisition_metrics(runtime_diagnostics_);
+  const Diagnostics diagnostics{LifecycleState::Running, runtime_diagnostics_.transport,
+                                acquisition};
+  const auto &turn_signal = processing_state_.turn_state;
+  const bool turn_due =
+      turn_signal.has_value && turn_signal.freshness_timeout_us &&
+      now_us > saturating_add(turn_signal.last_update_us, *turn_signal.freshness_timeout_us);
+  if (turn_due &&
+      (!debug_due_observation_ || *debug_due_observation_ != turn_signal.last_update_us)) {
+#if defined(ESP_PLATFORM)
+    const auto esp_timer_us = static_cast<vehicle_core::MonotonicTimestamp>(esp_timer_get_time());
+#else
+    const auto esp_timer_us = now_us;
+#endif
+    if (debug_recorder_.record_published(
+            processing_state_, diagnostics, now_us, now_us, esp_timer_us, now_us,
+            last_transport_receive_us_, debug_diagnostics_sample_timestamp_us_,
+            debug_diagnostics_sample_source_))
+      debug_due_observation_ = turn_signal.last_update_us;
+  }
+}
+#endif
 
 template <typename T, std::uint16_t ChannelId>
 bool VehicleTelemetryService::notification_descriptor_due(
@@ -1452,6 +1607,16 @@ Reading<float> VehicleTelemetry::engine_rpm() const noexcept {
 Diagnostics VehicleTelemetry::diagnostics() const noexcept {
   return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
       ->diagnostics();
+}
+
+DebugSnapshot VehicleTelemetry::debug_snapshot() const noexcept {
+  return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
+      ->debug_snapshot();
+}
+
+DebugSnapshot VehicleTelemetry::debug_stale_snapshot() const noexcept {
+  return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
+      ->debug_stale_snapshot();
 }
 
 std::uint32_t VehicleTelemetry::dispatch_progress() const noexcept {

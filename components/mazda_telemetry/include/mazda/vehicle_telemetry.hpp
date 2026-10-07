@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "mazda/debug_telemetry.hpp"
 #include "mazda/facade_contracts.hpp"
 
 namespace mazda::internal {
@@ -86,6 +87,10 @@ public:
 
   [[nodiscard]] StatusResult unsubscribe(Subscription subscription) noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
+  // Temporary bounded evidence for the opt-in CAN freshness diagnostic
+  // firmware. The record is value-only and does not alter freshness policy.
+  [[nodiscard]] DebugSnapshot debug_snapshot() const noexcept;
+  [[nodiscard]] DebugSnapshot debug_stale_snapshot() const noexcept;
   // Liveness of the notification dispatcher: a wrapping count of completed
   // dispatcher loop passes. It advances while idle under stable vehicle state
   // and stops only while the dispatcher is stuck, for example in a callback.
