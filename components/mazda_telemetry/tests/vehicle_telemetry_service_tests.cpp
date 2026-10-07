@@ -19,6 +19,7 @@ namespace {
 class FakeClock final : public vehicle_core::MonotonicClock {
 public:
   [[nodiscard]] vehicle_core::MonotonicTimestamp now() const noexcept override {
+    read_count_.fetch_add(1, std::memory_order_relaxed);
     std::unique_lock<std::mutex> lock{gate_mutex_};
     if (pause_reads_) {
       read_paused_ = true;
@@ -31,6 +32,12 @@ public:
   void set(const vehicle_core::MonotonicTimestamp value) noexcept {
     now_us_.store(value, std::memory_order_relaxed);
   }
+
+  [[nodiscard]] std::uint64_t reads() const noexcept {
+    return read_count_.load(std::memory_order_relaxed);
+  }
+
+  void reset_reads() noexcept { read_count_.store(0, std::memory_order_relaxed); }
 
   void pause_reads() noexcept {
     std::lock_guard<std::mutex> lock{gate_mutex_};
@@ -54,6 +61,7 @@ public:
 
 private:
   std::atomic<vehicle_core::MonotonicTimestamp> now_us_{0};
+  mutable std::atomic<std::uint64_t> read_count_{0};
   mutable std::mutex gate_mutex_{};
   mutable std::condition_variable gate_changed_{};
   bool pause_reads_{false};
@@ -141,6 +149,250 @@ private:
   vehicle_telemetry::AcquisitionStatistics statistics_{};
   bool running_{false};
   bool fail_next_start_{false};
+};
+
+class ContinuouslyReadySource final : public vehicle_telemetry::AcquisitionSource {
+public:
+  [[nodiscard]] vehicle_telemetry::StatusResult start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return {vehicle_telemetry::ResultCode::AlreadyRunning};
+    running_ = true;
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::StatusResult stop() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (!running_)
+      return {vehicle_telemetry::ResultCode::NotRunning};
+    running_ = false;
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
+                                                         std::uint32_t) noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (!running_)
+      return vehicle_telemetry::ReceiveStatus::NotStarted;
+    frame = vehicle_core::RawCanFrame{};
+    ++statistics_.frames_received;
+    return vehicle_telemetry::ReceiveStatus::Frame;
+  }
+
+  [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+private:
+  mutable std::mutex mutex_{};
+  vehicle_telemetry::AcquisitionStatistics statistics_{};
+  bool running_{false};
+};
+
+class CheckpointProbeSource final : public vehicle_telemetry::AcquisitionSource {
+public:
+  explicit CheckpointProbeSource(const std::size_t frame_limit) noexcept
+      : frame_limit_(frame_limit) {}
+
+  [[nodiscard]] vehicle_telemetry::StatusResult start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return {vehicle_telemetry::ResultCode::AlreadyRunning};
+    running_ = true;
+    released_ = false;
+    initial_waiting_ = false;
+    frame_waiting_ = false;
+    frames_returned_ = 0;
+    statistics_ = {};
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::StatusResult stop() noexcept override {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      if (!running_)
+        return {vehicle_telemetry::ResultCode::NotRunning};
+      running_ = false;
+    }
+    changed_.notify_all();
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
+                                                         std::uint32_t) noexcept override {
+    std::unique_lock<std::mutex> lock{mutex_};
+    if (!running_)
+      return vehicle_telemetry::ReceiveStatus::NotStarted;
+    if (!released_) {
+      initial_waiting_ = true;
+      changed_.notify_all();
+      changed_.wait(lock, [this] { return released_ || !running_; });
+      if (!running_)
+        return vehicle_telemetry::ReceiveStatus::NotStarted;
+    }
+    if (frames_returned_ >= frame_limit_) {
+      frame_waiting_ = true;
+      changed_.notify_all();
+      changed_.wait(lock, [this] { return !running_; });
+      return vehicle_telemetry::ReceiveStatus::NotStarted;
+    }
+    frame = vehicle_core::RawCanFrame{};
+    ++frames_returned_;
+    ++statistics_.frames_received;
+    return vehicle_telemetry::ReceiveStatus::Frame;
+  }
+
+  [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+  [[nodiscard]] bool wait_until_initial_waiting() const noexcept {
+    std::unique_lock<std::mutex> lock{mutex_};
+    return changed_.wait_for(lock, std::chrono::milliseconds{500},
+                             [this] { return initial_waiting_; });
+  }
+
+  [[nodiscard]] bool wait_until_frame_waiting() const noexcept {
+    std::unique_lock<std::mutex> lock{mutex_};
+    return changed_.wait_for(lock, std::chrono::milliseconds{500},
+                             [this] { return frame_waiting_; });
+  }
+
+  void release() noexcept {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      released_ = true;
+    }
+    changed_.notify_all();
+  }
+
+private:
+  const std::size_t frame_limit_;
+  mutable std::mutex mutex_{};
+  mutable std::condition_variable changed_{};
+  vehicle_telemetry::AcquisitionStatistics statistics_{};
+  std::size_t frames_returned_{0};
+  bool running_{false};
+  bool released_{false};
+  bool initial_waiting_{false};
+  bool frame_waiting_{false};
+};
+
+class ContinuousScenarioSource final : public vehicle_telemetry::AcquisitionSource {
+public:
+  explicit ContinuousScenarioSource(FakeClock &clock) noexcept : clock_(&clock) {}
+
+  [[nodiscard]] vehicle_telemetry::StatusResult start() noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    if (running_)
+      return {vehicle_telemetry::ResultCode::AlreadyRunning};
+    running_ = true;
+    phase_ = Phase::Turn;
+    unknown_released_ = false;
+    unknown_frames_ = 0;
+    statistics_ = {};
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::StatusResult stop() noexcept override {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      if (!running_)
+        return {vehicle_telemetry::ResultCode::NotRunning};
+      running_ = false;
+    }
+    changed_.notify_all();
+    return {vehicle_telemetry::ResultCode::Ok};
+  }
+
+  [[nodiscard]] vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
+                                                         std::uint32_t) noexcept override {
+    std::unique_lock<std::mutex> lock{mutex_};
+    if (!running_)
+      return vehicle_telemetry::ReceiveStatus::NotStarted;
+    if (phase_ == Phase::Unknown && !unknown_released_) {
+      changed_.wait(lock, [this] { return unknown_released_ || !running_; });
+      if (!running_)
+        return vehicle_telemetry::ReceiveStatus::NotStarted;
+    }
+    switch (phase_) {
+    case Phase::Turn:
+      frame = frame_for(mazda::candidate::kTurnSwitchId, 0, {0, 0x20, 0, 0, 0, 0, 0, 0});
+      phase_ = Phase::Rpm;
+      break;
+    case Phase::Rpm:
+      clock_->set(10);
+      frame = frame_for(mazda::candidate::kEngineDataId, 10, {0x00, 0x02, 0, 0, 0, 0, 0, 0});
+      phase_ = Phase::Unknown;
+      break;
+    case Phase::Unknown:
+      clock_->set(300'001);
+      frame = frame_for(0x7ff, 0, {0, 0, 0, 0, 0, 0, 0, 0});
+      ++unknown_frames_;
+      changed_.notify_all();
+      break;
+    case Phase::Fault:
+      ++statistics_.driver_errors;
+      return vehicle_telemetry::ReceiveStatus::Fault;
+    }
+    ++statistics_.frames_received;
+    return vehicle_telemetry::ReceiveStatus::Frame;
+  }
+
+  [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return statistics_;
+  }
+
+  [[nodiscard]] bool wait_until_unknown_frames(
+      const std::size_t count,
+      const std::chrono::milliseconds timeout = std::chrono::milliseconds{500}) const noexcept {
+    std::unique_lock<std::mutex> lock{mutex_};
+    return changed_.wait_for(lock, timeout, [this, count] { return unknown_frames_ >= count; });
+  }
+
+  void release_unknown() noexcept {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      unknown_released_ = true;
+    }
+    changed_.notify_all();
+  }
+
+  void release_fault() noexcept {
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      phase_ = Phase::Fault;
+    }
+    changed_.notify_all();
+  }
+
+private:
+  enum class Phase : std::uint8_t { Turn, Rpm, Unknown, Fault };
+
+  static vehicle_core::RawCanFrame
+  frame_for(const std::uint32_t identifier, const vehicle_core::MonotonicTimestamp timestamp,
+            const std::initializer_list<std::uint8_t> bytes) noexcept {
+    vehicle_core::RawCanFrame result{};
+    result.identifier = identifier;
+    result.timestamp_us = timestamp;
+    result.dlc = static_cast<std::uint8_t>(bytes.size());
+    std::size_t index = 0;
+    for (const auto byte : bytes)
+      result.data[index++] = byte;
+    return result;
+  }
+
+  FakeClock *clock_;
+  mutable std::mutex mutex_{};
+  mutable std::condition_variable changed_{};
+  vehicle_telemetry::AcquisitionStatistics statistics_{};
+  Phase phase_{Phase::Turn};
+  std::size_t unknown_frames_{0};
+  bool running_{false};
+  bool unknown_released_{false};
 };
 
 class PartialOwnershipSource final : public vehicle_telemetry::AcquisitionSource {
@@ -499,7 +751,7 @@ void test_lifecycle_and_subscription_state() {
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
   auto invalid = config;
-  invalid.max_frames_per_batch = 17;
+  invalid.max_frames_per_batch = 0;
   EXPECT(!service.configure(invalid).ok());
 
   TurnRecorder recorder{};
@@ -521,6 +773,204 @@ void test_lifecycle_and_subscription_state() {
   EXPECT(service.stop().ok());
   EXPECT(service.unsubscribe(subscription).ok());
   EXPECT(service.unsubscribe(second_subscription).ok());
+}
+
+void test_runtime_budget_configuration_contract() {
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  config.max_frames_per_batch = 32;
+  config.max_batch_time_us = 4'000;
+  config.max_runnable_receive_calls = 64;
+  config.max_runnable_time_us = 40'000;
+  config.budget_pause_ms = 2;
+  auto invalid_constructor_config = config;
+  invalid_constructor_config.max_batch_time_us = 0;
+  mazda::internal::VehicleTelemetryService invalid_constructor_service{clock, source, lighting,
+                                                                       invalid_constructor_config};
+  EXPECT(invalid_constructor_service.start().status == mazda::ResultCode::InvalidConfiguration);
+
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  // 0.2.0 accepts the complete facade budget, including a frame limit above
+  // the former controller-local cap of 16.
+  EXPECT(service.configure(config).ok());
+
+  auto invalid = config;
+  invalid.max_batch_time_us = 0;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_receive_calls = 0;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_runnable_time_us = 0;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.budget_pause_ms = 0;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.max_frames_per_batch = config.max_runnable_receive_calls + 1;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.availability_service_target_us = 60'000'001;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+  invalid = config;
+  invalid.transport_silence_timeout_us = 300'000'001;
+  EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
+
+  // Rejected configurations do not poison the stopped service: the complete
+  // valid budget remains effective and can be used for a restart.
+  EXPECT(service.start().ok());
+  EXPECT(service.stop().ok());
+}
+
+void test_continuously_ready_runtime_reaches_budget_pause() {
+  FakeClock clock;
+  ContinuouslyReadySource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  config.max_frames_per_batch = 4;
+  config.max_batch_time_us = 1'000'000;
+  config.max_runnable_receive_calls = 8;
+  config.max_runnable_time_us = 1'000'000;
+  config.budget_pause_ms = 1;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_flag([&service] { return service.diagnostics().work_budget_pauses > 0; },
+                       std::chrono::milliseconds{500}));
+  EXPECT(source.statistics().frames_received > 0);
+  EXPECT(service.stop().ok());
+}
+
+std::uint64_t checkpoint_clock_reads_for(const std::uint32_t max_frames_per_batch) {
+  FakeClock clock;
+  CheckpointProbeSource source{4};
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  config.max_frames_per_batch = max_frames_per_batch;
+  config.max_batch_time_us = 1'000'000;
+  config.max_runnable_receive_calls = 64;
+  config.max_runnable_time_us = 1'000'000;
+  config.budget_pause_ms = 1;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().ok());
+  EXPECT(source.wait_until_initial_waiting());
+  clock.reset_reads();
+  source.release();
+  EXPECT(source.wait_until_frame_waiting());
+  const auto reads = clock.reads();
+  EXPECT(service.stop().ok());
+  return reads;
+}
+
+void test_configured_batch_checkpoint_is_effective() {
+  const auto wide_batch_reads = checkpoint_clock_reads_for(4);
+  const auto narrow_batch_reads = checkpoint_clock_reads_for(1);
+  // Each completed frame samples the injected liveness clock. A batch
+  // checkpoint samples it once more, so four frames with a one-frame budget
+  // must perform at least three more checkpoint reads than a four-frame batch.
+  EXPECT(narrow_batch_reads >= wide_batch_reads + 3);
+}
+
+void test_configured_runnable_call_budget_reaches_pause() {
+  FakeClock clock;
+  CheckpointProbeSource source{8};
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  config.max_frames_per_batch = 8;
+  config.max_batch_time_us = 1'000'000;
+  config.max_runnable_receive_calls = 8;
+  config.max_runnable_time_us = 1'000'000;
+  config.budget_pause_ms = 1;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+
+  EXPECT(service.start().ok());
+  EXPECT(source.wait_until_initial_waiting());
+  source.release();
+  EXPECT(source.wait_until_frame_waiting());
+  EXPECT(source.statistics().frames_received == 8);
+  EXPECT(service.diagnostics().work_budget_pauses > 0);
+  EXPECT(service.stop().ok());
+}
+
+void test_continuously_ready_state_expiry_fault_and_callbacks() {
+  FakeClock clock;
+  ContinuousScenarioSource source{clock};
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.transport_silence_timeout_us = 100;
+  config.callback_stop_timeout_us = 20'000;
+  config.availability_service_target_us = 1'000;
+  config.max_frames_per_batch = 4;
+  config.max_runnable_receive_calls = 8;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  TurnRecorder recorder{};
+  EXPECT(service.subscribe_turn(&record_turn, &recorder).ok());
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_flag([&recorder] {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    for (std::size_t index = 0; index < recorder.count; ++index) {
+      const auto &notice = recorder.notices[index];
+      if (notice.current.value == mazda::TurnState::Left &&
+          notice.current.availability == mazda::Availability::Fresh)
+        return true;
+    }
+    return false;
+  }));
+  EXPECT(wait_for_flag([&service] {
+    const auto reading = service.engine_rpm();
+    return reading.value.has_value() && *reading.value == 0.5F;
+  }));
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
+
+  source.release_unknown();
+  EXPECT(source.wait_until_unknown_frames(8));
+  EXPECT(wait_for_flag([&recorder] {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    for (std::size_t index = 0; index < recorder.count; ++index) {
+      const auto &notice = recorder.notices[index];
+      if (notice.current.value == mazda::TurnState::Left &&
+          notice.current.availability == mazda::Availability::Stale && !notice.initial)
+        return true;
+    }
+    return false;
+  }));
+  // Unknown frames keep transport live while the known turn and RPM readings
+  // are independently serviced through their freshness/deadline transitions.
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
+  EXPECT(service.engine_rpm().value.has_value());
+
+  source.release_fault();
+  EXPECT(wait_for_lifecycle(service, mazda::LifecycleState::Faulted));
+  EXPECT(wait_for_flag([&recorder] {
+    std::lock_guard<std::mutex> lock{recorder.mutex};
+    for (std::size_t index = 0; index < recorder.count; ++index) {
+      const auto &notice = recorder.notices[index];
+      if (notice.current.value == mazda::TurnState::Left &&
+          notice.current.availability == mazda::Availability::Unavailable)
+        return true;
+    }
+    return false;
+  }));
+  EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Faulted);
+  EXPECT(service.engine_rpm().availability == mazda::Availability::Unavailable);
+  EXPECT(service.stop().status == mazda::ResultCode::Faulted);
+
+  const auto diagnostics = service.diagnostics();
+  EXPECT(diagnostics.lifecycle == mazda::LifecycleState::Stopped);
+  EXPECT(diagnostics.acquisition.frames_received >= 8);
+  EXPECT(diagnostics.acquisition.frames_processed == diagnostics.acquisition.frames_received);
+  EXPECT(diagnostics.acquisition.driver_errors == 1);
+  EXPECT(lighting.size() > 0);
+  const auto final_lighting = lighting.at(lighting.size() - 1);
+  EXPECT(final_lighting.turn == mazda::TurnState::Unknown);
 }
 
 void test_lifecycle_state_precedes_configuration_validation() {
@@ -1150,9 +1600,9 @@ void test_sustained_bounded_overload_services_expiry_and_latest_state() {
   config.availability_service_target_us = 1'000;
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
-  // Keep the fixed max-16 batch boundary part of this service-level contract.
+  // Keep the configured batch boundary part of this service-level contract.
   auto invalid = config;
-  invalid.max_frames_per_batch = 17;
+  invalid.max_frames_per_batch = config.max_runnable_receive_calls + 1;
   EXPECT(service.configure(invalid).status == mazda::ResultCode::InvalidConfiguration);
   EXPECT(service.configure(config).ok());
 
@@ -1626,6 +2076,11 @@ void test_public_facade_lifecycle_contract() {
 
 int main() {
   test_lifecycle_and_subscription_state();
+  test_runtime_budget_configuration_contract();
+  test_continuously_ready_runtime_reaches_budget_pause();
+  test_configured_batch_checkpoint_is_effective();
+  test_configured_runnable_call_budget_reaches_pause();
+  test_continuously_ready_state_expiry_fault_and_callbacks();
   test_lifecycle_state_precedes_configuration_validation();
   test_callback_mutations_are_rejected_before_side_effects();
   test_manual_dispatch_preserves_callback_mutation_guard();

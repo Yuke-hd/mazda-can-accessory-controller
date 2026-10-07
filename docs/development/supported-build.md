@@ -31,8 +31,8 @@ ctest --test-dir /tmp/mazda-accessory-controller-host --output-on-failure
 
 The doctest dependency is fetched by CMake at configure time. A clean build
 therefore needs network access unless the pinned source is already in the
-FetchContent cache. The generic companion core is pinned at release `0.1.0`;
-for an offline build, point `VEHICLE_CAN_CORE_SOURCE_DIR` at an exact `0.1.0`
+FetchContent cache. The generic companion core is pinned at release `0.2.0`;
+for an offline build, point `VEHICLE_CAN_CORE_SOURCE_DIR` at an exact `0.2.0`
 checkout. If a compiler, Ninja, network, or the CI CMake version is unavailable,
 record the exact command and report that check as unavailable.
 

@@ -199,14 +199,40 @@ MessageMutationMarker message_mutation_marker(const VehicleState &state,
 inline constexpr LightingDescriptor<TurnState> kTurnNotificationDescriptor{
     &VehicleState::turn_state, &candidate::kTurnLeftSwitchDefinition};
 
-void configure_runtime(vehicle_telemetry::Runtime &runtime,
-                       const TelemetryConfig &config) noexcept {
-  vehicle_telemetry::RuntimeConfig runtime_config{};
+// Keep the facade's receive-target conversion inside the runtime contract's
+// bounded range. The core validates the resulting RuntimeConfig, but it
+// cannot validate an overflowing or truncated facade conversion after the
+// value has been cast to milliseconds.
+constexpr vehicle_core::Microseconds kRuntimeMaximumReceiveTimeoutUs = 60'000'000;
+constexpr vehicle_core::Microseconds kRuntimeMaximumSilenceTimeoutUs = 300'000'000;
+constexpr std::uint32_t kRuntimeMaximumRunnableReceiveCalls = 65'535;
+constexpr vehicle_core::Microseconds kRuntimeMaximumRunnableTimeUs = 1'000'000;
+constexpr std::uint32_t kRuntimeMaximumBudgetPauseMs = 1'000;
+
+bool build_runtime_config(const TelemetryConfig &config,
+                          vehicle_telemetry::RuntimeConfig &runtime_config) noexcept {
+  if (config.availability_service_target_us == 0 ||
+      config.availability_service_target_us > kRuntimeMaximumReceiveTimeoutUs)
+    return false;
+
   runtime_config.receive_timeout_ms =
       static_cast<std::uint32_t>(std::max<vehicle_core::Microseconds>(
           1, (config.availability_service_target_us + 999) / 1'000));
   runtime_config.transport_silence_timeout_us = config.transport_silence_timeout_us;
-  (void)runtime.configure(runtime_config);
+  runtime_config.max_frames_per_batch = config.max_frames_per_batch;
+  runtime_config.max_batch_time_us = config.max_batch_time_us;
+  runtime_config.max_runnable_receive_calls = config.max_runnable_receive_calls;
+  runtime_config.max_runnable_time_us = config.max_runnable_time_us;
+  runtime_config.budget_pause_ms = config.budget_pause_ms;
+  return true;
+}
+
+vehicle_telemetry::StatusResult configure_runtime(vehicle_telemetry::Runtime &runtime,
+                                                  const TelemetryConfig &config) noexcept {
+  vehicle_telemetry::RuntimeConfig runtime_config{};
+  if (!build_runtime_config(config, runtime_config))
+    return {vehicle_telemetry::ResultCode::InvalidConfiguration};
+  return runtime.configure(runtime_config);
 }
 
 bool transport_requires_failoff(const vehicle_core::TransportHealth transport) noexcept {
@@ -437,9 +463,18 @@ VehicleTelemetryService::~VehicleTelemetryService() noexcept {
 }
 
 bool VehicleTelemetryService::valid_config(const TelemetryConfig &config) noexcept {
-  return config.transport_silence_timeout_us > 0 && config.max_frames_per_batch > 0 &&
-         config.max_frames_per_batch <= kDefaultMaxFramesPerBatch &&
-         config.availability_service_target_us > 0;
+  return config.transport_silence_timeout_us > 0 &&
+         config.transport_silence_timeout_us <= kRuntimeMaximumSilenceTimeoutUs &&
+         config.max_frames_per_batch > 0 && config.max_runnable_receive_calls > 0 &&
+         config.max_runnable_receive_calls <= kRuntimeMaximumRunnableReceiveCalls &&
+         config.max_frames_per_batch <= config.max_runnable_receive_calls &&
+         config.max_batch_time_us > 0 && config.max_runnable_time_us > 0 &&
+         config.max_batch_time_us <= kRuntimeMaximumRunnableTimeUs &&
+         config.max_runnable_time_us <= kRuntimeMaximumRunnableTimeUs &&
+         config.max_batch_time_us <= config.max_runnable_time_us && config.budget_pause_ms > 0 &&
+         config.budget_pause_ms <= kRuntimeMaximumBudgetPauseMs &&
+         config.availability_service_target_us > 0 &&
+         config.availability_service_target_us <= kRuntimeMaximumReceiveTimeoutUs;
 }
 
 void VehicleTelemetryService::initialize_registration_slots() noexcept {
@@ -550,19 +585,17 @@ StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) n
     return {ResultCode::InvalidState};
   if (!valid_config(config))
     return {ResultCode::InvalidConfiguration};
+  // Configure the backend before mutating either facade-side copy. This
+  // keeps a rejected core budget or receive-target conversion from partially
+  // applying to publication/configuration state.
+  const auto runtime_result = configure_runtime(runtime_, config);
+  if (!runtime_result.ok())
+    return {map_runtime_status(runtime_result.status)};
   const auto result = publication_.configure(config);
   if (result.ok()) {
     record_policy_application();
     config_ = config;
     notification_due_observations_.fill(std::nullopt);
-    vehicle_telemetry::RuntimeConfig runtime_config{};
-    runtime_config.receive_timeout_ms =
-        static_cast<std::uint32_t>(std::max<vehicle_core::Microseconds>(
-            1, (config.availability_service_target_us + 999) / 1'000));
-    runtime_config.transport_silence_timeout_us = config.transport_silence_timeout_us;
-    const auto runtime_result = runtime_.configure(runtime_config);
-    if (!runtime_result.ok())
-      return {map_runtime_status(runtime_result.status)};
   }
   return result;
 }
@@ -826,9 +859,9 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   const bool runtime_stopped =
       runtime_result.ok() || runtime_result.status == vehicle_telemetry::ResultCode::NotRunning;
   const auto stopping_diagnostics = runtime_.diagnostics();
-  publication_.publish_diagnostics(Diagnostics{LifecycleState::Stopping,
-                                               vehicle_core::TransportHealth::Stopped,
-                                               acquisition_metrics(stopping_diagnostics)});
+  publication_.publish_diagnostics(Diagnostics{
+      LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped,
+      acquisition_metrics(stopping_diagnostics), stopping_diagnostics.work_budget_pauses});
   if (!wait_for_workers(config_.callback_stop_timeout_us))
     return {ResultCode::Timeout};
   join_workers();
@@ -839,8 +872,8 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   }
   runtime_diagnostics_ = runtime_.diagnostics();
   const auto acquisition = acquisition_metrics(runtime_diagnostics_);
-  reset_publication(
-      Diagnostics{LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped, acquisition});
+  reset_publication(Diagnostics{LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped,
+                                acquisition, runtime_diagnostics_.work_budget_pauses});
   processing_state_ = VehicleState{};
   processing_state_changed_ = false;
   notification_due_observations_.fill(std::nullopt);
@@ -866,6 +899,7 @@ Diagnostics VehicleTelemetryService::diagnostics() const noexcept {
           : LifecycleState::Stopped;
   diagnostics.transport = runtime_diagnostics.transport;
   diagnostics.acquisition = acquisition_metrics(runtime_diagnostics);
+  diagnostics.work_budget_pauses = runtime_diagnostics.work_budget_pauses;
   return diagnostics;
 }
 
@@ -1072,7 +1106,8 @@ void VehicleTelemetryService::dispatcher_task_entry(void *context) noexcept {
 void VehicleTelemetryService::publish_current(const bool received_frame) noexcept {
   const auto acquisition = acquisition_metrics(runtime_diagnostics_);
   const auto lifecycle = lifecycle_state_.load(std::memory_order_acquire);
-  const Diagnostics diagnostics{lifecycle, runtime_diagnostics_.transport, acquisition};
+  const Diagnostics diagnostics{lifecycle, runtime_diagnostics_.transport, acquisition,
+                                runtime_diagnostics_.work_budget_pauses};
   const bool global_health_transition =
       requires_global_health_evaluation(published_lifecycle_, published_transport_, lifecycle,
                                         diagnostics.transport, published_health_initialized_);

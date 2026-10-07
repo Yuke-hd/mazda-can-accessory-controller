@@ -101,7 +101,7 @@ physical direction must be confirmed during hardware validation.
 The generic CAN/frame/runtime code is consumed from the pinned vehicle-core
 dependency through CMake `FetchContent` at
 `https://github.com/Yuke-hd/esp32-vehicle-can-core`. `VEHICLE_CAN_CORE_TAG`
-selects release tag `0.1.0`. For offline work, set
+selects release tag `0.2.0`. For offline work, set
 `VEHICLE_CAN_CORE_SOURCE_DIR` to a checkout of that exact release. Do not copy
 generic components back into this repository.
 
