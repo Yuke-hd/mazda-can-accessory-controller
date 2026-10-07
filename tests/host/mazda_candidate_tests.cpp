@@ -35,6 +35,9 @@ bool same_signal(const vehicle_core::Signal<T> &left,
          left.freshness_timeout_us == right.freshness_timeout_us && left.status == right.status;
 }
 
+// Keep this explicit comparison in lockstep with every signal and
+// MessageHealthState field in lib/mazda/include/mazda/state.hpp; avoid a
+// sizeof-based comparison whose result could depend on platform padding.
 bool same_state(const mazda::VehicleState &left, const mazda::VehicleState &right) noexcept {
   if (left.timestamp_us != right.timestamp_us || !same_signal(left.speed_kph, right.speed_kph) ||
       !same_signal(left.engine_rpm, right.engine_rpm) ||
