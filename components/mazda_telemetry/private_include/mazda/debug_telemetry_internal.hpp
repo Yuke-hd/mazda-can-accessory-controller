@@ -1,7 +1,7 @@
 #pragma once
 
-#include <cstdint>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 
@@ -24,15 +24,15 @@ public:
                                       vehicle_core::MonotonicTimestamp processing_timestamp_us,
                                       bool update_not_advanced) noexcept;
 
-  [[nodiscard]] bool record_published(
-      const VehicleState &state, const Diagnostics &diagnostics,
-      vehicle_core::MonotonicTimestamp now_us,
-      vehicle_core::MonotonicTimestamp publication_timestamp_us,
-      vehicle_core::MonotonicTimestamp esp_timer_us,
-      vehicle_core::MonotonicTimestamp steady_clock_us,
-      std::optional<vehicle_core::MonotonicTimestamp> transport_last_frame_us,
-      vehicle_core::MonotonicTimestamp diagnostic_sample_timestamp_us = 0,
-      DebugSampleSource diagnostic_sample_source = DebugSampleSource::None) noexcept;
+  [[nodiscard]] bool
+  record_published(const VehicleState &state, const Diagnostics &diagnostics,
+                   vehicle_core::MonotonicTimestamp now_us,
+                   vehicle_core::MonotonicTimestamp publication_timestamp_us,
+                   vehicle_core::MonotonicTimestamp esp_timer_us,
+                   vehicle_core::MonotonicTimestamp steady_clock_us,
+                   std::optional<vehicle_core::MonotonicTimestamp> transport_last_frame_us,
+                   vehicle_core::MonotonicTimestamp diagnostic_sample_timestamp_us = 0,
+                   DebugSampleSource diagnostic_sample_source = DebugSampleSource::None) noexcept;
 
   [[nodiscard]] DebugSnapshot snapshot() const noexcept;
   [[nodiscard]] DebugSnapshot stale_snapshot() const noexcept;
@@ -45,9 +45,7 @@ public:
 #if !defined(ESP_PLATFORM)
   // Test-only contention seam. It models a logger task being descheduled
   // while holding the read-cache lock; production readers use try_lock.
-  [[nodiscard]] bool hold_snapshot_lock_for_test() const noexcept {
-    return mutex_.try_lock();
-  }
+  [[nodiscard]] bool hold_snapshot_lock_for_test() const noexcept { return mutex_.try_lock(); }
   void release_snapshot_lock_for_test() const noexcept { mutex_.unlock(); }
 #endif
 

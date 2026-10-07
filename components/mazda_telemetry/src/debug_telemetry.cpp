@@ -213,8 +213,7 @@ DebugSnapshot DebugRecorder::snapshot() const noexcept {
   }
   auto result = published_current_;
   result.snapshot_read_drops = snapshot_read_drops_.load(std::memory_order_relaxed);
-  result.recorder_write_contention =
-      recorder_write_contention_.load(std::memory_order_relaxed);
+  result.recorder_write_contention = recorder_write_contention_.load(std::memory_order_relaxed);
   return result;
 }
 
@@ -226,8 +225,7 @@ DebugSnapshot DebugRecorder::stale_snapshot() const noexcept {
   }
   auto result = published_stale_;
   result.snapshot_read_drops = snapshot_read_drops_.load(std::memory_order_relaxed);
-  result.recorder_write_contention =
-      recorder_write_contention_.load(std::memory_order_relaxed);
+  result.recorder_write_contention = recorder_write_contention_.load(std::memory_order_relaxed);
   return result;
 }
 

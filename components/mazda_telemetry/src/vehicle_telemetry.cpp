@@ -31,8 +31,7 @@
 namespace mazda::internal {
 
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
-inline constexpr vehicle_core::MonotonicTimestamp kDebugAggregateRefreshPeriodUs =
-    5'000'000;
+inline constexpr vehicle_core::MonotonicTimestamp kDebugAggregateRefreshPeriodUs = 5'000'000;
 #endif
 
 #if !defined(ESP_PLATFORM)
@@ -965,10 +964,9 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
     debug_pending_status_ = result.status;
     debug_pending_processing_timestamp_us_ = clock_->now();
     debug_pending_update_not_advanced_ = update_not_advanced;
-    debug_frame_recorded_ =
-        debug_recorder_.record_processed(debug_pending_frame_, debug_pending_status_,
-                                         debug_pending_processing_timestamp_us_,
-                                         debug_pending_update_not_advanced_);
+    debug_frame_recorded_ = debug_recorder_.record_processed(
+        debug_pending_frame_, debug_pending_status_, debug_pending_processing_timestamp_us_,
+        debug_pending_update_not_advanced_);
     debug_frame_pending_ = true;
   }
 #endif
@@ -1010,15 +1008,15 @@ void VehicleTelemetryService::on_diagnostics(
                              ? LifecycleState::Stopping
                          : diagnostics.lifecycle == vehicle_telemetry::LifecycleState::Faulted
                              ? LifecycleState::Faulted
-                         : LifecycleState::Stopped,
+                             : LifecycleState::Stopped,
                          std::memory_order_release);
   if (diagnostics.has_last_frame)
     last_transport_receive_us_ = diagnostics.last_frame_us;
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
   debug_diagnostics_sample_timestamp_us_ = clock_->now();
   debug_diagnostics_sample_source_ = debug_observer_frame_callback_
-                                        ? DebugSampleSource::TelemetryObserverFrame
-                                        : DebugSampleSource::TelemetryObserverTimeout;
+                                         ? DebugSampleSource::TelemetryObserverFrame
+                                         : DebugSampleSource::TelemetryObserverTimeout;
   debug_observer_frame_callback_ = false;
   // Runtime reports receive timeouts as diagnostics even when no frame is
   // available. Capture the due transition without dispatching production
@@ -1104,17 +1102,15 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
   const auto now_us = clock_->now();
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
   if (debug_frame_pending_ && !debug_frame_recorded_) {
-    debug_frame_recorded_ =
-        debug_recorder_.record_processed(debug_pending_frame_, debug_pending_status_,
-                                         debug_pending_processing_timestamp_us_,
-                                         debug_pending_update_not_advanced_);
+    debug_frame_recorded_ = debug_recorder_.record_processed(
+        debug_pending_frame_, debug_pending_status_, debug_pending_processing_timestamp_us_,
+        debug_pending_update_not_advanced_);
   }
   if (global_health_transition)
     debug_global_event_pending_ = true;
   const bool aggregate_refresh_due =
       debug_last_aggregate_refresh_us_ == 0 ||
-      now_us >= saturating_add(debug_last_aggregate_refresh_us_,
-                               kDebugAggregateRefreshPeriodUs);
+      now_us >= saturating_add(debug_last_aggregate_refresh_us_, kDebugAggregateRefreshPeriodUs);
   if ((debug_frame_pending_ && debug_frame_recorded_) || debug_global_event_pending_ ||
       aggregate_refresh_due) {
 #if defined(ESP_PLATFORM)
@@ -1197,10 +1193,10 @@ void VehicleTelemetryService::record_debug_due_snapshot(
 #else
     const auto esp_timer_us = now_us;
 #endif
-    if (debug_recorder_.record_published(
-            processing_state_, diagnostics, now_us, now_us, esp_timer_us, now_us,
-            last_transport_receive_us_, debug_diagnostics_sample_timestamp_us_,
-            debug_diagnostics_sample_source_))
+    if (debug_recorder_.record_published(processing_state_, diagnostics, now_us, now_us,
+                                         esp_timer_us, now_us, last_transport_receive_us_,
+                                         debug_diagnostics_sample_timestamp_us_,
+                                         debug_diagnostics_sample_source_))
       debug_due_observation_ = turn_signal.last_update_us;
   }
 }

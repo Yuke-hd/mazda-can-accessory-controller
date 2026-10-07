@@ -16,9 +16,8 @@ public:
         last_timestamp_us_ > std::numeric_limits<std::uint64_t>::max() - kMinimumPeriodUs
             ? std::numeric_limits<std::uint64_t>::max()
             : last_timestamp_us_ + kMinimumPeriodUs;
-    if (has_last_timestamp_ &&
-        (last_timestamp_us_ == std::numeric_limits<std::uint64_t>::max() ||
-         sample_timestamp_us < deadline))
+    if (has_last_timestamp_ && (last_timestamp_us_ == std::numeric_limits<std::uint64_t>::max() ||
+                                sample_timestamp_us < deadline))
       return false;
     last_timestamp_us_ = sample_timestamp_us;
     has_last_timestamp_ = true;

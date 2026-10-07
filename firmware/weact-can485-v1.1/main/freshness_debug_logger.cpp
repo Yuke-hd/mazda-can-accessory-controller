@@ -262,8 +262,8 @@ void Logger::poll(const std::uint64_t sample_timestamp_us) noexcept {
   }
 
   if (next_summary_timestamp_us_ == 0 || sample_timestamp_us >= next_summary_timestamp_us_) {
-    log_snapshot_fields("summary", snapshot, twai, 0, snapshot_read_drops_,
-                        stale_events_coalesced_, stale_events_suppressed_);
+    log_snapshot_fields("summary", snapshot, twai, 0, snapshot_read_drops_, stale_events_coalesced_,
+                        stale_events_suppressed_);
     next_summary_timestamp_us_ = saturating_add(sample_timestamp_us, kSummaryPeriodUs);
   }
 }

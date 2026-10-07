@@ -87,8 +87,7 @@ void test_wrap_skip_and_latency() {
   // counter continuity or gap evidence.
   auto extended = turn_frame(400, 3);
   extended.identifier_format = vehicle_core::CanIdentifierFormat::Extended;
-  (void)recorder.record_processed(extended, vehicle_telemetry::ProcessStatus::Ignored, 405,
-                                  false);
+  (void)recorder.record_processed(extended, vehicle_telemetry::ProcessStatus::Ignored, 405, false);
   (void)recorder.record_published(state, diagnostics(4), 410, 410, 1300, 1200, 410);
   snapshot = recorder.snapshot();
   EXPECT(!snapshot.counter_valid);
@@ -108,14 +107,14 @@ void test_not_advanced_and_stale_snapshot() {
   mazda::VehicleState state{};
   (void)state.observe_message(turn_frame(1'000, 1), vehicle_core::DecodeValidity::Decoded);
   state.turn_state.update(mazda::TurnState::Off, 1'000);
-  (void)recorder.record_processed(turn_frame(1'000, 1),
-                                  vehicle_telemetry::ProcessStatus::Processed, 1'010, false);
+  (void)recorder.record_processed(turn_frame(1'000, 1), vehicle_telemetry::ProcessStatus::Processed,
+                                  1'010, false);
   (void)recorder.record_published(state, diagnostics(1), 1'020, 1'020, 1'020, 1'020, 1'020);
 
   // An older timestamp does not advance the signal watermark. The pending
   // raw frame is still published as evidence of the observed ordering.
-  (void)recorder.record_processed(turn_frame(900, 2),
-                                  vehicle_telemetry::ProcessStatus::Processed, 1'030, true);
+  (void)recorder.record_processed(turn_frame(900, 2), vehicle_telemetry::ProcessStatus::Processed,
+                                  1'030, true);
   (void)recorder.record_published(state, diagnostics(2), 1'040, 1'040, 1'040, 1'040, 1'040);
   auto snapshot = recorder.snapshot();
   EXPECT(snapshot.update_not_advanced);
@@ -124,8 +123,8 @@ void test_not_advanced_and_stale_snapshot() {
 
   // The stale transition is evaluated at publication time, while its
   // frame/publication timestamps remain those of the latest 0x091 frame.
-  (void)recorder.record_published(state, diagnostics(2), 3'000'001, 3'000'001, 3'000'001,
-                                  3'000'001, 3'000'001);
+  (void)recorder.record_published(state, diagnostics(2), 3'000'001, 3'000'001, 3'000'001, 3'000'001,
+                                  3'000'001);
   const auto stale = recorder.stale_snapshot();
   EXPECT(stale.stale_transition_count == 1);
   EXPECT(stale.availability == mazda::Availability::Stale);
@@ -139,14 +138,13 @@ void test_reader_contention_preserves_stale_before_recovery() {
   mazda::VehicleState state{};
   (void)state.observe_message(turn_frame(1'000, 1), vehicle_core::DecodeValidity::Decoded);
   state.turn_state.update(mazda::TurnState::Off, 1'000);
-  (void)recorder.record_processed(turn_frame(1'000, 1),
-                                  vehicle_telemetry::ProcessStatus::Processed, 1'010, false);
+  (void)recorder.record_processed(turn_frame(1'000, 1), vehicle_telemetry::ProcessStatus::Processed,
+                                  1'010, false);
   EXPECT(recorder.record_published(state, diagnostics(1), 1'020, 1'020, 1'020, 1'020, 1'020));
 
   EXPECT(recorder.hold_snapshot_lock_for_test());
-  const auto stale_publish =
-      recorder.record_published(state, diagnostics(2), 3'000'001, 3'000'001, 3'000'001,
-                                3'000'001, 3'000'001);
+  const auto stale_publish = recorder.record_published(state, diagnostics(2), 3'000'001, 3'000'001,
+                                                       3'000'001, 3'000'001, 3'000'001);
   EXPECT(!stale_publish);
   recorder.release_snapshot_lock_for_test();
 
