@@ -18,6 +18,10 @@ target_include_directories(mazda
 )
 target_link_libraries(mazda PUBLIC vehicle_core)
 target_compile_features(mazda PUBLIC cxx_std_17)
+if(MAZDA_ENABLE_DECODER_CALL_PROBING)
+  # This opt-in hook is compiled out of normal and firmware builds.
+  target_compile_definitions(mazda PRIVATE MAZDA_ENABLE_DECODER_CALL_PROBING=1)
+endif()
 
 if(MSVC)
   target_compile_options(mazda PRIVATE /W4 /permissive-)

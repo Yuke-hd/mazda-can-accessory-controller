@@ -12,6 +12,15 @@ namespace mazda::candidate {
 // frozen portable ownership/validity vocabulary at the ABI boundary.
 using DecodeStatus = vehicle_core::DecodeValidity;
 
+#if defined(MAZDA_ENABLE_DECODER_CALL_PROBING)
+using DecoderCallObserver = void (*)(std::uint32_t identifier) noexcept;
+
+// Host-only instrumentation for decoder routing tests. The production and
+// firmware builds do not define MAZDA_ENABLE_DECODER_CALL_PROBING, so this
+// hook and its call sites are compiled out.
+void set_decoder_call_observer(DecoderCallObserver observer) noexcept;
+#endif
+
 [[nodiscard]] DecodeStatus
 decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                    vehicle_core::DecoderObservation *observation = nullptr,
