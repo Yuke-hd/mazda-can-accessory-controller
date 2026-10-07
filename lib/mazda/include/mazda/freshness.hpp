@@ -8,14 +8,19 @@ namespace mazda {
 
 constexpr vehicle_core::Microseconds kTurnFreshnessTimeoutUs = 250'000;
 constexpr vehicle_core::Microseconds kRequestFreshnessTimeoutUs = 250'000;
+constexpr vehicle_core::Microseconds kAccelerationFreshnessTimeoutUs = 250'000;
 
-// Only turn/request freshness has a confirmed default. The supplied DBC has
-// no cycle-time declarations, so the remaining policies stay unconfigured.
+// Turn/request/acceleration freshness has an explicit operational default. The
+// supplied DBC has no cycle-time declarations, so the remaining policies stay
+// unconfigured and the acceleration timeout does not claim source timing
+// evidence.
 struct VehicleFreshnessPolicy {
   std::optional<vehicle_core::Microseconds> speed_kph_timeout_us{};
   std::optional<vehicle_core::Microseconds> engine_rpm_timeout_us{};
-  std::optional<vehicle_core::Microseconds> longitudinal_acceleration_mps2_timeout_us{};
-  std::optional<vehicle_core::Microseconds> lateral_acceleration_mps2_timeout_us{};
+  std::optional<vehicle_core::Microseconds> longitudinal_acceleration_mps2_timeout_us{
+      kAccelerationFreshnessTimeoutUs};
+  std::optional<vehicle_core::Microseconds> lateral_acceleration_mps2_timeout_us{
+      kAccelerationFreshnessTimeoutUs};
   std::optional<vehicle_core::Microseconds> selector_position_timeout_us{};
   std::optional<vehicle_core::Microseconds> actual_gear_timeout_us{};
   std::optional<vehicle_core::Microseconds> turn_state_timeout_us{kTurnFreshnessTimeoutUs};

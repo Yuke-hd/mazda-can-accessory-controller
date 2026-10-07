@@ -89,9 +89,10 @@ inline constexpr const char *kSpeedCandidateEvidenceProvenance =
     "docs/protocol/signal-evidence.md; retained SPEED candidate has no field in the reviewed "
     "Mazda custom DBC";
 
-// The capture-derived DBC has no cycle-time declaration. Null periods/timeouts
-// are intentional until reviewed replay or isolated-bench evidence establishes
-// them; callers can supply per-signal timeouts through VehicleFreshnessPolicy.
+// The capture-derived DBC has no cycle-time declaration. Null source periods
+// and candidate metadata timeouts are intentional until reviewed replay or
+// isolated-bench evidence establishes them; the operational policy can still
+// supply per-signal timeouts through VehicleFreshnessPolicy.
 inline constexpr CandidateMessageDefinition kEngineDataDefinition{"ENGINE_DATA",
                                                                   kEngineDataId,
                                                                   kCandidateDlc,

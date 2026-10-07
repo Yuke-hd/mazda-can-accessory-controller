@@ -62,15 +62,16 @@ neutral exactly zero, and preserves the signed one-code steps (`±0.01` and
 float scale and then adding a float offset can introduce cancellation noise;
 fused and non-fused compiler evaluation can produce different noise.
 
-Both default freshness timeouts and the message period remain unset because
-#186 establishes no timing evidence. Accepted readings are
-`FreshnessUnverified`, with Reference validation. Callers can explicitly
-configure each optional acceleration freshness timeout. Snapshot copies
-preserve both values, per-message health, and policy. Wrong DLC or invalid
-frames fault only the acceleration message, preserve both last values, and
-make them unavailable until a strictly newer valid frame. Older observations
-and conflicting observations at the same timestamp do not change either
-value; identical duplicates are idempotent.
+The default policy assigns both acceleration readings a 250,000 us freshness
+timeout. This is operational policy and does not claim timing evidence from
+#186, which remains absent. The acceleration message period and candidate
+metadata timeout remain unset. Under the default policy, accepted readings are
+`Fresh`, with Reference validation, while they remain within the configured
+timeout. Snapshot copies preserve both values, per-message health, and policy.
+Wrong DLC or invalid frames fault only the acceleration message, preserve both
+last values, and make them unavailable until a strictly newer valid frame.
+Older observations and conflicting observations at the same timestamp do not
+change either value; identical duplicates are idempotent.
 
 The optional output `DecoderObservation` describes the attempted frame;
 `HealthObservation` combines the retained message record with that attempt's

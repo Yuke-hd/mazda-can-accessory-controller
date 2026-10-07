@@ -95,8 +95,9 @@ in [`mazda_custom.dbc`](mazda_custom.dbc#L113-L114). It does not establish eithe
 Both candidate fields remain **Reference**. Synthetic vectors do not promote
 these candidates. #187 adds passive decoding under this confidence boundary;
 axis and sign remain source interpretations, and the default acceleration
-freshness timeouts remain unset because no timing evidence is established.
-Generic provider wiring is a separate #188 change.
+freshness policy is 250,000 us as an operational fail-off bound. No timing
+evidence is established by that policy, and the source message period remains
+unset. Generic provider wiring is a separate #188 change.
 
 ### Required validation capture
 
@@ -151,8 +152,8 @@ The status of a field does not silently promote values that were not observed.
 
 The DBC has no `GenMsgCycleTime` or equivalent period declaration. No message
 period, signal period, or freshness timeout is inferred from the tables above.
-The current 250,000 us turn/request freshness policy is operational policy,
-not evidence that the source emits at that interval.
+The current 250,000 us turn/request/acceleration freshness policy is
+operational policy, not evidence that the source emits at that interval.
 
 ## Evidence and attribution references
 

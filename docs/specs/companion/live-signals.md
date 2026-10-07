@@ -312,8 +312,8 @@ as Reference-only `vehicle.speed_kph`, from that document.
 | 16 | `vehicle.doors_unlocked` | Boolean | Bit 10 | None |
 | 17 | `vehicle.wiper.low` | Boolean | Bit 11 | None |
 | 18 | `vehicle.brake_pressed` | Boolean | Bit 12 | None; brake freshness is unset, so never `Fresh`. |
-| 19 | `vehicle.acceleration.longitudinal` | Number | `acceleration_longitudinal` | None |
-| 20 | `vehicle.acceleration.lateral` | Number | `acceleration_lateral` | None |
+| 19 | `vehicle.acceleration.longitudinal` | Number | `acceleration_longitudinal` | 250 ms |
+| 20 | `vehicle.acceleration.lateral` | Number | `acceleration_lateral` | 250 ms |
 
 The timeout column records the default telemetry freshness policy
 (`lib/mazda/include/mazda/freshness.hpp`) for orientation only. A signal with

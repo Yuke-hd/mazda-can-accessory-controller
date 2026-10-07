@@ -504,9 +504,12 @@ void test_all_ids_read_no_data_then_typed_values() {
     EXPECT(result.value->value->type() == metadata.type);
     EXPECT(metadata.accepts(*result.value->value));
     EXPECT(result.value->validation == metadata.validation);
-    // Only turn/request signals have a configured freshness timeout.
+    // Turn/request and acceleration signals have configured freshness
+    // timeouts; the other signals remain FreshnessUnverified by default.
     const bool freshness_configured = id == ids::kTurnState || id == ids::kHazardRequest ||
-                                      id == ids::kTurnRequestLeft || id == ids::kTurnRequestRight;
+                                      id == ids::kTurnRequestLeft || id == ids::kTurnRequestRight ||
+                                      id == ids::kAccelerationLongitudinal ||
+                                      id == ids::kAccelerationLateral;
     EXPECT(result.value->availability ==
            (freshness_configured ? Availability::Fresh : Availability::FreshnessUnverified));
   }
@@ -785,10 +788,11 @@ void test_brake_catalog_and_read_without_freshness_policy() {
 }
 
 void expect_acceleration_matches(const Harness &harness, const mazda::VehicleState &source) {
-  const auto longitudinal = source.reading_at(source.longitudinal_acceleration_mps2,
-                                              candidate::kAccelerationId, harness.clock.now());
-  const auto lateral = source.reading_at(source.lateral_acceleration_mps2,
-                                         candidate::kAccelerationId, harness.clock.now());
+  const auto snapshot = source.snapshot(harness.clock.now(), mazda::VehicleFreshnessPolicy{});
+  const auto longitudinal = snapshot.reading_at(snapshot.longitudinal_acceleration_mps2,
+                                                candidate::kAccelerationId, harness.clock.now());
+  const auto lateral = snapshot.reading_at(snapshot.lateral_acceleration_mps2,
+                                           candidate::kAccelerationId, harness.clock.now());
   EXPECT(same_reading(*harness.provider.read(ids::kAccelerationLongitudinal).value, longitudinal));
   EXPECT(same_reading(*harness.provider.read(ids::kAccelerationLateral).value, lateral));
 }
@@ -817,10 +821,16 @@ void test_acceleration_matches_source_and_keeps_message_health_independent() {
   EXPECT(
       std::fabs(*harness.provider.read(ids::kAccelerationLongitudinal).value->value->as_number() -
                 10.0F) < 0.0001F);
-  harness.clock.set(500'000);
+  // The default policy remains Fresh at its inclusive 250 ms deadline.
+  harness.clock.set(250'100);
   expect_acceleration_matches(harness, source);
   EXPECT(harness.provider.read(ids::kAccelerationLateral).value->availability ==
-         Availability::FreshnessUnverified);
+         Availability::Fresh);
+
+  harness.clock.set(250'101);
+  expect_acceleration_matches(harness, source);
+  EXPECT(harness.provider.read(ids::kAccelerationLateral).value->availability ==
+         Availability::Stale);
 
   harness.clock.set(500'001);
   const auto malformed = frame(candidate::kAccelerationId, 500'001, {0});
@@ -841,8 +851,7 @@ void test_acceleration_matches_source_and_keeps_message_health_independent() {
   recovered.timestamp_us = 500'002;
   EXPECT(candidate::decode(recovered, source) == candidate::DecodeStatus::Decoded);
   harness.inject(recovered);
-  EXPECT(wait_for_read(harness.provider, ids::kAccelerationLateral,
-                       Availability::FreshnessUnverified));
+  EXPECT(wait_for_read(harness.provider, ids::kAccelerationLateral, Availability::Fresh));
   harness.inject(frame(candidate::kBrakePedalId, 500'002, {0}));
   EXPECT(wait_for_read(harness.provider, ids::kBrakePressed, Availability::Unavailable));
   expect_acceleration_matches(harness, source);

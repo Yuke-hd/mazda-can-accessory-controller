@@ -70,9 +70,9 @@ or decoder types, and does not provide acceleration notifications.
 
 Both readings use the coherent publication's polling descriptors and preserve
 source value presence, availability, and Reference confidence, including
-NoData and Unavailable states. Default freshness remains unset, so a valid
-observation is `FreshnessUnverified`; an explicit caller freshness policy is
-preserved. The candidate axis interpretation and timing evidence remain
+NoData and Unavailable states. The default policy assigns both readings a
+250 ms freshness timeout; a valid observation is `Fresh` until that timeout
+expires. The candidate axis interpretation and source timing evidence remain
 unconfirmed; see [signal evidence](../protocol/signal-evidence.md).
 
 The pinned core 0.1.0 has no acceleration unit enumerator. Its internal source

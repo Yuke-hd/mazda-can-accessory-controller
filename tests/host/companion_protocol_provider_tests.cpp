@@ -112,6 +112,7 @@ std::uint8_t nibble(const LiveFrame &frame, std::size_t slot) {
 constexpr std::size_t kRpmSlot = 0;
 constexpr std::size_t kBrakeSlot = 18;
 constexpr std::uint8_t kValuePresent = 0x08;
+constexpr std::uint8_t kFresh = 1;
 constexpr std::uint8_t kFreshnessUnverified = 3;
 constexpr std::uint8_t kUnavailable = 4;
 
@@ -236,8 +237,8 @@ TEST_CASE("production acceleration arrives as signed SI values with provider ava
   CHECK(observed[25] == 0xFC);
   CHECK(observed[26] == 0xB8); // -1096
   CHECK(observed[27] == 0xFB);
-  CHECK(nibble(observed, 19) == (kValuePresent | kFreshnessUnverified));
-  CHECK(nibble(observed, 20) == (kValuePresent | kFreshnessUnverified));
+  CHECK(nibble(observed, 19) == (kValuePresent | kFresh));
+  CHECK(nibble(observed, 20) == (kValuePresent | kFresh));
   CHECK((observed[23] & 0xF0U) == 0);
   REQUIRE(harness.telemetry.stop().ok());
   const auto stopped = sampler.sample(false).frame(0);
