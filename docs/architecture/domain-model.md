@@ -44,9 +44,10 @@ without introducing transport or board types. `snapshot(now)` evaluates each
 signal's own freshness policy on a value copy and leaves the source state
 unchanged. `reading_at(signal, identifier, now)` additionally applies the
 relevant message and transport health, retaining a last value while reporting
-`Unavailable`. A `VehicleFreshnessPolicy` can supply synthetic or later
-verified per-signal timeouts without adding dynamic storage or asserting
-unverified production defaults. Fixed per-message records reject older or
+`Unavailable`. A `VehicleFreshnessPolicy` supplies per-signal timeouts without
+adding dynamic storage. The default policy includes the 250 ms acceleration
+timeout as an operational fail-off bound; it does not assert source timing
+evidence. Fixed per-message records reject older or
 conflicting frames, latch relevant malformed faults, and clear them only on a
 strictly newer valid frame.
 

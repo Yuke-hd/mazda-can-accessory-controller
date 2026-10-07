@@ -30,9 +30,9 @@ candidate uses an unsigned 16-bit value at scale `0.01`, so `655.35 km/h` is its
 representable maximum. That encoding boundary is not a validated vehicle
 physical limit.
 
-The supplied DBC has no cycle-time declaration. Other signals therefore have
-unconfigured freshness by default; callers can set per-signal timeouts through
+The supplied DBC has no cycle-time declaration. Acceleration uses the explicit
+250 ms operational freshness policy for both axes; other signals have
+unconfigured freshness by default unless callers set per-signal timeouts through
 `VehicleFreshnessPolicy`. `Signal::refresh()` marks an unconfigured value stale
 when time advances, and snapshots do not mutate the source state. Turn/request
-normalization and its 250 ms freshness policy are specified in
-[turn state](turn-state.md).
+normalization and its 250 ms freshness policy are specified in [turn state](turn-state.md).
