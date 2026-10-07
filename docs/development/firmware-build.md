@@ -43,6 +43,10 @@ listen-only behavior under vehicle conditions, LED timing, wiring, termination,
 or physical vehicle acceptance. Report firmware and hardware verification
 separately from host tests.
 
+For the bounded, opt-in investigation of `0x091` freshness incidents, use the
+[CAN freshness debug runbook](can-freshness-debug.md). It keeps the production
+freshness and receive-only policies unchanged.
+
 ## Partition layout
 
 The firmware uses a custom single-app partition table,

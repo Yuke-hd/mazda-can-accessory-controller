@@ -14,6 +14,7 @@
 #include <thread>
 #endif
 
+#include "mazda/debug_telemetry_internal.hpp"
 #include "mazda/decoder.hpp"
 #include "mazda/internal_contracts.hpp"
 #include "mazda/publication_store.hpp"
@@ -23,6 +24,7 @@
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
 #if defined(ESP_PLATFORM)
+#include "sdkconfig.h"
 #include "vehicle_telemetry/can_bus_source.hpp"
 #endif
 
@@ -329,6 +331,8 @@ public:
   [[nodiscard]] StatusResult start() noexcept;
   [[nodiscard]] StatusResult stop() noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
+  [[nodiscard]] DebugSnapshot debug_snapshot() const noexcept;
+  [[nodiscard]] DebugSnapshot debug_stale_snapshot() const noexcept;
 #if !defined(ESP_PLATFORM)
   // Deterministic host composition drains every channel in descriptor order,
   // repeating complete sweeps until no callback remains pending. Only the
@@ -483,6 +487,11 @@ private:
 #endif
   void publish_current(bool received_frame) noexcept;
   void service_due_notifications(vehicle_core::MonotonicTimestamp now_us) noexcept;
+#if defined(MAZDA_ENABLE_DEBUG_TELEMETRY) || defined(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
+  // Record a diagnostic stale transition without dispatching production
+  // notifications. Debug capture must observe policy state, not alter it.
+  void record_debug_due_snapshot(vehicle_core::MonotonicTimestamp now_us) noexcept;
+#endif
   template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] bool
   notification_descriptor_due(const VehicleState &state, vehicle_core::MonotonicTimestamp now_us,
@@ -524,6 +533,21 @@ private:
   // RawCanFrame::timestamp_us, which belongs to decoder observation ordering.
   std::optional<vehicle_core::MonotonicTimestamp> last_transport_receive_us_{};
   vehicle_telemetry::TransportDiagnostics runtime_diagnostics_{};
+#if defined(MAZDA_ENABLE_DEBUG_TELEMETRY) || defined(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
+  DebugRecorder debug_recorder_{};
+  bool debug_frame_pending_{false};
+  bool debug_frame_recorded_{false};
+  vehicle_core::RawCanFrame debug_pending_frame_{};
+  vehicle_telemetry::ProcessStatus debug_pending_status_{vehicle_telemetry::ProcessStatus::Ignored};
+  vehicle_core::MonotonicTimestamp debug_pending_processing_timestamp_us_{0};
+  bool debug_pending_update_not_advanced_{false};
+  bool debug_global_event_pending_{false};
+  std::optional<vehicle_core::MonotonicTimestamp> debug_due_observation_{};
+  vehicle_core::MonotonicTimestamp debug_diagnostics_sample_timestamp_us_{0};
+  DebugSampleSource debug_diagnostics_sample_source_{DebugSampleSource::None};
+  bool debug_observer_frame_callback_{false};
+  vehicle_core::MonotonicTimestamp debug_last_aggregate_refresh_us_{0};
+#endif
 
   SelectorNotificationChannel selector_channel_{};
   ActualGearNotificationChannel actual_gear_channel_{};

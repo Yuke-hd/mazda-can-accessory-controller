@@ -12,6 +12,21 @@ FetchContent_MakeAvailable(doctest)
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 
+add_executable(freshness_debug_rate_limiter_tests
+  freshness_debug_rate_limiter_tests.cpp
+)
+target_include_directories(freshness_debug_rate_limiter_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/firmware/weact-can485-v1.1/main
+)
+target_compile_features(freshness_debug_rate_limiter_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(freshness_debug_rate_limiter_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(freshness_debug_rate_limiter_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME freshness_debug_rate_limiter_tests
+  COMMAND freshness_debug_rate_limiter_tests)
+
 add_executable(telemetry_contract_compile_tests telemetry_contract_compile_tests.cpp)
 target_link_libraries(telemetry_contract_compile_tests PRIVATE mazda_telemetry_contracts
                                                              telemetry_test_support

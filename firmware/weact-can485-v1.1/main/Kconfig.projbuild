@@ -9,4 +9,14 @@ config WEACT_DUMP_INTERRUPT_ALLOCATION
         confirm which core each interrupt was allocated on (ADR-0004). Leave
         this off in vehicle builds.
 
+config WEACT_CAN_FRESHNESS_DEBUG
+    bool "Enable bounded CAN freshness diagnostic logger"
+    default n
+    help
+        Starts a low-priority diagnostic task that polls the opt-in Mazda
+        telemetry snapshots and read-only TWAI status. It emits one compact
+        summary every five seconds and bounded Fresh-to-Stale records. It does
+        not change acquisition, decoding, freshness, publication, LED, or
+        receive-only behavior. Leave this off for normal vehicle images.
+
 endmenu

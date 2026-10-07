@@ -1,11 +1,17 @@
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/clock.cpp" "src/publication_store.cpp"
-                         "src/vehicle_telemetry.cpp"
-                         "src/public_contract_consumer.cpp"
-                         "src/local_argb_binding.cpp"
-                         "src/signal_provider.cpp"
-                         "src/signal_provider_read.cpp"
-                         "src/signal_provider_subscriptions.cpp"
+  set(mazda_telemetry_idf_sources
+      "src/clock.cpp"
+      "src/publication_store.cpp"
+      "src/vehicle_telemetry.cpp"
+      "src/public_contract_consumer.cpp"
+      "src/local_argb_binding.cpp"
+      "src/signal_provider.cpp"
+      "src/signal_provider_read.cpp"
+      "src/signal_provider_subscriptions.cpp")
+  if(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
+    list(APPEND mazda_telemetry_idf_sources "src/debug_telemetry.cpp")
+  endif()
+  idf_component_register(SRCS ${mazda_telemetry_idf_sources}
                          INCLUDE_DIRS "include"
                          PRIV_INCLUDE_DIRS "private_include"
                                          "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda/internal_include"
@@ -21,12 +27,21 @@ add_library(mazda_telemetry STATIC
   src/clock.cpp
   src/publication_store.cpp
   src/vehicle_telemetry.cpp
+  src/debug_telemetry.cpp
   src/public_contract_consumer.cpp
   src/local_argb_binding.cpp
   src/signal_provider.cpp
   src/signal_provider_read.cpp
   src/signal_provider_subscriptions.cpp
 )
+option(MAZDA_ENABLE_DEBUG_TELEMETRY
+       "Compile the opt-in host CAN freshness recorder" OFF)
+if(MAZDA_ENABLE_DEBUG_TELEMETRY)
+  # VehicleTelemetryService is an opaque placement-constructed type, but host
+  # composition tests include its private access seam. Propagate the feature
+  # definition so every translation unit sees the same class layout.
+  target_compile_definitions(mazda_telemetry PUBLIC MAZDA_ENABLE_DEBUG_TELEMETRY=1)
+endif()
 option(MAZDA_ENABLE_TELEMETRY_PROFILING
        "Compile the opt-in host telemetry baseline hooks" OFF)
 if(MAZDA_ENABLE_TELEMETRY_PROFILING)
@@ -199,5 +214,22 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   target_compile_features(mazda_telemetry_signal_subscription_tests PRIVATE cxx_std_17)
   add_test(NAME mazda_telemetry_signal_subscription_tests
            COMMAND mazda_telemetry_signal_subscription_tests)
+
+  if(MAZDA_ENABLE_DEBUG_TELEMETRY)
+    add_executable(mazda_telemetry_debug_telemetry_tests
+      tests/debug_telemetry_tests.cpp
+    )
+    target_include_directories(mazda_telemetry_debug_telemetry_tests PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
+    )
+    target_link_libraries(mazda_telemetry_debug_telemetry_tests PRIVATE
+      mazda_telemetry
+      Threads::Threads
+    )
+    target_compile_features(mazda_telemetry_debug_telemetry_tests PRIVATE cxx_std_17)
+    add_test(NAME mazda_telemetry_debug_telemetry_tests
+             COMMAND mazda_telemetry_debug_telemetry_tests)
+  endif()
 
 endif()
