@@ -300,6 +300,8 @@ struct TelemetryProfilerHooks final {
   void (*lighting_evaluation)(void *context) noexcept {nullptr};
   void (*notification_evaluation_begin)(void *context) noexcept {nullptr};
   void (*notification_evaluation_end)(void *context, std::size_t evaluations) noexcept {nullptr};
+  void (*notification_descriptor_evaluation)(void *context,
+                                             std::uint32_t identifier) noexcept {nullptr};
   void (*notification_dispatch_begin)(void *context) noexcept {nullptr};
   void (*notification_dispatch_end)(void *context, std::size_t delivered) noexcept {nullptr};
 };
@@ -480,13 +482,23 @@ private:
   static void dispatcher_task_entry(void *context) noexcept;
 #endif
   void publish_current(bool received_frame) noexcept;
+  void service_due_notifications(vehicle_core::MonotonicTimestamp now_us) noexcept;
+  template <typename T, std::uint16_t ChannelId>
+  [[nodiscard]] bool
+  notification_descriptor_due(const VehicleState &state, vehicle_core::MonotonicTimestamp now_us,
+                              const NotificationDescriptor<T, ChannelId> &descriptor,
+                              std::size_t descriptor_index) const noexcept;
   template <typename T, std::uint16_t ChannelId>
   void
   publish_notification_descriptor(const VehicleState &state, const Diagnostics &diagnostics,
                                   vehicle_core::MonotonicTimestamp now_us,
                                   const NotificationDescriptor<T, ChannelId> &descriptor) noexcept;
-  void publish_notifications(const VehicleState &state, const Diagnostics &diagnostics,
-                             vehicle_core::MonotonicTimestamp now_us) noexcept;
+  [[nodiscard]] std::size_t publish_notifications(const VehicleState &state,
+                                                  const Diagnostics &diagnostics,
+                                                  vehicle_core::MonotonicTimestamp now_us,
+                                                  std::optional<std::uint32_t> affected_identifier,
+                                                  bool global_health_transition,
+                                                  bool include_lighting) noexcept;
   void publish_lighting(const VehicleState &state, const Diagnostics &diagnostics,
                         vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] bool workers_done() const noexcept;
@@ -535,6 +547,8 @@ private:
 #endif
   std::array<Registration, kSubscriptionCapacity> registrations_{};
   std::array<SignalSubscriptionRecord, kGenericSubscriptionCapacity> generic_records_{};
+  std::array<std::optional<vehicle_core::MonotonicTimestamp>, kNotificationChannelCount>
+      notification_due_observations_{};
 
   mutable std::mutex lifecycle_mutex_{};
   // The first lifecycle mutation establishes the owner. That owner remains
@@ -552,6 +566,10 @@ private:
   std::atomic<bool> dispatcher_done_{true};
   std::atomic<std::size_t> dispatch_cursor_{0};
   std::atomic<std::uint32_t> dispatch_progress_{0};
+  LifecycleState published_lifecycle_{LifecycleState::Stopped};
+  vehicle_core::TransportHealth published_transport_{vehicle_core::TransportHealth::Stopped};
+  bool published_health_initialized_{false};
+  std::optional<std::uint32_t> pending_observation_identifier_{};
 #if defined(ESP_PLATFORM)
   void *dispatcher_task_{nullptr};
 #else
