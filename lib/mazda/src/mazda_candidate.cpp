@@ -3,6 +3,18 @@
 namespace mazda::candidate {
 namespace {
 
+#if defined(MAZDA_ENABLE_DECODER_CALL_PROBING)
+DecoderCallObserver g_decoder_call_observer{nullptr};
+
+void observe_decoder_call(const std::uint32_t identifier) noexcept {
+  if (g_decoder_call_observer != nullptr)
+    g_decoder_call_observer(identifier);
+}
+#define MAZDA_OBSERVE_DECODER_CALL(identifier) observe_decoder_call(identifier)
+#else
+#define MAZDA_OBSERVE_DECODER_CALL(identifier) ((void)0)
+#endif
+
 void initialize_observation(const vehicle_core::RawCanFrame &frame,
                             vehicle_core::DecoderObservation *observation) noexcept {
   if (observation == nullptr)
@@ -150,6 +162,7 @@ TurnState normalize_turn(const bool hazard, const bool left, const bool right) n
 DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                 vehicle_core::DecoderObservation *observation,
                                 vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kEngineDataId);
   const auto classification = classify_frame(frame, kEngineDataId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -202,6 +215,7 @@ DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleS
 DecodeStatus decode_gear(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                          vehicle_core::DecoderObservation *observation,
                          vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kGearId);
   const auto classification = classify_frame(frame, kGearId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -250,6 +264,7 @@ DecodeStatus decode_gear(const vehicle_core::RawCanFrame &frame, VehicleState &s
 DecodeStatus decode_doors(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                           vehicle_core::DecoderObservation *observation,
                           vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kDoorsId);
   const auto classification = classify_frame(frame, kDoorsId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -295,6 +310,7 @@ DecodeStatus decode_doors(const vehicle_core::RawCanFrame &frame, VehicleState &
 DecodeStatus decode_blink_info(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                vehicle_core::DecoderObservation *observation,
                                vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kBlinkInfoId);
   const auto classification = classify_frame(frame, kBlinkInfoId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -334,6 +350,7 @@ DecodeStatus decode_turn_switch(const vehicle_core::RawCanFrame &frame, VehicleS
                                 std::optional<TurnEdgeEvent> *edge,
                                 vehicle_core::DecoderObservation *observation,
                                 vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kTurnSwitchId);
   if (edge != nullptr)
     edge->reset();
   const auto classification = classify_frame(frame, kTurnSwitchId, observation);
@@ -385,6 +402,7 @@ DecodeStatus decode_turn_switch(const vehicle_core::RawCanFrame &frame, VehicleS
 DecodeStatus decode_brake_pedal(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                 vehicle_core::DecoderObservation *observation,
                                 vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kBrakePedalId);
   const auto classification = classify_frame(frame, kBrakePedalId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -417,6 +435,7 @@ DecodeStatus decode_brake_pedal(const vehicle_core::RawCanFrame &frame, VehicleS
 DecodeStatus decode_acceleration(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                  vehicle_core::DecoderObservation *observation,
                                  vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kAccelerationId);
   const auto classification = classify_frame(frame, kAccelerationId, observation);
   if (classification != DecodeStatus::Decoded) {
     if (classification == DecodeStatus::Malformed)
@@ -462,26 +481,58 @@ DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                     vehicle_core::HealthObservation *health) noexcept {
   if (edge != nullptr)
     edge->reset();
-  // Route acceleration before generic frame validity can be returned by an
-  // unrelated decoder, so malformed 0x078 frames fault their own record.
-  if (frame.identifier == kAccelerationId)
+  // RawCanFrame validity is checked by the first engine decoder in the
+  // historical probe chain. Keep that outcome (including its engine health
+  // record) for invalid non-acceleration frames before routing by identifier.
+  // Acceleration has always had its own first-pass path so malformed 0x078
+  // observations fault the acceleration record instead.
+  if (!frame.is_valid()) {
+    if (frame.identifier == kAccelerationId)
+      return decode_acceleration(frame, state, observation, health);
+    return decode_engine_data(frame, state, observation, health);
+  }
+
+  // Extended and remote frames for non-acceleration IDs historically passed
+  // through every decoder and ended at the brake decoder's ignored result.
+  // Preserve that optional health contract without probing unrelated owners.
+  if (frame.identifier_format != vehicle_core::CanIdentifierFormat::Standard ||
+      frame.remote_request) {
+    if (frame.identifier == kAccelerationId)
+      return decode_acceleration(frame, state, observation, health);
+    initialize_observation(frame, observation);
+    finish_health(state, kBrakePedalId, vehicle_core::SignalHealth::Unavailable, health);
+    return DecodeStatus::Ignored;
+  }
+
+  switch (frame.identifier) {
+  case kEngineDataId:
+    return decode_engine_data(frame, state, observation, health);
+  case kGearId:
+    return decode_gear(frame, state, observation, health);
+  case kDoorsId:
+    return decode_doors(frame, state, observation, health);
+  case kBlinkInfoId:
+    return decode_blink_info(frame, state, observation, health);
+  case kTurnSwitchId:
+    return decode_turn_switch(frame, state, edge, observation, health);
+  case kBrakePedalId:
+    return decode_brake_pedal(frame, state, observation, health);
+  case kAccelerationId:
     return decode_acceleration(frame, state, observation, health);
-  const auto engine_status = decode_engine_data(frame, state, observation, health);
-  if (engine_status != DecodeStatus::Ignored)
-    return engine_status;
-  const auto gear_status = decode_gear(frame, state, observation, health);
-  if (gear_status != DecodeStatus::Ignored)
-    return gear_status;
-  const auto doors_status = decode_doors(frame, state, observation, health);
-  if (doors_status != DecodeStatus::Ignored)
-    return doors_status;
-  const auto blink_status = decode_blink_info(frame, state, observation, health);
-  if (blink_status != DecodeStatus::Ignored)
-    return blink_status;
-  const auto turn_status = decode_turn_switch(frame, state, edge, observation, health);
-  if (turn_status != DecodeStatus::Ignored)
-    return turn_status;
-  return decode_brake_pedal(frame, state, observation, health);
+  default:
+    // A valid, standard, unowned frame was ignored by every decoder in the
+    // probe chain. Its final observable health was the brake decoder's
+    // unavailable signal; reproduce that value without calling an owner.
+    initialize_observation(frame, observation);
+    finish_health(state, kBrakePedalId, vehicle_core::SignalHealth::Unavailable, health);
+    return DecodeStatus::Ignored;
+  }
 }
+
+#if defined(MAZDA_ENABLE_DECODER_CALL_PROBING)
+void set_decoder_call_observer(const DecoderCallObserver observer) noexcept {
+  g_decoder_call_observer = observer;
+}
+#endif
 
 } // namespace mazda::candidate

@@ -779,10 +779,11 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
   if (host_options_.profiler != nullptr && host_options_.profiler->decode_begin != nullptr)
     host_options_.profiler->decode_begin(host_options_.profiler->context);
 #endif
-  std::optional<TurnEdgeEvent> edge{};
-  vehicle_core::DecoderObservation observation{};
-  vehicle_core::HealthObservation health{};
-  const auto status = candidate::decode(frame, processing_state_, &edge, &observation, &health);
+  // The service consumes only the decoder status and updated processing state.
+  // Edge, observation, and per-frame health are optional decoder diagnostics;
+  // omitting them avoids constructing and populating discarded outputs while
+  // leaving direct decoder callers' contracts unchanged.
+  const auto status = candidate::decode(frame, processing_state_);
   vehicle_telemetry::ProcessResult result{};
   switch (status) {
   case vehicle_core::DecodeValidity::Decoded:

@@ -47,7 +47,7 @@ jobs:
           test "${#sources[@]}" -gt 0
           clang-format-14 --dry-run --Werror "${sources[@]}"
       - name: Configure host tests
-        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_ENABLE_TELEMETRY_PROFILING=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_ENABLE_TELEMETRY_PROFILING=ON -DMAZDA_ENABLE_DECODER_CALL_PROBING=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build host tests
         run: cmake --build build/host --parallel
       - name: Run host tests
@@ -78,6 +78,7 @@ jobs:
             -DBUILD_TESTING=ON \
             -DMAZDA_BUILD_HOST_TESTS=ON \
             -DMAZDA_ENABLE_TELEMETRY_PROFILING=ON \
+            -DMAZDA_ENABLE_DECODER_CALL_PROBING=ON \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
       - name: Build portable and service tests with sanitizers

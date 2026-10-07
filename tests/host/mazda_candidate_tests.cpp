@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <string>
 
 #include "../support/direct_frame_feeder.hpp"
@@ -26,7 +27,92 @@ vehicle_core::RawCanFrame frame(const std::uint32_t id, const std::uint64_t time
   return result;
 }
 
+template <typename T>
+bool same_signal(const vehicle_core::Signal<T> &left,
+                 const vehicle_core::Signal<T> &right) noexcept {
+  return left.value == right.value && left.unit == right.unit &&
+         left.has_value == right.has_value && left.last_update_us == right.last_update_us &&
+         left.freshness_timeout_us == right.freshness_timeout_us && left.status == right.status;
+}
+
+// Keep this explicit comparison in lockstep with every signal and
+// MessageHealthState field in lib/mazda/include/mazda/state.hpp; avoid a
+// sizeof-based comparison whose result could depend on platform padding.
+bool same_state(const mazda::VehicleState &left, const mazda::VehicleState &right) noexcept {
+  if (left.timestamp_us != right.timestamp_us || !same_signal(left.speed_kph, right.speed_kph) ||
+      !same_signal(left.engine_rpm, right.engine_rpm) ||
+      !same_signal(left.longitudinal_acceleration_mps2, right.longitudinal_acceleration_mps2) ||
+      !same_signal(left.lateral_acceleration_mps2, right.lateral_acceleration_mps2) ||
+      !same_signal(left.selector_position, right.selector_position) ||
+      !same_signal(left.actual_gear, right.actual_gear) ||
+      !same_signal(left.turn_state, right.turn_state) ||
+      !same_signal(left.hazard_request, right.hazard_request) ||
+      !same_signal(left.left_turn_request, right.left_turn_request) ||
+      !same_signal(left.right_turn_request, right.right_turn_request) ||
+      !same_signal(left.brake_pressed, right.brake_pressed) ||
+      !same_signal(left.liftgate_open, right.liftgate_open) ||
+      !same_signal(left.rear_right_door_open, right.rear_right_door_open) ||
+      !same_signal(left.rear_left_door_open, right.rear_left_door_open) ||
+      !same_signal(left.front_left_door_open_rhd, right.front_left_door_open_rhd) ||
+      !same_signal(left.front_right_door_open_rhd, right.front_right_door_open_rhd) ||
+      !same_signal(left.doors_unlocked, right.doors_unlocked) ||
+      !same_signal(left.left_indicator_lamp, right.left_indicator_lamp) ||
+      !same_signal(left.right_indicator_lamp, right.right_indicator_lamp) ||
+      !same_signal(left.wiper_low, right.wiper_low) ||
+      !same_signal(left.front_wiper, right.front_wiper))
+    return false;
+
+  for (std::size_t index = 0; index < left.message_health.size(); ++index) {
+    const auto &left_message = left.message_health[index];
+    const auto &right_message = right.message_health[index];
+    if (left_message.identifier != right_message.identifier ||
+        left_message.has_frame != right_message.has_frame ||
+        left_message.last_frame_us != right_message.last_frame_us ||
+        left_message.has_accepted != right_message.has_accepted ||
+        left_message.last_accepted_us != right_message.last_accepted_us ||
+        left_message.health != right_message.health ||
+        left_message.fault_timestamp_us != right_message.fault_timestamp_us ||
+        left_message.bus_id != right_message.bus_id || left_message.dlc != right_message.dlc ||
+        left_message.identifier_format != right_message.identifier_format ||
+        left_message.remote_request != right_message.remote_request ||
+        left_message.data != right_message.data)
+      return false;
+  }
+  return true;
+}
+
 } // namespace
+
+#if defined(MAZDA_ENABLE_DECODER_CALL_PROBING)
+namespace {
+
+struct DecoderCallCounts final {
+  std::array<std::uint32_t, 7> identifiers{};
+  std::array<std::size_t, 7> calls{};
+  std::size_t total{0};
+
+  void reset() noexcept {
+    calls.fill(0);
+    total = 0;
+  }
+};
+
+DecoderCallCounts *g_decoder_call_counts{nullptr};
+
+void observe_decoder_call(const std::uint32_t identifier) noexcept {
+  if (g_decoder_call_counts == nullptr)
+    return;
+  ++g_decoder_call_counts->total;
+  for (std::size_t index = 0; index < g_decoder_call_counts->identifiers.size(); ++index) {
+    if (g_decoder_call_counts->identifiers[index] == identifier) {
+      ++g_decoder_call_counts->calls[index];
+      return;
+    }
+  }
+}
+
+} // namespace
+#endif
 
 TEST_CASE("confirmed definitions retain DBC provenance and exact metadata") {
   using namespace mazda::candidate;
@@ -140,6 +226,168 @@ TEST_CASE("candidate decoders reject wrong DLC, extended, remote, and other IDs"
   const auto other = frame(0x201, 4, {0, 0, 0, 0, 0, 0, 0, 0});
   CHECK(mazda::candidate::decode(other, state) == mazda::candidate::DecodeStatus::Ignored);
 }
+
+TEST_CASE("top-level routing preserves malformed and ignored observation contracts") {
+  using namespace mazda::candidate;
+
+  mazda::VehicleState state{};
+  vehicle_core::DecoderObservation observation{};
+  vehicle_core::HealthObservation health{};
+  health.transport = vehicle_core::TransportHealth::TimedOut;
+
+  // A valid, standard, unowned frame previously reached the final brake
+  // decoder after every owner rejected it. Its result stays ignored and the
+  // transport health is preserved while no message record is created.
+  const auto unrelated = frame(0x201, 10, {0, 0, 0, 0, 0, 0, 0, 0});
+  CHECK(decode(unrelated, state, nullptr, &observation, &health) == DecodeStatus::Ignored);
+  CHECK(observation.validity == DecodeStatus::Ignored);
+  CHECK(observation.identifier == unrelated.identifier);
+  CHECK(observation.timestamp_us == unrelated.timestamp_us);
+  CHECK(observation.dlc == unrelated.dlc);
+  CHECK(health.transport == vehicle_core::TransportHealth::TimedOut);
+  CHECK(health.message == vehicle_core::MessageHealth::Unknown);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  CHECK(state.message_health_for(unrelated.identifier) == nullptr);
+
+  // Wrong DLC on a supported identifier is still owned and therefore faults
+  // that decoder, while an invalid RawCanFrame remains classified by the
+  // historical engine-first validity path.
+  const auto short_turn = frame(kTurnSwitchId, 20, {0}, 7);
+  REQUIRE(decode(short_turn, state, nullptr, &observation, &health) == DecodeStatus::Malformed);
+  CHECK(observation.validity == DecodeStatus::Malformed);
+  CHECK(health.message == vehicle_core::MessageHealth::Faulted);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  CHECK(state.message_health_for(kTurnSwitchId) != nullptr);
+
+  auto invalid = frame(kTurnSwitchId, 30, {0, 0, 0, 0, 0, 0, 0, 0});
+  invalid.identifier_format = static_cast<vehicle_core::CanIdentifierFormat>(0xff);
+  REQUIRE_FALSE(invalid.is_valid());
+  // The invalid frame is handled by the engine-first validity check and must
+  // not create a turn fault merely because its identifier names TURN_SWITCH.
+  mazda::VehicleState invalid_state{};
+  health = {};
+  REQUIRE(decode(invalid, invalid_state, nullptr, &observation, &health) ==
+          DecodeStatus::Malformed);
+  CHECK(observation.validity == DecodeStatus::Malformed);
+  CHECK(health.message == vehicle_core::MessageHealth::Unknown);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+  CHECK(invalid_state.message_health_for(kEngineDataId) == nullptr);
+  CHECK(invalid_state.message_health_for(kTurnSwitchId) == nullptr);
+
+  auto extended = frame(kTurnSwitchId, 40, {0, 0, 0, 0, 0, 0, 0, 0});
+  extended.identifier_format = vehicle_core::CanIdentifierFormat::Extended;
+  health = {};
+  health.transport = vehicle_core::TransportHealth::Live;
+  REQUIRE(decode(extended, state, nullptr, &observation, &health) == DecodeStatus::Ignored);
+  CHECK(observation.validity == DecodeStatus::Ignored);
+  CHECK(health.transport == vehicle_core::TransportHealth::Live);
+  CHECK(health.message == vehicle_core::MessageHealth::Unknown);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+
+  auto remote = frame(kEngineDataId, 50, {0, 0, 0, 0, 0, 0, 0, 0});
+  remote.remote_request = true;
+  health = {};
+  health.transport = vehicle_core::TransportHealth::Live;
+  REQUIRE(decode(remote, state, nullptr, &observation, &health) == DecodeStatus::Ignored);
+  CHECK(observation.validity == DecodeStatus::Ignored);
+  CHECK(health.transport == vehicle_core::TransportHealth::Live);
+  CHECK(health.message == vehicle_core::MessageHealth::Unknown);
+  CHECK(health.signal == vehicle_core::SignalHealth::Unavailable);
+}
+
+TEST_CASE("omitting decoder diagnostics preserves state across every routing outcome") {
+  using namespace mazda::candidate;
+
+  // Exercise every owned ID, an unowned ID, extended and remote attempts, an
+  // invalid frame, and the timestamp-watermark cases on acceleration. The
+  // service uses the diagnostics-free call; direct callers retain the richer
+  // output contract, so both paths must leave identical state and status.
+  auto invalid = frame(kEngineDataId, 205, {0, 0, 0, 0, 0, 0, 0, 0});
+  invalid.identifier_format = static_cast<vehicle_core::CanIdentifierFormat>(0xff);
+  auto extended = frame(kTurnSwitchId, 203, {0, 0, 0, 0, 0, 0, 0, 0});
+  extended.identifier_format = vehicle_core::CanIdentifierFormat::Extended;
+  auto remote = frame(kBrakePedalId, 204, {0, 0, 0, 0, 0, 0, 0, 0});
+  remote.remote_request = true;
+
+  const auto accepted = frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80});
+  const std::array frames{
+      frame(kEngineDataId, 10, {0x09, 0x5b, 0, 0, 0, 0, 0, 0}),
+      frame(kGearId, 11, {0x24, 0x81, 0x07, 0xff, 0x04, 0xf0, 0, 0}),
+      frame(kDoorsId, 12, {0x7f, 0, 0, 0, 0, 0, 0, 0}),
+      frame(kBlinkInfoId, 13, {0x0c, 0x02, 0, 0, 0, 0, 0, 0}),
+      frame(kTurnSwitchId, 14, {0, 0, 0, 0, 0, 0, 0, 0}),
+      frame(kBrakePedalId, 15, {0x10, 0, 0, 0, 0, 0, 0, 0}),
+      accepted,
+      accepted,
+      frame(kAccelerationId, 100, {0x1f, 0x41}),                // equal-time conflict
+      frame(kAccelerationId, 99, {0x27, 0x11, 0x38, 0x80}),     // older observation
+      frame(kAccelerationId, 200, {0x27, 0x11, 0x38, 0x80}, 7), // fault
+      frame(kAccelerationId, 200, {0x27, 0x11, 0x38, 0x80}),    // equal-time recovery
+      frame(kAccelerationId, 201, {0x27, 0x11, 0x38, 0x80}),    // newer recovery
+      frame(0x201, 202, {0, 0, 0, 0, 0, 0, 0, 0}),
+      extended,
+      remote,
+      invalid,
+  };
+
+  mazda::VehicleState with_outputs{};
+  mazda::VehicleState without_outputs{};
+  for (std::size_t index = 0; index < frames.size(); ++index) {
+    vehicle_core::DecoderObservation observation{};
+    vehicle_core::HealthObservation health{};
+    health.transport = static_cast<vehicle_core::TransportHealth>(index % 4);
+    std::optional<mazda::TurnEdgeEvent> edge{};
+    const auto with_status = decode(frames[index], with_outputs, &edge, &observation, &health);
+    const auto without_status = decode(frames[index], without_outputs);
+    CHECK(with_status == without_status);
+    CHECK(same_state(with_outputs, without_outputs));
+  }
+}
+
+#if defined(MAZDA_ENABLE_DECODER_CALL_PROBING)
+TEST_CASE("top-level routing calls one owner and skips valid unowned frames") {
+  using namespace mazda::candidate;
+
+  DecoderCallCounts counts{{kEngineDataId, kGearId, kDoorsId, kBlinkInfoId, kTurnSwitchId,
+                            kBrakePedalId, kAccelerationId}};
+  g_decoder_call_counts = &counts;
+  set_decoder_call_observer(&observe_decoder_call);
+
+  const std::array<std::uint32_t, 7> owned_ids{counts.identifiers};
+  for (const auto identifier : owned_ids) {
+    counts.reset();
+    mazda::VehicleState state{};
+    CHECK(decode(frame(identifier, 100, {0, 0, 0, 0, 0, 0, 0, 0}), state) == DecodeStatus::Decoded);
+    CHECK(counts.total == 1);
+    for (std::size_t index = 0; index < counts.identifiers.size(); ++index)
+      CHECK(counts.calls[index] == (counts.identifiers[index] == identifier ? 1 : 0));
+  }
+
+  counts.reset();
+  mazda::VehicleState state{};
+  CHECK(decode(frame(0x201, 200, {0, 0, 0, 0, 0, 0, 0, 0}), state) == DecodeStatus::Ignored);
+  CHECK(counts.total == 0);
+
+  auto extended = frame(kTurnSwitchId, 201, {0, 0, 0, 0, 0, 0, 0, 0});
+  extended.identifier_format = vehicle_core::CanIdentifierFormat::Extended;
+  CHECK(decode(extended, state) == DecodeStatus::Ignored);
+  CHECK(counts.total == 0);
+
+  auto remote = frame(kEngineDataId, 202, {0, 0, 0, 0, 0, 0, 0, 0});
+  remote.remote_request = true;
+  CHECK(decode(remote, state) == DecodeStatus::Ignored);
+  CHECK(counts.total == 0);
+
+  auto invalid = frame(kTurnSwitchId, 203, {0, 0, 0, 0, 0, 0, 0, 0});
+  invalid.identifier_format = static_cast<vehicle_core::CanIdentifierFormat>(0xff);
+  CHECK(decode(invalid, state) == DecodeStatus::Malformed);
+  CHECK(counts.total == 1);
+  CHECK(counts.calls[0] == 1);
+
+  set_decoder_call_observer(nullptr);
+  g_decoder_call_counts = nullptr;
+}
+#endif
 
 TEST_CASE("GEAR keeps selector and actual transmission gear independent") {
   // Synthetic vector from the issue acceptance example: Drive, second gear.

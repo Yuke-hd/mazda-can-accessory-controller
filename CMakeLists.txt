@@ -54,6 +54,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(MAZDA_BUILD_HOST_TESTS "Build Mazda accessory host tests" ${BUILD_TESTING})
+option(MAZDA_ENABLE_DECODER_CALL_PROBING
+       "Compile host-only decoder routing call-count probes" OFF)
 
 add_subdirectory(lib/mazda)
 add_subdirectory(lib/gvret)

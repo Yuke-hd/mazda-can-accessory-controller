@@ -86,6 +86,35 @@ observed host stage totals. Keep any budget explicitly host-only and tied to
 the recorded build revision and compiler settings. Do not promote it to a
 firmware, bench, or vehicle budget.
 
+## Issue #212 routing comparison
+
+The five-repeat Release comparison for #212 used baseline revision `9888241`
+and the candidate working tree containing the decoder-routing change. Both
+builds used the same pinned generic-core checkout, AppleClang 17, C++17,
+`-O3 -DNDEBUG`, `-Wall -Wextra -Wpedantic`, BLE off, and the same synthetic
+fixture and subscriptions. `MAZDA_ENABLE_DECODER_CALL_PROBING=OFF` was used
+for both timing builds so the measurement does not include probe overhead. The
+runner produced 110 reports per build; the stage-timer rows recorded these
+decoder ranges as min/median/max nanoseconds across repeats:
+
+| Scenario | Baseline `9888241` | Candidate |
+| --- | ---: | ---: |
+| Supported mix | 45,120 / 109,753 / 121,215 | 53,168 / 73,411 / 99,368 |
+| Malformed owned | 26,831 / 39,026.5 / 57,114 | 13,210 / 22,376 / 26,918 |
+| Ready unowned | 23,336 / 28,565 / 57,073 | 6,754 / 7,900 / 10,213 |
+| Finite FIFO burst | 8,255 / 18,081 / 19,918 | 2,623 / 4,207 / 8,340 |
+
+The runner used `--skip-build`, so its `build_revision` and `source_dirty`
+fields were `unknown`. The baseline archive was nevertheless fixed at
+`9888241`, and the candidate was the working tree containing this change; the
+compiler, flags, pinned core checkout, and probe setting above describe both
+builds. Wall windows remain host scheduling evidence; the overlapping ranges do
+not support a wall-time speedup claim. The opt-in call-count build separately
+recorded exactly one owner call for each supported standard ID, zero calls for
+valid unowned and non-acceleration extended/remote frames, and one engine call
+for an invalid non-acceleration frame. The normal timing build had probing
+disabled.
+
 The `wall_ns` window starts after the service and action composition has been
 constructed and ends before stop/detach. Aggregate stage and callback counters
 remain active during construction and teardown, so they include lifecycle
