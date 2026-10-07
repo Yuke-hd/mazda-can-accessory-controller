@@ -1,5 +1,6 @@
 if(COMMAND idf_component_register)
-  idf_component_register(SRCS "src/clock.cpp" "src/vehicle_telemetry.cpp"
+  idf_component_register(SRCS "src/clock.cpp" "src/publication_store.cpp"
+                         "src/vehicle_telemetry.cpp"
                          "src/public_contract_consumer.cpp"
                          "src/local_argb_binding.cpp"
                          "src/signal_provider.cpp"
@@ -18,6 +19,7 @@ endif()
 # private state, task handles, synchronization, or clock seams.
 add_library(mazda_telemetry STATIC
   src/clock.cpp
+  src/publication_store.cpp
   src/vehicle_telemetry.cpp
   src/public_contract_consumer.cpp
   src/local_argb_binding.cpp
@@ -86,6 +88,7 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   add_executable(mazda_telemetry_esp_clock_tests
     tests/esp_clock_tests.cpp
     src/clock.cpp
+    src/publication_store.cpp
   )
   target_compile_definitions(mazda_telemetry_esp_clock_tests PRIVATE ESP_PLATFORM=1)
   target_include_directories(mazda_telemetry_esp_clock_tests PRIVATE
@@ -94,8 +97,7 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
   )
-  target_link_libraries(mazda_telemetry_esp_clock_tests PRIVATE mazda_telemetry
-                                                               Threads::Threads)
+  target_link_libraries(mazda_telemetry_esp_clock_tests PRIVATE mazda Threads::Threads)
   target_compile_features(mazda_telemetry_esp_clock_tests PRIVATE cxx_std_17)
   add_test(NAME mazda_telemetry_esp_clock_tests
            COMMAND mazda_telemetry_esp_clock_tests)
