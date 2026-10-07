@@ -790,8 +790,7 @@ void test_brake_catalog_and_read_without_freshness_policy() {
 void expect_acceleration_matches(const Harness &harness, const mazda::VehicleState &source) {
   const auto snapshot = source.snapshot(harness.clock.now(), mazda::VehicleFreshnessPolicy{});
   const auto longitudinal = snapshot.reading_at(snapshot.longitudinal_acceleration_mps2,
-                                                candidate::kAccelerationId,
-                                                harness.clock.now());
+                                                candidate::kAccelerationId, harness.clock.now());
   const auto lateral = snapshot.reading_at(snapshot.lateral_acceleration_mps2,
                                            candidate::kAccelerationId, harness.clock.now());
   EXPECT(same_reading(*harness.provider.read(ids::kAccelerationLongitudinal).value, longitudinal));
