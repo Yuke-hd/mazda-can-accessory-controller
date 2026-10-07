@@ -13,6 +13,17 @@ the façade without manually receiving frames, decoding signals, managing
 freshness, dispatching notifications, or driving the LED. See
 [Firmware composition](../../architecture/firmware-composition.md).
 
+## Clock domain
+
+The ESP default `mazda::internal::SteadyClock` reads
+`esp_timer_get_time()` directly. CAN acquisition timestamps and the WeAct
+application clock use that same ESP-IDF boot-scoped monotonic microsecond
+domain, so freshness ages and transport watermarks compare compatible values.
+Host composition continues to inject any `vehicle_core::MonotonicClock`, which
+keeps deterministic tests independent of the host's system clock. Freshness
+timeouts, inclusive freshness boundaries, source timestamp ordering, and
+fail-off policy do not depend on the clock implementation.
+
 ## Subscriptions and lifecycle
 
 Each notification channel has two fixed subscriber slots. A subscription
