@@ -199,6 +199,37 @@ void configure_runtime(vehicle_telemetry::Runtime &runtime,
   (void)runtime.configure(runtime_config);
 }
 
+bool transport_requires_failoff(const vehicle_core::TransportHealth transport) noexcept {
+  return transport == vehicle_core::TransportHealth::TimedOut ||
+         transport == vehicle_core::TransportHealth::Faulted ||
+         transport == vehicle_core::TransportHealth::Stopped;
+}
+
+bool requires_global_health_evaluation(const LifecycleState previous_lifecycle,
+                                       const vehicle_core::TransportHealth previous_transport,
+                                       const LifecycleState lifecycle,
+                                       const vehicle_core::TransportHealth transport,
+                                       const bool initialized) noexcept {
+  if (!initialized)
+    return true;
+  // A transport/lifecycle failure is a global availability boundary. Publish
+  // every owned group once so each subscriber sees the existing fail-off
+  // evidence, even when the failing receive was unrelated to that group.
+  if ((lifecycle != previous_lifecycle || transport != previous_transport) &&
+      (lifecycle == LifecycleState::Faulted || transport_requires_failoff(transport)))
+    return true;
+  // Recovery is also global: a newer frame can restore transport health for
+  // every message group, while each group still retains its own message and
+  // freshness evidence.
+  if (lifecycle == LifecycleState::Running &&
+      (previous_lifecycle == LifecycleState::Faulted ||
+       previous_transport == vehicle_core::TransportHealth::TimedOut ||
+       previous_transport == vehicle_core::TransportHealth::Faulted) &&
+      transport == vehicle_core::TransportHealth::Live)
+    return true;
+  return false;
+}
+
 } // namespace
 
 const PollingDescriptorTuple &VehicleTelemetryService::polling_descriptors() noexcept {
@@ -513,6 +544,7 @@ StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) n
   if (result.ok()) {
     record_policy_application();
     config_ = config;
+    notification_due_observations_.fill(std::nullopt);
     vehicle_telemetry::RuntimeConfig runtime_config{};
     runtime_config.receive_timeout_ms =
         static_cast<std::uint32_t>(std::max<vehicle_core::Microseconds>(
@@ -660,6 +692,9 @@ StatusResult VehicleTelemetryService::start() noexcept {
   processing_state_ = VehicleState{};
   processing_state_.apply_freshness_policy(config_.freshness);
   record_policy_application();
+  notification_due_observations_.fill(std::nullopt);
+  pending_observation_identifier_.reset();
+  published_health_initialized_ = false;
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
   lighting_sent_ = false;
@@ -782,6 +817,12 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   reset_publication(
       Diagnostics{LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped, acquisition});
   processing_state_ = VehicleState{};
+  processing_state_changed_ = false;
+  notification_due_observations_.fill(std::nullopt);
+  pending_observation_identifier_.reset();
+  published_lifecycle_ = LifecycleState::Stopped;
+  published_transport_ = vehicle_core::TransportHealth::Stopped;
+  published_health_initialized_ = true;
   last_transport_receive_us_.reset();
   lifecycle_state_.store(LifecycleState::Stopped, std::memory_order_release);
   return {was_faulted ? ResultCode::Faulted : ResultCode::Ok};
@@ -808,6 +849,8 @@ void VehicleTelemetryService::reset() noexcept {
   processing_state_.apply_freshness_policy(config_.freshness);
   record_policy_application();
   processing_state_changed_ = false;
+  notification_due_observations_.fill(std::nullopt);
+  pending_observation_identifier_.reset();
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
   lighting_sent_ = false;
@@ -816,6 +859,13 @@ void VehicleTelemetryService::reset() noexcept {
 
 vehicle_telemetry::ProcessResult
 VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcept {
+  // Service freshness before decoding. A frame can arrive after a signal's
+  // deadline but before the previous unavailable notice has been dispatched;
+  // publishing the pre-observation state first preserves both the due
+  // transition and the newer recovery in NotificationChannel's coalesced
+  // evidence.
+  pending_observation_identifier_ = frame.identifier;
+  service_due_notifications(clock_->now());
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->decode_begin != nullptr)
     host_options_.profiler->decode_begin(host_options_.profiler->context);
@@ -933,6 +983,9 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
   const auto acquisition = acquisition_metrics(runtime_diagnostics_);
   const auto lifecycle = lifecycle_state_.load(std::memory_order_acquire);
   const Diagnostics diagnostics{lifecycle, runtime_diagnostics_.transport, acquisition};
+  const bool global_health_transition =
+      requires_global_health_evaluation(published_lifecycle_, published_transport_, lifecycle,
+                                        diagnostics.transport, published_health_initialized_);
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->publication_begin != nullptr)
     host_options_.profiler->publication_begin(host_options_.profiler->context);
@@ -957,13 +1010,67 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
     host_options_.profiler->notification_evaluation_begin(host_options_.profiler->context);
 #endif
   const auto now_us = clock_->now();
-  publish_notifications(processing_state_, diagnostics, now_us);
+  const auto evaluations =
+      publish_notifications(processing_state_, diagnostics, now_us, pending_observation_identifier_,
+                            global_health_transition, true);
+  pending_observation_identifier_.reset();
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr &&
       host_options_.profiler->notification_evaluation_end != nullptr)
     host_options_.profiler->notification_evaluation_end(host_options_.profiler->context,
-                                                        kNotificationChannelCount);
+                                                        evaluations);
+#else
+  (void)evaluations;
 #endif
+  published_lifecycle_ = lifecycle;
+  published_transport_ = diagnostics.transport;
+  published_health_initialized_ = true;
+}
+
+void VehicleTelemetryService::service_due_notifications(
+    const vehicle_core::MonotonicTimestamp now_us) noexcept {
+  if (lifecycle_state_.load(std::memory_order_acquire) != LifecycleState::Running)
+    return;
+  const auto acquisition = acquisition_metrics(runtime_diagnostics_);
+  const Diagnostics diagnostics{LifecycleState::Running, runtime_diagnostics_.transport,
+                                acquisition};
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_evaluation_begin != nullptr)
+    host_options_.profiler->notification_evaluation_begin(host_options_.profiler->context);
+#endif
+  const auto evaluations =
+      publish_notifications(processing_state_, diagnostics, now_us, std::nullopt, false, false);
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->notification_evaluation_end != nullptr)
+    host_options_.profiler->notification_evaluation_end(host_options_.profiler->context,
+                                                        evaluations);
+#else
+  (void)evaluations;
+#endif
+}
+
+template <typename T, std::uint16_t ChannelId>
+bool VehicleTelemetryService::notification_descriptor_due(
+    const VehicleState &state, const vehicle_core::MonotonicTimestamp now_us,
+    const NotificationDescriptor<T, ChannelId> &descriptor,
+    const std::size_t descriptor_index) const noexcept {
+  // The host extension descriptor intentionally has no catalog id and is
+  // excluded from production due scheduling. Its production twin owns the
+  // same signal and provides the authoritative group.
+  if (!descriptor.id.valid())
+    return false;
+  const auto &signal = state.*descriptor.signal;
+  if (!signal.has_value || !signal.freshness_timeout_us)
+    return false;
+  const auto deadline = saturating_add(signal.last_update_us, *signal.freshness_timeout_us);
+  // Signal freshness is inclusive: a reading remains Fresh at its deadline
+  // and becomes due only after it.
+  if (now_us <= deadline)
+    return false;
+  const auto &serviced = notification_due_observations_[descriptor_index];
+  return !serviced || *serviced != signal.last_update_us;
 }
 
 template <typename T, std::uint16_t ChannelId>
@@ -976,15 +1083,69 @@ void VehicleTelemetryService::publish_notification_descriptor(
                                 descriptor.validation, diagnostics.transport));
 }
 
-void VehicleTelemetryService::publish_notifications(
+std::size_t VehicleTelemetryService::publish_notifications(
     const VehicleState &state, const Diagnostics &diagnostics,
-    const vehicle_core::MonotonicTimestamp now_us) noexcept {
+    const vehicle_core::MonotonicTimestamp now_us,
+    const std::optional<std::uint32_t> affected_identifier, const bool global_health_transition,
+    const bool include_lighting) noexcept {
+  std::array<std::uint32_t, kNotificationChannelCount> due_identifiers{};
+  std::size_t due_identifier_count = 0;
+  std::size_t descriptor_index = 0;
   std::apply(
-      [this, &state, &diagnostics, now_us](const auto &...descriptor) {
-        (publish_notification_descriptor(state, diagnostics, now_us, descriptor), ...);
+      [this, &state, now_us, &due_identifiers, &due_identifier_count,
+       &descriptor_index](const auto &...descriptor) {
+        (([&] {
+           if (notification_descriptor_due(state, now_us, descriptor, descriptor_index)) {
+             const bool already_recorded =
+                 std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
+                           descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
+             if (!already_recorded)
+               due_identifiers[due_identifier_count++] = descriptor.identifier;
+           }
+           ++descriptor_index;
+         }()),
+         ...);
       },
       notification_descriptors());
-  publish_lighting(state, diagnostics, now_us);
+
+  std::size_t evaluations = 0;
+  descriptor_index = 0;
+  std::apply(
+      [this, &state, &diagnostics, now_us, affected_identifier, global_health_transition,
+       &due_identifiers, due_identifier_count, &descriptor_index,
+       &evaluations](const auto &...descriptor) {
+        (([&] {
+           const bool affected =
+               affected_identifier && descriptor.identifier == *affected_identifier;
+           const bool due =
+               std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
+                         descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
+           if (global_health_transition || affected || due) {
+             publish_notification_descriptor(state, diagnostics, now_us, descriptor);
+             // Host-only extension descriptors share a production message
+             // group but have no catalog id. They still receive the update;
+             // profiler counts describe released catalog work only.
+             if (descriptor.id.valid()) {
+               ++evaluations;
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+               if (host_options_.profiler != nullptr &&
+                   host_options_.profiler->notification_descriptor_evaluation != nullptr)
+                 host_options_.profiler->notification_descriptor_evaluation(
+                     host_options_.profiler->context, descriptor.identifier);
+#endif
+             }
+             if (notification_descriptor_due(state, now_us, descriptor, descriptor_index))
+               notification_due_observations_[descriptor_index] =
+                   (state.*descriptor.signal).last_update_us;
+           }
+           ++descriptor_index;
+         }()),
+         ...);
+      },
+      notification_descriptors());
+  if (include_lighting)
+    publish_lighting(state, diagnostics, now_us);
+  return evaluations;
 }
 
 void VehicleTelemetryService::publish_lighting(

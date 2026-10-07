@@ -68,6 +68,14 @@ The report records both the synthetic timestamp horizon and the wall schedule;
 the ready backlog and burst are immediate input, while the paced streams use
 500 microseconds between host submissions.
 
+The profiling fixture also verifies descriptor ownership directly. On startup,
+the released notification catalog evaluates gear twice, doors six times,
+0x091 five times, 0x09A three times, and brake once; unowned, RPM, and
+acceleration identifiers evaluate zero descriptors. Subsequent frames add only
+their owning group. These counts exclude the host-only descriptor extension and
+are deterministic evaluator counts rather than callback counts, which may be
+suppressed when a channel receives an equal reading.
+
 `process_cpu_ns` uses `std::clock` around the same scenario window as
 `wall_ns`. It is whole-process CPU time across the fixture, Runtime worker,
 manual notification dispatch, callbacks, and enabled profiling hooks. It is
@@ -128,8 +136,10 @@ constructed and ends before stop/detach. Aggregate stage and callback counters
 remain active during construction and teardown, so they include lifecycle
 startup/stop diagnostics and callbacks even though those operations are outside
 the wall window. Keep the stage values as named measurements rather than adding
-them: diagnostics contains publication and notification evaluation work, and
-notification dispatch is an inclusive callback traversal measurement.
+them: diagnostics contains publication and post-frame notification evaluation
+work, while pre-observation due evaluation runs before decode and is counted in
+the aggregate evaluator total. Notification dispatch is an inclusive callback
+traversal measurement.
 
 ## Issue #213 publication comparison
 

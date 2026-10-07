@@ -30,11 +30,18 @@ namespace candidate = mazda::candidate;
 using HostClock = std::chrono::steady_clock;
 
 constexpr std::uint32_t kUnrelatedId = 0x7ff;
-constexpr std::size_t kExpectedNotificationEvaluations = 18;
 constexpr std::size_t kSourceCapacity = mazda::internal::HostAcquisitionSource::kCapacity;
 constexpr std::size_t kContinuousFrameCount = 256;
 constexpr std::size_t kMalformedFrameCount = 128;
 constexpr std::chrono::microseconds kContinuousInterFrame{500};
+constexpr std::array<std::uint32_t, 8> kNotificationMessageIds{kUnrelatedId,
+                                                               candidate::kEngineDataId,
+                                                               candidate::kAccelerationId,
+                                                               candidate::kGearId,
+                                                               candidate::kDoorsId,
+                                                               candidate::kTurnSwitchId,
+                                                               candidate::kBlinkInfoId,
+                                                               candidate::kBrakePedalId};
 
 class AtomicClock final : public vehicle_core::MonotonicClock {
 public:
@@ -126,6 +133,7 @@ struct BaselineReport final {
   std::uint64_t worker_publication_locks{0};
   std::uint64_t lighting_evaluations{0};
   std::uint64_t notification_evaluations{0};
+  std::array<std::uint64_t, kNotificationMessageIds.size()> notification_evaluations_by_message{};
   std::uint64_t notification_dispatches{0};
   std::uint64_t callbacks{0};
   std::uint64_t led_publishes{0};
@@ -165,6 +173,7 @@ public:
     hooks_.lighting_evaluation = &lighting_evaluation;
     hooks_.notification_evaluation_begin = &notification_evaluation_begin;
     hooks_.notification_evaluation_end = &notification_evaluation_end;
+    hooks_.notification_descriptor_evaluation = &notification_descriptor_evaluation;
     hooks_.notification_dispatch_begin = &notification_dispatch_begin;
     hooks_.notification_dispatch_end = &notification_dispatch_end;
   }
@@ -278,6 +287,9 @@ public:
     result.worker_publication_locks = worker_publication_locks_.load(std::memory_order_relaxed);
     result.lighting_evaluations = lighting_evaluations_.load(std::memory_order_relaxed);
     result.notification_evaluations = notification_evaluations_.load(std::memory_order_relaxed);
+    for (std::size_t index = 0; index < kNotificationMessageIds.size(); ++index)
+      result.notification_evaluations_by_message[index] =
+          notification_evaluations_by_message_[index].load(std::memory_order_relaxed);
     result.notification_dispatches = notification_dispatches_.load(std::memory_order_relaxed);
     result.callbacks = callbacks_.load(std::memory_order_relaxed);
     result.led_publishes = led_publishes_.load(std::memory_order_relaxed);
@@ -468,6 +480,17 @@ public:
       aggregate->notification_evaluation_.add(
           elapsed_ns(aggregate->notification_evaluation_started_));
   }
+  static void notification_descriptor_evaluation(void *context,
+                                                 const std::uint32_t identifier) noexcept {
+    auto *aggregate = static_cast<Aggregate *>(context);
+    for (std::size_t index = 0; index < kNotificationMessageIds.size(); ++index) {
+      if (kNotificationMessageIds[index] == identifier) {
+        aggregate->notification_evaluations_by_message_[index].fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        return;
+      }
+    }
+  }
   static void notification_dispatch_begin(void *context) noexcept {
     auto *aggregate = static_cast<Aggregate *>(context);
     if (aggregate->measurement_enabled_.load(std::memory_order_relaxed))
@@ -515,6 +538,8 @@ public:
   std::atomic<std::uint64_t> worker_publication_locks_{0};
   std::atomic<std::uint64_t> lighting_evaluations_{0};
   std::atomic<std::uint64_t> notification_evaluations_{0};
+  std::array<std::atomic<std::uint64_t>, kNotificationMessageIds.size()>
+      notification_evaluations_by_message_{};
   std::atomic<std::uint64_t> notification_dispatches_{0};
   std::atomic<std::uint64_t> callbacks_{0};
   std::atomic<std::uint64_t> led_publishes_{0};
@@ -1076,8 +1101,29 @@ TEST_CASE("synthetic telemetry baseline records production path stages") {
   CHECK(on.lighting_evaluations == on.publication.count);
   CHECK(on.policy_applications > 0);
   CHECK(on.process_cpu_ns > 0);
-  CHECK(on.notification_evaluations ==
-        on.notification_evaluation.count * kExpectedNotificationEvaluations);
+  std::size_t production_descriptors = 0;
+  std::apply(
+      [&production_descriptors](const auto &...descriptor) {
+        ((production_descriptors += descriptor.id.valid() ? 1U : 0U), ...);
+      },
+      mazda::internal::VehicleTelemetryService::notification_descriptors());
+  std::uint64_t turn_frames = 0;
+  for (std::size_t index = 0; index < on.per_id_count; ++index) {
+    if (on.per_id[index].identifier == candidate::kTurnSwitchId)
+      turn_frames = on.per_id[index].total;
+  }
+  // Startup evaluates every released descriptor once. Each TURN_SWITCH frame
+  // owns five notification descriptors; unrelated engine traffic owns none.
+  CHECK(on.notification_evaluation.count == on.publication.count + on.frame_processed);
+  CHECK(on.notification_evaluations == production_descriptors + turn_frames * 5);
+  CHECK(on.notification_evaluations_by_message[0] == 0);
+  CHECK(on.notification_evaluations_by_message[1] == 0);
+  CHECK(on.notification_evaluations_by_message[2] == 0);
+  CHECK(on.notification_evaluations_by_message[3] == 2);
+  CHECK(on.notification_evaluations_by_message[4] == 6);
+  CHECK(on.notification_evaluations_by_message[5] == 5 + turn_frames * 5);
+  CHECK(on.notification_evaluations_by_message[6] == 3);
+  CHECK(on.notification_evaluations_by_message[7] == 1);
   CHECK(on.callbacks > 0);
   CHECK(on.action.count == on.callbacks);
   CHECK(on.latency_callbacks > 0);

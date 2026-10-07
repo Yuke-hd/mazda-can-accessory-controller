@@ -24,6 +24,33 @@ keeps deterministic tests independent of the host's system clock. Freshness
 timeouts, inclusive freshness boundaries, source timestamp ordering, and
 fail-off policy do not depend on the clock implementation.
 
+## Notification evaluation
+
+The service keeps one processing owner for observation, publication, and
+freshness servicing. A received frame evaluates only notification descriptors
+whose message identifier owns that frame. Descriptors with the same identifier
+form one group, so a gear frame evaluates both gear signals, a door frame
+evaluates all six door signals, and the other groups follow the same catalog
+ownership. Polling-only signals and unknown identifiers do not evaluate a
+notification group.
+
+Freshness is serviced independently of frame traffic. A signal remains fresh at
+its configured deadline and becomes due only after that boundary; each due
+signal is serviced once for its current observation timestamp. All due groups
+are serviced together when a processing opportunity occurs, including silence
+and unrelated traffic. If a newer observation arrives after a due transition
+but before dispatch, the service publishes the due state first and then the
+newer state so the notification channel can retain unavailable, recovered,
+became-unavailable, and coalesced evidence. Equal, older, or conflicting
+observations do not refresh a signal's timestamp or recover it. Brake freshness
+remains unset unless a caller explicitly supplies a timeout.
+
+Lifecycle and transport boundaries evaluate every notification group once so
+fail-off and recovery reach unaffected subscribers. An owned message-health
+boundary evaluates its affected group plus any independently due groups.
+Repeated diagnostics in a stable failure do not repeat the global pass; private
+lighting heartbeat publication remains independent of notification selection.
+
 ## Subscriptions and lifecycle
 
 Each notification channel has two fixed subscriber slots. A subscription

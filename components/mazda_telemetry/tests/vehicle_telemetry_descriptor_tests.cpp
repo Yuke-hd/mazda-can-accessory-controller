@@ -96,6 +96,7 @@ int main() {
   mazda::internal::HostAcquisitionSource source;
   TestLightingSink lighting;
   mazda::TelemetryConfig config{};
+  config.freshness.front_wiper_timeout_us = 10;
   config.callback_stop_timeout_us = 20'000;
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
@@ -183,6 +184,27 @@ int main() {
   if (readable != std::tuple_size_v<mazda::internal::PollingDescriptorTuple> +
                       mazda::internal::kNotificationChannelCount)
     return 15;
+
+  // The host extension shares the production front-wiper signal and must
+  // receive the same independent expiry and recovery transitions. A service
+  // timeout does not require another frame to trigger the stale notice.
+  clock.set(22);
+  if (!wait_for([&recorder] {
+        std::lock_guard<std::mutex> lock{recorder.mutex};
+        return recorder.count >= 3 &&
+               recorder.last.current.availability == mazda::Availability::Stale;
+      }))
+    return 16;
+  clock.set(23);
+  if (source.inject(frame(mazda::candidate::kTurnSwitchId, 23, {0, 0, 0x10, 0, 0, 0, 0, 0})) !=
+      mazda::ResultCode::Ok)
+    return 17;
+  if (!wait_for([&recorder] {
+        std::lock_guard<std::mutex> lock{recorder.mutex};
+        return recorder.count >= 4 &&
+               recorder.last.current.availability == mazda::Availability::Fresh;
+      }))
+    return 18;
 
   if (!service.stop().ok())
     return 10;

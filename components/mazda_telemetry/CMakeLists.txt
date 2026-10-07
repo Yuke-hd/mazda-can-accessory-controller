@@ -132,6 +132,23 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   add_test(NAME mazda_telemetry_descriptor_tests
            COMMAND mazda_telemetry_descriptor_tests)
 
+  if(MAZDA_ENABLE_TELEMETRY_PROFILING)
+    add_executable(mazda_telemetry_group_tests
+      tests/vehicle_telemetry_group_tests.cpp
+    )
+    target_include_directories(mazda_telemetry_group_tests PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+      ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/mazda/internal_include
+    )
+    target_link_libraries(mazda_telemetry_group_tests PRIVATE
+      mazda_telemetry
+      Threads::Threads
+    )
+    target_compile_features(mazda_telemetry_group_tests PRIVATE cxx_std_17)
+    add_test(NAME mazda_telemetry_group_tests
+             COMMAND mazda_telemetry_group_tests)
+  endif()
+
   add_executable(mazda_telemetry_signal_catalog_tests
     tests/signal_catalog_tests.cpp
   )
