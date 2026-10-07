@@ -163,13 +163,24 @@ template <typename T> struct LightingDescriptor final {
 };
 
 template <typename T>
-Reading<T> notification_reading(const PublishedSnapshot &snapshot,
+Reading<T> notification_reading(const VehicleState &state, const Diagnostics &diagnostics,
                                 const LightingDescriptor<T> &descriptor,
-                                const vehicle_core::MonotonicTimestamp now_us,
-                                const vehicle_core::TransportHealth transport) noexcept {
+                                const vehicle_core::MonotonicTimestamp now_us) noexcept {
   const auto &metadata = *descriptor.metadata;
-  return snapshot.state.reading_at(snapshot.state.*descriptor.signal, metadata.identifier, now_us,
-                                   metadata.confidence, transport);
+  return state.reading_at(state.*descriptor.signal, metadata.identifier, now_us,
+                          metadata.confidence, diagnostics.transport);
+}
+
+struct MessageMutationMarker final {
+  bool has_frame{false};
+  vehicle_core::MonotonicTimestamp last_frame_us{0};
+};
+
+MessageMutationMarker message_mutation_marker(const VehicleState &state,
+                                              const std::uint32_t identifier) noexcept {
+  const auto *message = state.message_health_for(identifier);
+  return message == nullptr ? MessageMutationMarker{}
+                            : MessageMutationMarker{true, message->last_frame_us};
 }
 
 // turn_state is derived from the three TURN_SWITCH request fields. All three
@@ -311,16 +322,15 @@ const NotificationDescriptorTuple &VehicleTelemetryService::notification_descrip
 
 VehicleTelemetryService::VehicleTelemetryService() noexcept
 #if defined(ESP_PLATFORM)
-    : clock_(&steady_clock_), lighting_sink_(&null_lighting_sink_),
-      runtime_(can_bus_source_, *this, *this, steady_clock_),
+    : clock_(&steady_clock_), runtime_(can_bus_source_, *this, *this, steady_clock_),
       publication_(steady_clock_, TelemetryConfig{}), config_{} {
 #else
-    : clock_(&steady_clock_), lighting_sink_(&null_lighting_sink_),
-      runtime_(host_source_, *this, *this, steady_clock_),
+    : clock_(&steady_clock_), runtime_(host_source_, *this, *this, steady_clock_),
       publication_(steady_clock_, TelemetryConfig{}), config_{} {
 #endif
   initialize_registration_slots();
   processing_state_.apply_freshness_policy(config_.freshness);
+  record_policy_application();
   configure_runtime(runtime_, config_);
 }
 
@@ -347,6 +357,7 @@ VehicleTelemetryService::VehicleTelemetryService(vehicle_core::MonotonicClock &c
 {
   initialize_registration_slots();
   processing_state_.apply_freshness_policy(config_.freshness);
+  record_policy_application();
   configure_runtime(runtime_, config_);
 }
 
@@ -500,6 +511,7 @@ StatusResult VehicleTelemetryService::configure(const TelemetryConfig &config) n
     return {ResultCode::InvalidConfiguration};
   const auto result = publication_.configure(config);
   if (result.ok()) {
+    record_policy_application();
     config_ = config;
     vehicle_telemetry::RuntimeConfig runtime_config{};
     runtime_config.receive_timeout_ms =
@@ -548,6 +560,33 @@ bool VehicleTelemetryService::stop_channels() noexcept {
       },
       notification_descriptors());
   return result;
+}
+
+void VehicleTelemetryService::reset_publication(const Diagnostics &diagnostics) noexcept {
+  publication_.reset(diagnostics);
+  record_policy_application();
+}
+
+void VehicleTelemetryService::record_policy_application() noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->policy_application != nullptr)
+    host_options_.profiler->policy_application(host_options_.profiler->context);
+#endif
+}
+
+void VehicleTelemetryService::record_worker_publication_lock() noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr &&
+      host_options_.profiler->worker_publication_lock != nullptr)
+    host_options_.profiler->worker_publication_lock(host_options_.profiler->context);
+#endif
+}
+
+void VehicleTelemetryService::record_lighting_evaluation() noexcept {
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  if (host_options_.profiler != nullptr && host_options_.profiler->lighting_evaluation != nullptr)
+    host_options_.profiler->lighting_evaluation(host_options_.profiler->context);
+#endif
 }
 
 std::size_t VehicleTelemetryService::dispatch_channels_once() noexcept {
@@ -620,6 +659,7 @@ StatusResult VehicleTelemetryService::start() noexcept {
 
   processing_state_ = VehicleState{};
   processing_state_.apply_freshness_policy(config_.freshness);
+  record_policy_application();
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
   lighting_sent_ = false;
@@ -629,13 +669,13 @@ StatusResult VehicleTelemetryService::start() noexcept {
   runtime_diagnostics_.lifecycle = vehicle_telemetry::LifecycleState::Running;
   runtime_diagnostics_.transport = vehicle_core::TransportHealth::AwaitingTraffic;
   lifecycle_state_.store(LifecycleState::Running, std::memory_order_release);
-  publication_.reset(Diagnostics{LifecycleState::Running,
-                                 vehicle_core::TransportHealth::AwaitingTraffic,
-                                 AcquisitionMetrics{}});
+  reset_publication(Diagnostics{LifecycleState::Running,
+                                vehicle_core::TransportHealth::AwaitingTraffic,
+                                AcquisitionMetrics{}});
   if (!start_channels()) {
     lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
-    publication_.reset(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
-                                   AcquisitionMetrics{}});
+    reset_publication(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
+                                  AcquisitionMetrics{}});
     return {ResultCode::Faulted};
   }
 
@@ -652,11 +692,11 @@ StatusResult VehicleTelemetryService::start() noexcept {
                              ? LifecycleState::Faulted
                              : LifecycleState::Stopped;
     lifecycle_state_.store(failure, std::memory_order_release);
-    publication_.reset(Diagnostics{failure,
-                                   failure == LifecycleState::Faulted
-                                       ? vehicle_core::TransportHealth::Faulted
-                                       : vehicle_core::TransportHealth::Stopped,
-                                   AcquisitionMetrics{}});
+    reset_publication(Diagnostics{failure,
+                                  failure == LifecycleState::Faulted
+                                      ? vehicle_core::TransportHealth::Faulted
+                                      : vehicle_core::TransportHealth::Stopped,
+                                  AcquisitionMetrics{}});
     return {mapped};
   }
 
@@ -678,8 +718,8 @@ StatusResult VehicleTelemetryService::start() noexcept {
     dispatcher_done_.store(true, std::memory_order_release);
     (void)stop_channels();
     lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
-    publication_.reset(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
-                                   AcquisitionMetrics{}});
+    reset_publication(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
+                                  AcquisitionMetrics{}});
     return {ResultCode::Faulted};
   }
 #else
@@ -699,8 +739,8 @@ StatusResult VehicleTelemetryService::start() noexcept {
     join_workers();
     (void)stop_channels();
     lifecycle_state_.store(LifecycleState::Faulted, std::memory_order_release);
-    publication_.reset(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
-                                   AcquisitionMetrics{}});
+    reset_publication(Diagnostics{LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted,
+                                  AcquisitionMetrics{}});
     return {ResultCode::Faulted};
   }
 #endif
@@ -725,11 +765,10 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   const auto runtime_result = runtime_.stop();
   const bool runtime_stopped =
       runtime_result.ok() || runtime_result.status == vehicle_telemetry::ResultCode::NotRunning;
-  const auto stopping_snapshot = publication_.snapshot();
-  publication_.publish(stopping_snapshot.state,
-                       Diagnostics{LifecycleState::Stopping, vehicle_core::TransportHealth::Stopped,
-                                   stopping_snapshot.diagnostics.acquisition},
-                       std::nullopt);
+  const auto stopping_diagnostics = runtime_.diagnostics();
+  publication_.publish_diagnostics(Diagnostics{LifecycleState::Stopping,
+                                               vehicle_core::TransportHealth::Stopped,
+                                               acquisition_metrics(stopping_diagnostics)});
   if (!wait_for_workers(config_.callback_stop_timeout_us))
     return {ResultCode::Timeout};
   join_workers();
@@ -740,7 +779,7 @@ StatusResult VehicleTelemetryService::stop() noexcept {
   }
   runtime_diagnostics_ = runtime_.diagnostics();
   const auto acquisition = acquisition_metrics(runtime_diagnostics_);
-  publication_.reset(
+  reset_publication(
       Diagnostics{LifecycleState::Stopped, vehicle_core::TransportHealth::Stopped, acquisition});
   processing_state_ = VehicleState{};
   last_transport_receive_us_.reset();
@@ -767,6 +806,8 @@ Diagnostics VehicleTelemetryService::diagnostics() const noexcept {
 void VehicleTelemetryService::reset() noexcept {
   processing_state_ = VehicleState{};
   processing_state_.apply_freshness_policy(config_.freshness);
+  record_policy_application();
+  processing_state_changed_ = false;
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
   lighting_sent_ = false;
@@ -783,7 +824,11 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
   // Edge, observation, and per-frame health are optional decoder diagnostics;
   // omitting them avoids constructing and populating discarded outputs while
   // leaving direct decoder callers' contracts unchanged.
+  const auto before = message_mutation_marker(processing_state_, frame.identifier);
   const auto status = candidate::decode(frame, processing_state_);
+  const auto after = message_mutation_marker(processing_state_, frame.identifier);
+  processing_state_changed_ = processing_state_changed_ || before.has_frame != after.has_frame ||
+                              before.last_frame_us != after.last_frame_us;
   vehicle_telemetry::ProcessResult result{};
   switch (status) {
   case vehicle_core::DecodeValidity::Decoded:
@@ -892,11 +937,19 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
   if (host_options_.profiler != nullptr && host_options_.profiler->publication_begin != nullptr)
     host_options_.profiler->publication_begin(host_options_.profiler->context);
 #endif
-  publication_.publish(processing_state_, diagnostics,
-                       received_frame ? last_transport_receive_us_ : std::nullopt);
+  if (processing_state_changed_) {
+    publication_.publish(processing_state_, diagnostics,
+                         received_frame ? last_transport_receive_us_ : std::nullopt);
+    processing_state_changed_ = false;
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
-  if (host_options_.profiler != nullptr && host_options_.profiler->state_copy != nullptr)
-    host_options_.profiler->state_copy(host_options_.profiler->context);
+    if (host_options_.profiler != nullptr && host_options_.profiler->state_copy != nullptr)
+      host_options_.profiler->state_copy(host_options_.profiler->context);
+#endif
+  } else {
+    publication_.publish_diagnostics(diagnostics);
+  }
+  record_worker_publication_lock();
+#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->publication_end != nullptr)
     host_options_.profiler->publication_end(host_options_.profiler->context);
   if (host_options_.profiler != nullptr &&
@@ -904,12 +957,7 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
     host_options_.profiler->notification_evaluation_begin(host_options_.profiler->context);
 #endif
   const auto now_us = clock_->now();
-  const auto snapshot = publication_.snapshot();
-#if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
-  if (host_options_.profiler != nullptr && host_options_.profiler->state_copy != nullptr)
-    host_options_.profiler->state_copy(host_options_.profiler->context);
-#endif
-  publish_notifications(snapshot, now_us);
+  publish_notifications(processing_state_, diagnostics, now_us);
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr &&
       host_options_.profiler->notification_evaluation_end != nullptr)
@@ -920,38 +968,43 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
 
 template <typename T, std::uint16_t ChannelId>
 void VehicleTelemetryService::publish_notification_descriptor(
-    const PublishedSnapshot &snapshot, const vehicle_core::MonotonicTimestamp now_us,
+    const VehicleState &state, const Diagnostics &diagnostics,
+    const vehicle_core::MonotonicTimestamp now_us,
     const NotificationDescriptor<T, ChannelId> &descriptor) noexcept {
-  const auto transport = snapshot.diagnostics.transport;
   (void)(this->*descriptor.channel)
-      .publish(snapshot.state.reading_at(snapshot.state.*descriptor.signal, descriptor.identifier,
-                                         now_us, descriptor.validation, transport));
+      .publish(state.reading_at(state.*descriptor.signal, descriptor.identifier, now_us,
+                                descriptor.validation, diagnostics.transport));
 }
 
 void VehicleTelemetryService::publish_notifications(
-    const PublishedSnapshot &snapshot, const vehicle_core::MonotonicTimestamp now_us) noexcept {
+    const VehicleState &state, const Diagnostics &diagnostics,
+    const vehicle_core::MonotonicTimestamp now_us) noexcept {
   std::apply(
-      [this, &snapshot, now_us](const auto &...descriptor) {
-        (publish_notification_descriptor(snapshot, now_us, descriptor), ...);
+      [this, &state, &diagnostics, now_us](const auto &...descriptor) {
+        (publish_notification_descriptor(state, diagnostics, now_us, descriptor), ...);
       },
       notification_descriptors());
-  publish_lighting(snapshot, now_us);
+  publish_lighting(state, diagnostics, now_us);
 }
 
 void VehicleTelemetryService::publish_lighting(
-    const PublishedSnapshot &snapshot, const vehicle_core::MonotonicTimestamp now_us) noexcept {
-  const auto turn_reading = notification_reading(snapshot, kTurnNotificationDescriptor, now_us,
-                                                 snapshot.diagnostics.transport);
+    const VehicleState &state, const Diagnostics &diagnostics,
+    const vehicle_core::MonotonicTimestamp now_us) noexcept {
+  if (lighting_sink_ == nullptr)
+    return;
+  record_lighting_evaluation();
+
+  const auto turn_reading =
+      notification_reading(state, diagnostics, kTurnNotificationDescriptor, now_us);
   const auto turn_health =
-      snapshot.state.health_observation(candidate::kTurnSwitchId, snapshot.diagnostics.transport);
-  const auto brake_reading =
-      snapshot.state.reading_at(snapshot.state.brake_pressed, candidate::kBrakePedalId, now_us,
-                                ValidationStatus::Confirmed, snapshot.diagnostics.transport);
-  const bool actionable =
-      is_available_reading(turn_reading) && *turn_reading.value != TurnState::Unknown &&
-      snapshot.diagnostics.transport != vehicle_core::TransportHealth::Stopped &&
-      snapshot.diagnostics.transport != vehicle_core::TransportHealth::Faulted &&
-      snapshot.diagnostics.transport != vehicle_core::TransportHealth::TimedOut;
+      state.health_observation(candidate::kTurnSwitchId, diagnostics.transport);
+  const auto brake_reading = state.reading_at(state.brake_pressed, candidate::kBrakePedalId, now_us,
+                                              ValidationStatus::Confirmed, diagnostics.transport);
+  const bool actionable = is_available_reading(turn_reading) &&
+                          *turn_reading.value != TurnState::Unknown &&
+                          diagnostics.transport != vehicle_core::TransportHealth::Stopped &&
+                          diagnostics.transport != vehicle_core::TransportHealth::Faulted &&
+                          diagnostics.transport != vehicle_core::TransportHealth::TimedOut;
   LightingUpdate update{};
   update.turn = actionable ? *turn_reading.value : TurnState::Unknown;
   update.availability = turn_reading.availability;
@@ -965,15 +1018,14 @@ void VehicleTelemetryService::publish_lighting(
     update.availability = Availability::Unavailable;
 
   std::optional<vehicle_core::MonotonicTimestamp> deadline{};
-  if (actionable && snapshot.state.turn_state.has_value &&
-      snapshot.state.turn_state.freshness_timeout_us) {
-    deadline = saturating_add(snapshot.state.turn_state.last_update_us,
-                              *snapshot.state.turn_state.freshness_timeout_us);
+  if (actionable && state.turn_state.has_value && state.turn_state.freshness_timeout_us) {
+    deadline =
+        saturating_add(state.turn_state.last_update_us, *state.turn_state.freshness_timeout_us);
   }
-  if (update.brake_pressed && snapshot.state.brake_pressed.has_value &&
-      snapshot.state.brake_pressed.freshness_timeout_us) {
-    const auto brake_deadline = saturating_add(snapshot.state.brake_pressed.last_update_us,
-                                               *snapshot.state.brake_pressed.freshness_timeout_us);
+  if (update.brake_pressed && state.brake_pressed.has_value &&
+      state.brake_pressed.freshness_timeout_us) {
+    const auto brake_deadline = saturating_add(state.brake_pressed.last_update_us,
+                                               *state.brake_pressed.freshness_timeout_us);
     deadline = deadline ? std::min(*deadline, brake_deadline) : brake_deadline;
   }
   if (last_transport_receive_us_) {
@@ -999,18 +1051,16 @@ void VehicleTelemetryService::publish_lighting(
 
   const bool accepted = lighting_sink_->publish(update);
 #if defined(ESP_PLATFORM)
-  const auto turn_age_us =
-      snapshot.state.turn_state.has_value && now_us >= snapshot.state.turn_state.last_update_us
-          ? now_us - snapshot.state.turn_state.last_update_us
-          : 0;
+  const auto turn_age_us = state.turn_state.has_value && now_us >= state.turn_state.last_update_us
+                               ? now_us - state.turn_state.last_update_us
+                               : 0;
   ESP_LOGD(kLightingTag,
            "lighting decision: turn=%u availability=%u actionable=%d turn_age_us=%llu "
            "brake=%d brake_availability=%u transport=%u now_us=%llu deadline_us=%llu accepted=%d",
            static_cast<unsigned>(update.turn), static_cast<unsigned>(update.availability),
            actionable, static_cast<unsigned long long>(turn_age_us), update.brake_pressed,
            static_cast<unsigned>(update.brake_availability),
-           static_cast<unsigned>(snapshot.diagnostics.transport),
-           static_cast<unsigned long long>(now_us),
+           static_cast<unsigned>(diagnostics.transport), static_cast<unsigned long long>(now_us),
            static_cast<unsigned long long>(update.valid_until_us), accepted);
 #endif
   lighting_sent_ = true;
@@ -1054,6 +1104,9 @@ void VehicleTelemetryService::join_workers() noexcept {
 
 void VehicleTelemetryService::publish_startup_black(
     const vehicle_core::MonotonicTimestamp now_us) noexcept {
+  if (lighting_sink_ == nullptr)
+    return;
+
   LightingUpdate update{};
   update.turn = TurnState::Unknown;
   update.availability = Availability::NoData;

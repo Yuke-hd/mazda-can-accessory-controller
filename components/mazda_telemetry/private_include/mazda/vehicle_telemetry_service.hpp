@@ -295,6 +295,9 @@ struct TelemetryProfilerHooks final {
   void (*publication_begin)(void *context) noexcept {nullptr};
   void (*publication_end)(void *context) noexcept {nullptr};
   void (*state_copy)(void *context) noexcept {nullptr};
+  void (*policy_application)(void *context) noexcept {nullptr};
+  void (*worker_publication_lock)(void *context) noexcept {nullptr};
+  void (*lighting_evaluation)(void *context) noexcept {nullptr};
   void (*notification_evaluation_begin)(void *context) noexcept {nullptr};
   void (*notification_evaluation_end)(void *context, std::size_t evaluations) noexcept {nullptr};
   void (*notification_dispatch_begin)(void *context) noexcept {nullptr};
@@ -467,6 +470,10 @@ private:
   [[nodiscard]] bool start_channels() noexcept;
   [[nodiscard]] bool stop_channels() noexcept;
   [[nodiscard]] std::size_t dispatch_channels_once() noexcept;
+  void reset_publication(const Diagnostics &diagnostics) noexcept;
+  void record_policy_application() noexcept;
+  void record_worker_publication_lock() noexcept;
+  void record_lighting_evaluation() noexcept;
 
   void dispatcher_loop() noexcept;
 #if defined(ESP_PLATFORM)
@@ -475,12 +482,12 @@ private:
   void publish_current(bool received_frame) noexcept;
   template <typename T, std::uint16_t ChannelId>
   void
-  publish_notification_descriptor(const PublishedSnapshot &snapshot,
+  publish_notification_descriptor(const VehicleState &state, const Diagnostics &diagnostics,
                                   vehicle_core::MonotonicTimestamp now_us,
                                   const NotificationDescriptor<T, ChannelId> &descriptor) noexcept;
-  void publish_notifications(const PublishedSnapshot &snapshot,
+  void publish_notifications(const VehicleState &state, const Diagnostics &diagnostics,
                              vehicle_core::MonotonicTimestamp now_us) noexcept;
-  void publish_lighting(const PublishedSnapshot &snapshot,
+  void publish_lighting(const VehicleState &state, const Diagnostics &diagnostics,
                         vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] bool workers_done() const noexcept;
   [[nodiscard]] bool wait_for_workers(std::uint64_t timeout_us) noexcept;
@@ -493,13 +500,13 @@ private:
 #else
   HostRuntimeSource host_source_{};
 #endif
-  NullLightingSink null_lighting_sink_{};
   vehicle_core::MonotonicClock *clock_{nullptr};
   LightingSink *lighting_sink_{nullptr};
   vehicle_telemetry::Runtime runtime_;
   PublicationStore publication_;
   TelemetryConfig config_{};
   VehicleState processing_state_{};
+  bool processing_state_changed_{false};
   // This watermark is sampled from the private acquisition clock when the
   // source successfully returns a frame. It is deliberately independent from
   // RawCanFrame::timestamp_us, which belongs to decoder observation ordering.

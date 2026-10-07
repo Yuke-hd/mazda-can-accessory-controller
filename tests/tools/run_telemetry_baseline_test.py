@@ -20,6 +20,7 @@ def report(wall_ns: int = 100) -> dict[str, str]:
         "scenario": "supported-mix",
         "profiler": "stage-timers",
         "wall_ns": str(wall_ns),
+        "process_cpu_ns": "95",
         "receive_wait": "10",
         "enqueue_to_process": "20",
         "dequeue_to_process": "15",
@@ -37,9 +38,9 @@ class BaselineReportTests(unittest.TestCase):
     def test_parse_keeps_reports_separate_from_doctest_output(self) -> None:
         raw = (
             "[doctest] test cases: 2 | 2 passed\n"
-            "telemetry_baseline scenario=silence profiler=stage-timers wall_ns=100\n"
+            "telemetry_baseline scenario=silence profiler=stage-timers wall_ns=100 process_cpu_ns=90\n"
             "  stage_ns decode=3 publication=5\n"
-            "telemetry_baseline scenario=supported-mix profiler=stage-timers wall_ns=200\n"
+            "telemetry_baseline scenario=supported-mix profiler=stage-timers wall_ns=200 process_cpu_ns=180\n"
             "  stage_ns decode=7 publication=11\n"
         )
         parsed = baseline.parse_reports(raw)
@@ -81,7 +82,8 @@ class BaselineReportTests(unittest.TestCase):
 
     def test_runner_rejects_a_repeat_without_reports(self) -> None:
         valid = (
-            "telemetry_baseline scenario=supported-mix profiler=stage-timers wall_ns=100\n"
+            "telemetry_baseline scenario=supported-mix profiler=stage-timers wall_ns=100 "
+            "process_cpu_ns=95\n"
             "  stage_ns receive_wait=10 enqueue_to_process=20 dequeue_to_process=15 "
             "decode=30 diagnostics=40 "
             "publication=50 notification_evaluation=60 notification_dispatch=70 "
@@ -96,7 +98,9 @@ class BaselineReportTests(unittest.TestCase):
             ]
             with patch.object(sys, "argv", arguments), patch.object(
                 baseline, "run", side_effect=[valid, "[doctest] test cases: 0\n"]
-            ), redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+            ), redirect_stdout(io.StringIO()), self.assertRaisesRegex(
+                SystemExit, "release repeat 2 produced no telemetry_baseline reports"
+            ):
                 baseline.main()
 
 

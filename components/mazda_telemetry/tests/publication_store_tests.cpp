@@ -156,6 +156,7 @@ void test_availability_and_reset() {
   EXPECT(store.engine_rpm().availability == mazda::Availability::NoData);
 
   mazda::VehicleState state{};
+  state.apply_freshness_policy(config.freshness);
   EXPECT(state.speed_kph.update(42.5F, 10));
   EXPECT(state.engine_rpm.update(2'000.0F, 10));
   EXPECT(state.liftgate_open.update(true, 10));
@@ -259,6 +260,36 @@ void test_unrelated_receive_keeps_transport_live() {
   EXPECT(store.speed_kph().availability == mazda::Availability::Unavailable);
 }
 
+void test_diagnostics_only_publication_retains_semantic_state() {
+  FakeClock clock;
+  mazda::TelemetryConfig config{};
+  config.freshness.speed_kph_timeout_us = 100;
+  mazda::internal::PublicationStore store{clock, config};
+  store.reset(
+      diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::AwaitingTraffic));
+
+  mazda::VehicleState state{};
+  state.apply_freshness_policy(config.freshness);
+  EXPECT(state.speed_kph.update(42.5F, 10));
+  store.publish(state,
+                diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live, 1),
+                10);
+
+  clock.set(50);
+  store.publish_diagnostics(
+      diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live, 2));
+  const auto retained = store.speed_kph();
+  EXPECT(retained.value.has_value() && *retained.value == 42.5F);
+  EXPECT(retained.availability == mazda::Availability::Fresh);
+  EXPECT(store.diagnostics().acquisition.frames_received == 2);
+
+  store.publish_diagnostics(
+      diagnostics(mazda::LifecycleState::Faulted, vehicle_core::TransportHealth::Faulted, 3));
+  const auto faulted = store.speed_kph();
+  EXPECT(faulted.value.has_value() && *faulted.value == 42.5F);
+  EXPECT(faulted.availability == mazda::Availability::Unavailable);
+}
+
 void test_polling_copies_publication_before_sampling_clock() {
   ForcedInterleavingClock clock;
   mazda::TelemetryConfig config{};
@@ -268,6 +299,7 @@ void test_polling_copies_publication_before_sampling_clock() {
       diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::AwaitingTraffic));
 
   mazda::VehicleState next{};
+  next.apply_freshness_policy(config.freshness);
   EXPECT(next.speed_kph.update(42.5F, 0));
 
   mazda::Reading<float> observed{};
@@ -318,6 +350,7 @@ void test_coherent_snapshot_under_concurrent_publication() {
   std::atomic<bool> inconsistent{false};
   std::thread writer{[&] {
     mazda::VehicleState state{};
+    state.apply_freshness_policy(config.freshness);
     for (std::uint64_t sequence = 1; sequence <= 50'000; ++sequence) {
       const auto value = static_cast<float>(sequence);
       if (!state.speed_kph.update(value, sequence) || !state.engine_rpm.update(value, sequence) ||
@@ -379,6 +412,7 @@ void test_descriptor_read_availability() {
   EXPECT(!read_liftgate(store).value.has_value());
 
   mazda::VehicleState state{};
+  state.apply_freshness_policy(config.freshness);
   EXPECT(state.speed_kph.update(30.0F, 10));
   EXPECT(state.liftgate_open.update(true, 10));
   store.publish(state,
@@ -451,6 +485,7 @@ void test_descriptor_read_availability() {
   EXPECT(!read_liftgate(store).value.has_value());
 
   mazda::VehicleState restarted{};
+  restarted.apply_freshness_policy(config.freshness);
   EXPECT(restarted.liftgate_open.update(false, 5));
   store.publish(restarted,
                 diagnostics(mazda::LifecycleState::Running, vehicle_core::TransportHealth::Live, 1),
@@ -504,6 +539,7 @@ void test_descriptor_read_matches_typed_paths() {
   // No message-health record exists yet: reading_at() treats that as
   // Healthy, and the descriptor read must not fault it either.
   mazda::VehicleState state{};
+  state.apply_freshness_policy(config.freshness);
   EXPECT(state.speed_kph.update(30.0F, 10));
   EXPECT(state.engine_rpm.update(2'000.0F, 10));
   EXPECT(state.liftgate_open.update(true, 10));
@@ -668,6 +704,7 @@ void test_descriptor_read_is_coherent_under_concurrent_publication() {
 int main() {
   test_availability_and_reset();
   test_unrelated_receive_keeps_transport_live();
+  test_diagnostics_only_publication_retains_semantic_state();
   test_polling_copies_publication_before_sampling_clock();
   test_diagnostics_copies_publication_before_sampling_clock();
   test_snapshot_copies_publication_before_sampling_clock();

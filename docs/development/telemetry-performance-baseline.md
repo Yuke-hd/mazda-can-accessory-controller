@@ -68,6 +68,14 @@ The report records both the synthetic timestamp horizon and the wall schedule;
 the ready backlog and burst are immediate input, while the paced streams use
 500 microseconds between host submissions.
 
+`process_cpu_ns` uses `std::clock` around the same scenario window as
+`wall_ns`. It is whole-process CPU time across the fixture, Runtime worker,
+manual notification dispatch, callbacks, and enabled profiling hooks. It is
+not worker-only CPU time or an ESP measurement. Construction and teardown are
+outside this window. The policy, worker-publication-lock, and private-lighting
+evaluation counts cover their explicitly instrumented service operations;
+they do not count polling reads or lifecycle store locks.
+
 `profiler=stage-timers` enables bounded host aggregate callbacks and their
 `steady_clock` measurements. `profiler=counters-only` keeps the same accounting
 callbacks while suppressing service-stage timer reads. Receive wait,
@@ -122,6 +130,63 @@ startup/stop diagnostics and callbacks even though those operations are outside
 the wall window. Keep the stage values as named measurements rather than adding
 them: diagnostics contains publication and notification evaluation work, and
 notification dispatch is an inclusive callback traversal measurement.
+
+## Issue #213 publication comparison
+
+The five-repeat Release comparison for #213 used baseline revision `47e5ee9`
+and the candidate working tree. Both builds used the same pinned generic-core
+checkout (`f30764b`, release `0.1.0`), AppleClang 17, C++17, `-O3 -DNDEBUG`,
+`-Wall -Wextra -Wpedantic`, BLE off, and the same fixture inputs. The detached
+baseline had one measurement-only patch adding the candidate's `std::clock`
+field and runner summary; it contained no telemetry service change. Each build
+produced 110 reports and passed its complete deterministic accounting set
+(5,520 baseline assertions and 5,529 candidate assertions).
+
+The state-copy counts cover normal `publish_current` work and do not include
+reset assignments. The candidate copies a full `VehicleState` only after a
+signal or message-health mutation. Ignored frames retain Runtime
+receive/accounting recovery through diagnostics-only publication. A
+scheduling-dependent idle diagnostics pass can add one normal publication;
+the table retains that variation instead of presenting it as frame work.
+
+| Scenario | Frames | Baseline state copies | Candidate state copies |
+| --- | ---: | ---: | ---: |
+| Supported mix | 256 decoded | 514–516 | 256 |
+| Ready unowned | 256 ignored | 514 | 0 |
+| Malformed owned | 128 malformed | 258–260 | 128 |
+
+The ready-unowned run recorded exactly 257 normal worker publications,
+including startup. Both builds recorded 257–258 for supported traffic because
+of an optional idle pass. Baseline malformed traffic recorded 129–130
+publications; the candidate recorded 129. The baseline took two
+publication-store mutexes per publication: one full-state publish and one
+snapshot readback. The candidate directly counted one worker publication lock
+per publication: 257 ready-unowned, 257–258 supported, and 129 malformed. Its
+policy counter recorded five
+construction, configuration, and lifecycle applications per scenario. The
+baseline also reapplied the policy in every full-state publication: 257
+hot-path applications for ready-unowned traffic, 257–258 for supported
+traffic, and 129–130 for malformed traffic, in addition to its lifecycle
+applications. The fixture supplies an explicit private lighting sink, so both
+versions still evaluate that bound sink per publication. The production
+facade's unbound private sink now exits before evaluation; this benchmark
+deliberately does not count that separate path.
+
+The immediately paired rerun recorded these stage-timer publication totals
+and counters-only whole-process CPU ranges as min/median/max milliseconds:
+
+| Scenario | Publication baseline | Publication candidate | CPU baseline | CPU candidate |
+| --- | ---: | ---: | ---: | ---: |
+| Supported mix | 0.050 / 0.116 / 0.136 | 0.039 / 0.103 / 0.125 | 7.188 / 7.779 / 8.423 | 6.548 / 7.541 / 9.264 |
+| Ready unowned | 0.022 / 0.027 / 0.058 | 0.009 / 0.013 / 0.021 | 0.296 / 0.611 / 1.506 | 0.284 / 0.566 / 1.260 |
+| Malformed owned | 0.030 / 0.060 / 0.067 | 0.038 / 0.052 / 0.061 | 1.879 / 2.701 / 3.074 | 1.978 / 2.589 / 2.909 |
+
+The overlapping host ranges support the deterministic copy, lock, and policy
+reductions, but they do not establish a CPU speedup. Stage timers are nested:
+their sums are not CPU time. Enabling stage timers also changes the profiling
+work, so the CPU column uses the counters-only run. These figures are host
+software evidence only; they make no firmware scheduling, bench, or vehicle
+claim.
 
 The recorded five-repeat Release run on 2026-10-07 used revision `a707429`,
 `source_dirty=true`, AppleClang 17, `-O3 -DNDEBUG`, C++17,

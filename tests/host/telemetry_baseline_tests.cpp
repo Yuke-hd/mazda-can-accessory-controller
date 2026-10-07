@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <initializer_list>
 #include <iostream>
 #include <mutex>
@@ -104,6 +105,7 @@ struct BaselineReport final {
   std::uint64_t wall_schedule_us{0};
   std::uint64_t observed_accepted_rate_hz{0};
   std::uint64_t wall_ns{0};
+  std::uint64_t process_cpu_ns{0};
   std::uint64_t attempted{0};
   std::uint64_t accepted{0};
   std::uint64_t source_received{0};
@@ -120,6 +122,9 @@ struct BaselineReport final {
   std::uint64_t faults{0};
   std::uint64_t frame_processed{0};
   std::uint64_t state_copies{0};
+  std::uint64_t policy_applications{0};
+  std::uint64_t worker_publication_locks{0};
+  std::uint64_t lighting_evaluations{0};
   std::uint64_t notification_evaluations{0};
   std::uint64_t notification_dispatches{0};
   std::uint64_t callbacks{0};
@@ -155,6 +160,9 @@ public:
     hooks_.publication_begin = &publication_begin;
     hooks_.publication_end = &publication_end;
     hooks_.state_copy = &state_copy;
+    hooks_.policy_application = &policy_application;
+    hooks_.worker_publication_lock = &worker_publication_lock;
+    hooks_.lighting_evaluation = &lighting_evaluation;
     hooks_.notification_evaluation_begin = &notification_evaluation_begin;
     hooks_.notification_evaluation_end = &notification_evaluation_end;
     hooks_.notification_dispatch_begin = &notification_dispatch_begin;
@@ -237,6 +245,9 @@ public:
   }
 
   void set_wall_time(const std::uint64_t duration_ns) noexcept { wall_ns_ = duration_ns; }
+  void set_process_cpu_time(const std::uint64_t duration_ns) noexcept {
+    process_cpu_ns_ = duration_ns;
+  }
 
   [[nodiscard]] BaselineReport
   report(const std::string_view scenario, const bool profiler_enabled,
@@ -245,6 +256,7 @@ public:
     result.scenario = scenario;
     result.profiler_enabled = profiler_enabled;
     result.wall_ns = wall_ns_;
+    result.process_cpu_ns = process_cpu_ns_;
     result.attempted = attempted_.load(std::memory_order_relaxed);
     result.accepted = accepted_.load(std::memory_order_relaxed);
     result.observed_accepted_rate_hz =
@@ -262,6 +274,9 @@ public:
     result.faults = faults_.load(std::memory_order_relaxed);
     result.frame_processed = frame_processed_.load(std::memory_order_relaxed);
     result.state_copies = state_copies_.load(std::memory_order_relaxed);
+    result.policy_applications = policy_applications_.load(std::memory_order_relaxed);
+    result.worker_publication_locks = worker_publication_locks_.load(std::memory_order_relaxed);
+    result.lighting_evaluations = lighting_evaluations_.load(std::memory_order_relaxed);
     result.notification_evaluations = notification_evaluations_.load(std::memory_order_relaxed);
     result.notification_dispatches = notification_dispatches_.load(std::memory_order_relaxed);
     result.callbacks = callbacks_.load(std::memory_order_relaxed);
@@ -430,6 +445,17 @@ public:
   static void state_copy(void *context) noexcept {
     static_cast<Aggregate *>(context)->state_copies_.fetch_add(1, std::memory_order_relaxed);
   }
+  static void policy_application(void *context) noexcept {
+    static_cast<Aggregate *>(context)->policy_applications_.fetch_add(1, std::memory_order_relaxed);
+  }
+  static void worker_publication_lock(void *context) noexcept {
+    static_cast<Aggregate *>(context)->worker_publication_locks_.fetch_add(
+        1, std::memory_order_relaxed);
+  }
+  static void lighting_evaluation(void *context) noexcept {
+    static_cast<Aggregate *>(context)->lighting_evaluations_.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+  }
   static void notification_evaluation_begin(void *context) noexcept {
     auto *aggregate = static_cast<Aggregate *>(context);
     if (aggregate->measurement_enabled_.load(std::memory_order_relaxed))
@@ -464,6 +490,7 @@ public:
   HostClock::time_point notification_evaluation_started_{};
   HostClock::time_point notification_dispatch_started_{};
   std::uint64_t wall_ns_{0};
+  std::uint64_t process_cpu_ns_{0};
   AtomicStageStats receive_wait_{};
   AtomicStageStats enqueue_to_process_{};
   AtomicStageStats dequeue_to_process_{};
@@ -484,6 +511,9 @@ public:
   std::atomic<std::uint64_t> faults_{0};
   std::atomic<std::uint64_t> frame_processed_{0};
   std::atomic<std::uint64_t> state_copies_{0};
+  std::atomic<std::uint64_t> policy_applications_{0};
+  std::atomic<std::uint64_t> worker_publication_locks_{0};
+  std::atomic<std::uint64_t> lighting_evaluations_{0};
   std::atomic<std::uint64_t> notification_evaluations_{0};
   std::atomic<std::uint64_t> notification_dispatches_{0};
   std::atomic<std::uint64_t> callbacks_{0};
@@ -874,6 +904,7 @@ BaselineReport run_scenario(const Scenario scenario, const bool profiler_enabled
   Aggregate aggregate{};
   Harness harness{aggregate, profiler_enabled, scenario == Scenario::Unrelated};
   const auto started = HostClock::now();
+  const auto process_cpu_started = std::clock();
   std::uint64_t timestamp = 100;
   const auto frame_baseline = aggregate.frame_processed_count();
 
@@ -951,6 +982,11 @@ BaselineReport run_scenario(const Scenario scenario, const bool profiler_enabled
   const auto stats_before_stop = harness.source().statistics();
   aggregate.set_wall_time(static_cast<std::uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(HostClock::now() - started).count()));
+  const auto process_cpu_elapsed = std::clock() - process_cpu_started;
+  aggregate.set_process_cpu_time(process_cpu_elapsed <= 0
+                                     ? 0
+                                     : static_cast<std::uint64_t>(process_cpu_elapsed) *
+                                           1'000'000'000ULL / CLOCKS_PER_SEC);
   harness.stop_and_detach();
   auto report = aggregate.report(scenario_name(scenario), profiler_enabled, stats_before_stop);
   report.traffic_rate = traffic_rate(scenario);
@@ -970,7 +1006,7 @@ void print_report(const BaselineReport &report, const std::size_t repeat) {
             << " target_flags='" << MAZDA_BASELINE_TARGET_FLAGS << "'"
             << " compiler=" << __VERSION__ << " cxx_std=17 ble=off"
             << " subscriptions=turn_state->ActionEngine->LedActionSink+latency_observer"
-            << " wall_ns=" << report.wall_ns << "\n"
+            << " wall_ns=" << report.wall_ns << " process_cpu_ns=" << report.process_cpu_ns << "\n"
             << "  traffic attempted=" << report.attempted << " accepted=" << report.accepted
             << " source_received=" << report.source_received << " dequeued=" << report.dequeued
             << " dropped=" << report.dropped << " queue_overflows=" << report.queue_overflows
@@ -986,6 +1022,9 @@ void print_report(const BaselineReport &report, const std::size_t repeat) {
             << " malformed=" << report.malformed << " faults=" << report.faults
             << " frame_processed=" << report.frame_processed
             << " state_copies=" << report.state_copies
+            << " policy_applications=" << report.policy_applications
+            << " worker_publication_locks=" << report.worker_publication_locks
+            << " lighting_evaluations=" << report.lighting_evaluations
             << " notification_evaluations=" << report.notification_evaluations
             << " dispatches=" << report.notification_dispatches
             << " action_callbacks=" << report.callbacks
@@ -1028,7 +1067,15 @@ TEST_CASE("synthetic telemetry baseline records production path stages") {
   CHECK(on.decode.count == on.decoded);
   CHECK(on.enqueue_to_process.count == on.frame_processed);
   CHECK(on.dequeue_to_process.count == on.frame_processed);
-  CHECK(on.state_copies == on.publication.count * 2);
+  // Each semantic mutation is copied into the public store once. The worker
+  // evaluates its owned state directly instead of reading a second complete
+  // snapshot back from the publication boundary.
+  CHECK(on.state_copies <= on.decoded + 2);
+  CHECK(on.state_copies < on.publication.count * 2);
+  CHECK(on.worker_publication_locks == on.publication.count);
+  CHECK(on.lighting_evaluations == on.publication.count);
+  CHECK(on.policy_applications > 0);
+  CHECK(on.process_cpu_ns > 0);
   CHECK(on.notification_evaluations ==
         on.notification_evaluation.count * kExpectedNotificationEvaluations);
   CHECK(on.callbacks > 0);
@@ -1074,16 +1121,24 @@ TEST_CASE("synthetic baseline covers deterministic traffic mix and repeats") {
     CHECK(second_off.malformed == second.malformed);
     if (scenario == Scenario::Silence)
       CHECK(first.attempted == 0);
-    if (scenario == Scenario::Unrelated)
+    if (scenario == Scenario::Unrelated) {
       CHECK(first.ignored == first.dequeued);
+      // Transport-only traffic updates diagnostics without copying the full
+      // Mazda state once per unrelated frame.
+      CHECK(first.state_copies < first.ignored);
+      CHECK(second.state_copies < second.ignored);
+    }
     if (scenario == Scenario::Unrelated) {
       CHECK(first.queue_depth_max == kContinuousFrameCount);
       CHECK(first.queue_depth_exact);
     }
     if (scenario == Scenario::Supported)
       CHECK(first.decoded == first.dequeued);
-    if (scenario == Scenario::Malformed)
+    if (scenario == Scenario::Malformed) {
       CHECK(first.malformed == first.dequeued);
+      CHECK(first.state_copies == first.malformed);
+      CHECK(second.state_copies == second.malformed);
+    }
     if (scenario == Scenario::Burst) {
       CHECK(first.attempted == 512);
       CHECK(first.accepted == kSourceCapacity + 1);
