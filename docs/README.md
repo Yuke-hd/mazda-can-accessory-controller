@@ -30,6 +30,7 @@ current requirements unless a task explicitly references them.
 | Host ingestion or replay output | [GVRET ingestion](specs/replay/gvret-ingestion.md), [pixel-frame output](specs/replay/pixel-frame-output.md), [signal observers](specs/replay/signal-observers.md). |
 | Browser emulator or playback | [Web emulator](specs/replay/web-emulator.md), [browser renderer](specs/replay/browser-renderer.md), [playback](specs/replay/playback.md). |
 | Build, test or CI | [Supported host builds](development/supported-build.md), [firmware builds](development/firmware-build.md), [architecture validation](development/architecture-validation.md). |
+| Host telemetry baseline | [Telemetry performance baseline](development/telemetry-performance-baseline.md). |
 | Fixtures or third-party material | [License and vehicle-data policy](development/license-and-vehicle-data.md), [third-party notices](../THIRD_PARTY_NOTICES.md). |
 
 ## Authority and history
