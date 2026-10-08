@@ -108,11 +108,15 @@ All runs received and processed 4,096 synthetic frames.
 | On | 5,209,159 / 5,239,217 / 5,214,249 | 5,214,249 | 5,209,159–5,239,217 | 1,268 B |
 
 The median profiling-on run took 299,878 µs (6.1%) longer than the median
-profiling-off run. These results show the instrumentation cost for this
-synthetic target workload, not a vehicle-traffic budget. The completed
-profiling intervals reported 3,914–3,938 total-stage calls because the workload
-crossed an interval boundary; these are interval subsets, not the full
-4,096-frame workload.
+profiling-off run. This percentage is the total elapsed-time change across the
+full 4,096-frame workload, from before service start through final-frame
+processing; it is neither a per-frame measurement nor overhead per five-second
+profiling interval. The post-workload wait for a completed profile interval is
+excluded. These results show the instrumentation cost for this synthetic
+target workload, not a vehicle-traffic budget. The completed profiling
+intervals reported 3,914–3,938 total-stage calls because the workload crossed
+an interval boundary; these are interval subsets, not the full 4,096-frame
+workload.
 
 ## Host overhead evidence
 
