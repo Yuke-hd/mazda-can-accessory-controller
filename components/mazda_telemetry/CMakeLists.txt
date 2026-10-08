@@ -47,6 +47,14 @@ option(MAZDA_ENABLE_TELEMETRY_PROFILING
 if(MAZDA_ENABLE_TELEMETRY_PROFILING)
   target_compile_definitions(mazda_telemetry PRIVATE MAZDA_ENABLE_TELEMETRY_PROFILING=1)
 endif()
+option(MAZDA_ENABLE_TELEMETRY_STAGE_PROFILING
+       "Compile the firmware-style bounded telemetry profiler for host coverage" OFF)
+if(MAZDA_ENABLE_TELEMETRY_STAGE_PROFILING)
+  # The service layout changes when the fixed accumulator is enabled. Publish
+  # the definition to every host consumer that includes the private service
+  # seam so tests and the library use the same layout.
+  target_compile_definitions(mazda_telemetry PUBLIC CONFIG_WEACT_CAN_TELEMETRY_PROFILING=1)
+endif()
 find_package(Threads REQUIRED)
 target_include_directories(
   mazda_telemetry
@@ -147,7 +155,20 @@ if(BUILD_TESTING AND MAZDA_BUILD_HOST_TESTS)
   add_test(NAME mazda_telemetry_descriptor_tests
            COMMAND mazda_telemetry_descriptor_tests)
 
-  if(MAZDA_ENABLE_TELEMETRY_PROFILING)
+  add_executable(mazda_telemetry_profiling_tests
+    tests/telemetry_profiling_tests.cpp
+  )
+  target_include_directories(mazda_telemetry_profiling_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/private_include
+  )
+  target_link_libraries(mazda_telemetry_profiling_tests PRIVATE
+    mazda_telemetry
+  )
+  target_compile_features(mazda_telemetry_profiling_tests PRIVATE cxx_std_17)
+  add_test(NAME mazda_telemetry_profiling_tests
+           COMMAND mazda_telemetry_profiling_tests)
+
+  if(MAZDA_ENABLE_TELEMETRY_PROFILING OR MAZDA_ENABLE_TELEMETRY_STAGE_PROFILING)
     add_executable(mazda_telemetry_group_tests
       tests/vehicle_telemetry_group_tests.cpp
     )

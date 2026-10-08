@@ -919,6 +919,22 @@ DebugSnapshot VehicleTelemetryService::debug_stale_snapshot() const noexcept {
 #endif
 }
 
+TelemetryProfileSnapshot VehicleTelemetryService::telemetry_profile_snapshot() const noexcept {
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  return telemetry_profiler_.snapshot();
+#else
+  return {};
+#endif
+}
+
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+void VehicleTelemetryService::profile_stage(
+    const TelemetryProfileStage stage, const vehicle_core::MonotonicTimestamp started_us,
+    const vehicle_core::MonotonicTimestamp ended_us) noexcept {
+  telemetry_profiler_.record(stage, started_us, ended_us);
+}
+#endif
+
 void VehicleTelemetryService::reset() noexcept {
   processing_state_ = VehicleState{};
   processing_state_.apply_freshness_policy(config_.freshness);
@@ -928,6 +944,13 @@ void VehicleTelemetryService::reset() noexcept {
   pending_observation_identifier_.reset();
   last_transport_receive_us_.reset();
   runtime_diagnostics_ = {};
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  telemetry_profiler_.reset(clock_->now());
+  profile_total_active_ = false;
+  profile_total_started_us_ = 0;
+  profile_diagnostics_active_ = false;
+  profile_diagnostics_started_us_ = 0;
+#endif
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
   debug_recorder_.reset();
   debug_frame_pending_ = false;
@@ -949,6 +972,13 @@ void VehicleTelemetryService::reset() noexcept {
 
 vehicle_telemetry::ProcessResult
 VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcept {
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  const auto process_started_us = clock_->now();
+  profile_total_started_us_ = process_started_us;
+  profile_total_active_ = true;
+  profile_stage(TelemetryProfileStage::QueueWait, frame.timestamp_us, process_started_us);
+  const auto pre_decode_started_us = process_started_us;
+#endif
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
   const bool is_turn_switch = frame.identifier == candidate::kTurnSwitchId;
   const bool turn_had_value = processing_state_.turn_state.has_value;
@@ -961,6 +991,10 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
   // evidence.
   pending_observation_identifier_ = frame.identifier;
   service_due_notifications(clock_->now());
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  profile_stage(TelemetryProfileStage::PreDecodeDue, pre_decode_started_us, clock_->now());
+  const auto decode_started_us = clock_->now();
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->decode_begin != nullptr)
     host_options_.profiler->decode_begin(host_options_.profiler->context);
@@ -989,6 +1023,9 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
     result = {vehicle_telemetry::ProcessStatus::Fault};
     break;
   }
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  profile_stage(TelemetryProfileStage::Decode, decode_started_us, clock_->now());
+#endif
 #if defined(MAZDA_TELEMETRY_DEBUG_ENABLED)
   if (is_turn_switch) {
     const bool update_not_advanced =
@@ -1007,6 +1044,13 @@ VehicleTelemetryService::process(const vehicle_core::RawCanFrame &frame) noexcep
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->decode_end != nullptr)
     host_options_.profiler->decode_end(host_options_.profiler->context, frame, result.status);
+#endif
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  // Runtime performs its diagnostics snapshot and observer handoff after
+  // process() returns. Starting here includes that work and the callback
+  // handoff while keeping the span disjoint from publication below.
+  profile_diagnostics_started_us_ = clock_->now();
+  profile_diagnostics_active_ = true;
 #endif
   return result;
 }
@@ -1031,6 +1075,11 @@ void VehicleTelemetryService::on_frame_processed(
 
 void VehicleTelemetryService::on_diagnostics(
     const vehicle_telemetry::TransportDiagnostics &diagnostics) noexcept {
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  const auto diagnostics_started_us =
+      profile_diagnostics_active_ ? profile_diagnostics_started_us_ : clock_->now();
+  profile_diagnostics_active_ = false;
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->diagnostics_begin != nullptr)
     host_options_.profiler->diagnostics_begin(host_options_.profiler->context);
@@ -1057,7 +1106,17 @@ void VehicleTelemetryService::on_diagnostics(
   // notifications; debug recording must not change policy semantics.
   record_debug_due_snapshot(clock_->now());
 #endif
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  profile_stage(TelemetryProfileStage::Diagnostics, diagnostics_started_us, clock_->now());
+#endif
   publish_current(diagnostics.has_last_frame);
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  if (profile_total_active_) {
+    profile_stage(TelemetryProfileStage::Total, profile_total_started_us_, clock_->now());
+    profile_total_active_ = false;
+  }
+  telemetry_profiler_.refresh(clock_->now());
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->diagnostics_end != nullptr)
     host_options_.profiler->diagnostics_end(host_options_.profiler->context);
@@ -1111,6 +1170,9 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
   const bool global_health_transition =
       requires_global_health_evaluation(published_lifecycle_, published_transport_, lifecycle,
                                         diagnostics.transport, published_health_initialized_);
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  const auto publication_started_us = clock_->now();
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->publication_begin != nullptr)
     host_options_.profiler->publication_begin(host_options_.profiler->context);
@@ -1127,6 +1189,9 @@ void VehicleTelemetryService::publish_current(const bool received_frame) noexcep
     publication_.publish_diagnostics(diagnostics);
   }
   record_worker_publication_lock();
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  profile_stage(TelemetryProfileStage::Publication, publication_started_us, clock_->now());
+#endif
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
   if (host_options_.profiler != nullptr && host_options_.profiler->publication_end != nullptr)
     host_options_.profiler->publication_end(host_options_.profiler->context);
@@ -1277,6 +1342,9 @@ std::size_t VehicleTelemetryService::publish_notifications(
   std::array<std::uint32_t, kNotificationChannelCount> due_identifiers{};
   std::size_t due_identifier_count = 0;
   std::size_t descriptor_index = 0;
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  const auto notification_started_us = include_lighting ? clock_->now() : 0;
+#endif
   std::apply(
       [this, &state, now_us, &due_identifiers, &due_identifier_count,
        &descriptor_index](const auto &...descriptor) {
@@ -1329,8 +1397,21 @@ std::size_t VehicleTelemetryService::publish_notifications(
          ...);
       },
       notification_descriptors());
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
   if (include_lighting)
+    profile_stage(TelemetryProfileStage::NotificationEvaluation, notification_started_us,
+                  clock_->now());
+#endif
+  if (include_lighting)
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  {
+    const auto lighting_started_us = clock_->now();
     publish_lighting(state, diagnostics, now_us);
+    profile_stage(TelemetryProfileStage::LightingEvaluation, lighting_started_us, clock_->now());
+  }
+#else
+    publish_lighting(state, diagnostics, now_us);
+#endif
   return evaluations;
 }
 
@@ -1648,6 +1729,11 @@ DebugSnapshot VehicleTelemetry::debug_snapshot() const noexcept {
 DebugSnapshot VehicleTelemetry::debug_stale_snapshot() const noexcept {
   return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
       ->debug_stale_snapshot();
+}
+
+TelemetryProfileSnapshot VehicleTelemetry::telemetry_profile_snapshot() const noexcept {
+  return reinterpret_cast<const internal::VehicleTelemetryService *>(implementation_storage_)
+      ->telemetry_profile_snapshot();
 }
 
 std::uint32_t VehicleTelemetry::dispatch_progress() const noexcept {

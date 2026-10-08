@@ -3,6 +3,9 @@ set(main_sources "main.cpp")
 if(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
   list(APPEND main_sources "freshness_debug_logger.cpp")
 endif()
+if(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  list(APPEND main_sources "telemetry_profiling_logger.cpp")
+endif()
 
 idf_component_register(
   SRCS ${main_sources}

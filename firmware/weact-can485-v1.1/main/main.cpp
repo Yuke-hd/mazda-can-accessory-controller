@@ -27,6 +27,9 @@
 #if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
 #include "freshness_debug_logger.hpp"
 #endif
+#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+#include "telemetry_profiling_logger.hpp"
+#endif
 
 #include <cstdint>
 #include <memory>
@@ -110,6 +113,9 @@ static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
 #if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
 static weact_can485::freshness_debug::Logger freshness_debug_logger{telemetry};
+#endif
+#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+static weact_can485::telemetry_profiling::Logger telemetry_profiling_logger{telemetry};
 #endif
 static controller_config::persisted::ControllerConfig active_configuration{};
 // The NVS config store. The vehicle I/O startup task creates it and then
@@ -283,6 +289,10 @@ bool start_vehicle_io() noexcept {
 #if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
   if (!freshness_debug_logger.start())
     ESP_LOGW(kTag, "CAN freshness debug logger task could not be created; telemetry continues");
+#endif
+#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+  if (!telemetry_profiling_logger.start())
+    ESP_LOGW(kTag, "telemetry profiling logger task could not be created; telemetry continues");
 #endif
 
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
