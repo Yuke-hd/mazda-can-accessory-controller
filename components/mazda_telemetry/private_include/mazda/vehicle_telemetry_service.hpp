@@ -20,6 +20,7 @@
 #include "mazda/publication_store.hpp"
 #include "mazda/signal_catalog.hpp"
 #include "mazda/signal_subscription_record.hpp"
+#include "mazda/telemetry_profiling_internal.hpp"
 #include "vehicle_core/notification_channel.hpp"
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
@@ -333,6 +334,7 @@ public:
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   [[nodiscard]] DebugSnapshot debug_snapshot() const noexcept;
   [[nodiscard]] DebugSnapshot debug_stale_snapshot() const noexcept;
+  [[nodiscard]] TelemetryProfileSnapshot telemetry_profile_snapshot() const noexcept;
 #if !defined(ESP_PLATFORM)
   // Deterministic host composition drains every channel in descriptor order,
   // repeating complete sweeps until no callback remains pending. Only the
@@ -514,6 +516,10 @@ private:
   [[nodiscard]] bool wait_for_workers(std::uint64_t timeout_us) noexcept;
   void join_workers() noexcept;
   void publish_startup_black(vehicle_core::MonotonicTimestamp now_us) noexcept;
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  void profile_stage(TelemetryProfileStage stage, vehicle_core::MonotonicTimestamp started_us,
+                     vehicle_core::MonotonicTimestamp ended_us) noexcept;
+#endif
 
   SteadyClock steady_clock_{};
 #if defined(ESP_PLATFORM)
@@ -533,6 +539,13 @@ private:
   // RawCanFrame::timestamp_us, which belongs to decoder observation ordering.
   std::optional<vehicle_core::MonotonicTimestamp> last_transport_receive_us_{};
   vehicle_telemetry::TransportDiagnostics runtime_diagnostics_{};
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  TelemetryStageProfiler telemetry_profiler_{};
+  bool profile_total_active_{false};
+  vehicle_core::MonotonicTimestamp profile_total_started_us_{0};
+  bool profile_diagnostics_active_{false};
+  vehicle_core::MonotonicTimestamp profile_diagnostics_started_us_{0};
+#endif
 #if defined(MAZDA_ENABLE_DEBUG_TELEMETRY) || defined(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
   DebugRecorder debug_recorder_{};
   bool debug_frame_pending_{false};

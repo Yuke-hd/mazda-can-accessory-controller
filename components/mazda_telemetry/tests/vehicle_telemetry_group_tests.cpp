@@ -250,6 +250,11 @@ struct Harness final {
     const auto now_us = arrival_now_us.value_or(received.timestamp_us);
     clock.set(now_us);
     const auto result = service.process(received);
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+    // Mirror Runtime's observer handoff so the diagnostics span covers its
+    // snapshot update and callback boundary in the host path as well.
+    service.on_frame_processed(received, result);
+#endif
     ++frame_count;
     publish(now_us, vehicle_core::TransportHealth::Live, vehicle_telemetry::LifecycleState::Running,
             true, now_us);
@@ -274,6 +279,42 @@ void expect(const bool condition, const char *expression, const char *file, cons
 }
 
 #define EXPECT(condition) expect((condition), #condition, __FILE__, __LINE__)
+
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+void test_stage_profile_counts_follow_executed_paths() {
+  Harness harness{};
+  EXPECT(harness.start());
+
+  const auto processed = harness.process(frame(kEngineDataId, 100, {0x09, 0x5b, 0, 0, 0, 0, 0, 0}));
+  const auto ignored = harness.process(frame(0x7ffU, 200, {}));
+  const auto malformed = harness.process(frame(kEngineDataId, 300, {0x09}));
+  EXPECT(processed.status == vehicle_telemetry::ProcessStatus::Processed);
+  EXPECT(ignored.status == vehicle_telemetry::ProcessStatus::Ignored);
+  EXPECT(malformed.status == vehicle_telemetry::ProcessStatus::Malformed);
+
+  // A receive timeout has diagnostics/publication work but no process,
+  // decode, queue-wait, or total frame span.
+  harness.publish(5'000'000, vehicle_core::TransportHealth::TimedOut,
+                  vehicle_telemetry::LifecycleState::Running, false);
+  const auto snapshot = harness.service.telemetry_profile_snapshot();
+  EXPECT(snapshot.enabled);
+  EXPECT(snapshot.interval_end_us == 5'000'000);
+  const auto metric = [&snapshot](const mazda::TelemetryProfileStage stage) -> const auto & {
+    return snapshot.stages[static_cast<std::size_t>(stage)];
+  };
+  EXPECT(metric(mazda::TelemetryProfileStage::QueueWait).calls == 3);
+  EXPECT(metric(mazda::TelemetryProfileStage::PreDecodeDue).calls == 3);
+  EXPECT(metric(mazda::TelemetryProfileStage::Decode).calls == 3);
+  EXPECT(metric(mazda::TelemetryProfileStage::Diagnostics).calls == 4);
+  // Runtime resets the interval before its startup publication, then records
+  // one publication/notification/lighting span for each frame and timeout.
+  EXPECT(metric(mazda::TelemetryProfileStage::Publication).calls == 4);
+  EXPECT(metric(mazda::TelemetryProfileStage::NotificationEvaluation).calls == 4);
+  EXPECT(metric(mazda::TelemetryProfileStage::LightingEvaluation).calls == 4);
+  EXPECT(metric(mazda::TelemetryProfileStage::Total).calls == 3);
+  harness.stop();
+}
+#endif
 
 void test_exact_ordinary_group_counts() {
   Harness harness{};
@@ -592,6 +633,9 @@ int main() {
   test_equal_older_conflict_do_not_recover();
   test_brake_default_unverified_and_malformed_failoff();
   test_global_fault_and_recovery_evaluate_all_groups();
+#if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+  test_stage_profile_counts_follow_executed_paths();
+#endif
   if (failures != 0)
     std::cerr << failures << " vehicle telemetry group assertion(s) failed\n";
   return failures == 0 ? 0 : 1;

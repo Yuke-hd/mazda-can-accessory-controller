@@ -5,6 +5,7 @@
 
 #include "mazda/debug_telemetry.hpp"
 #include "mazda/facade_contracts.hpp"
+#include "mazda/telemetry_profiling.hpp"
 
 namespace mazda::internal {
 class VehicleTelemetryAccess;
@@ -91,6 +92,9 @@ public:
   // firmware. The record is value-only and does not alter freshness policy.
   [[nodiscard]] DebugSnapshot debug_snapshot() const noexcept;
   [[nodiscard]] DebugSnapshot debug_stale_snapshot() const noexcept;
+  // Opt-in firmware stage profiling. Values are bounded wall-clock elapsed
+  // measurements and are zeroed when profiling is compiled out.
+  [[nodiscard]] TelemetryProfileSnapshot telemetry_profile_snapshot() const noexcept;
   // Liveness of the notification dispatcher: a wrapping count of completed
   // dispatcher loop passes. It advances while idle under stable vehicle state
   // and stops only while the dispatcher is stuck, for example in a callback.
