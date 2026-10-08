@@ -33,6 +33,7 @@ current requirements unless a task explicitly references them.
 | Build, test or CI | [Supported host builds](development/supported-build.md), [firmware builds](development/firmware-build.md), [architecture validation](development/architecture-validation.md). |
 | Host telemetry baseline | [Telemetry performance baseline](development/telemetry-performance-baseline.md). |
 | Firmware telemetry profiling | [Telemetry stage profiling](development/telemetry-stage-profiling.md). |
+| FreeRTOS task CPU and scheduler diagnostics | [FreeRTOS task runtime diagnostics](development/freertos-runtime-diagnostics.md). |
 | Fixtures or third-party material | [License and vehicle-data policy](development/license-and-vehicle-data.md), [third-party notices](../THIRD_PARTY_NOTICES.md). |
 
 ## Authority and history

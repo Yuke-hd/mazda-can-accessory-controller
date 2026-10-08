@@ -11,6 +11,10 @@ else()
   endif()
 endif()
 
+if(CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS)
+  list(APPEND main_sources "freertos_runtime_stats_logger.cpp")
+endif()
+
 idf_component_register(
   SRCS ${main_sources}
   INCLUDE_DIRS "."

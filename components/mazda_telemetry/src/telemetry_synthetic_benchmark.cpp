@@ -5,6 +5,7 @@
 #include "freertos/task.h"
 #include "mazda/definitions.hpp"
 #include "mazda/vehicle_telemetry_internal.hpp"
+#include "sdkconfig.h"
 #include "vehicle_core/frame.hpp"
 #include "vehicle_telemetry/receive.hpp"
 
@@ -19,7 +20,16 @@ constexpr std::size_t kSyntheticFrameCount = 4096;
 constexpr std::size_t kSyntheticFrameKinds = 6;
 constexpr std::uint64_t kWorkloadTimeoutUs = 10'000'000;
 constexpr std::uint64_t kProfileWaitTimeoutUs = 7'000'000;
+#if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+// Keep the worker and dispatcher alive through the first five-second task
+// snapshot. The benchmark's elapsed_us still ends at the fixed workload's
+// final receive request, before this diagnostic-only hold.
+constexpr std::uint64_t kRuntimeStatsHoldUs = 6'500'000;
+#endif
 constexpr TickType_t kYieldTicks = pdMS_TO_TICKS(1) == 0 ? 1 : pdMS_TO_TICKS(1);
+
+std::atomic<bool> benchmark_started{false};
+std::atomic<std::uint64_t> benchmark_work_budget_pauses{0};
 
 class BenchmarkClock final : public vehicle_core::MonotonicClock {
 public:
@@ -127,6 +137,8 @@ private:
 
 SyntheticBenchmarkResult run_synthetic_benchmark() noexcept {
   SyntheticBenchmarkResult result{};
+  benchmark_started.store(false, std::memory_order_release);
+  benchmark_work_budget_pauses.store(0, std::memory_order_release);
   // VehicleTelemetry owns a 32 KiB opaque service. Keep every object in
   // static storage because app_main has a small FreeRTOS stack. Declaration
   // order gives the service the earlier-lived clock, source, and sink.
@@ -142,11 +154,13 @@ SyntheticBenchmarkResult run_synthetic_benchmark() noexcept {
   result.started = start_result.ok();
   if (!result.started)
     return result;
+  benchmark_started.store(true, std::memory_order_release);
 
   const auto deadline_us = started_us + kWorkloadTimeoutUs;
   vehicle_core::MonotonicTimestamp workload_ended_us = started_us;
   for (;;) {
     const auto diagnostics = telemetry.diagnostics();
+    benchmark_work_budget_pauses.store(diagnostics.work_budget_pauses, std::memory_order_release);
     const auto completion_timestamp_us = source.completion_timestamp_us();
     if (diagnostics.acquisition.frames_received >= kSyntheticFrameCount &&
         diagnostics.acquisition.frames_processed >= kSyntheticFrameCount &&
@@ -186,11 +200,30 @@ SyntheticBenchmarkResult run_synthetic_benchmark() noexcept {
   }
 #endif
 
+#if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+  if (!result.timed_out) {
+    const auto hold_deadline_us = started_us + kRuntimeStatsHoldUs;
+    while (clock.now() < hold_deadline_us) {
+      const auto diagnostics = telemetry.diagnostics();
+      benchmark_work_budget_pauses.store(diagnostics.work_budget_pauses, std::memory_order_release);
+      vTaskDelay(kYieldTicks);
+    }
+  }
+#endif
+
   (void)telemetry.stop();
   const auto diagnostics = telemetry.diagnostics();
+  benchmark_work_budget_pauses.store(diagnostics.work_budget_pauses, std::memory_order_release);
   result.frames_received = diagnostics.acquisition.frames_received;
   result.frames_processed = diagnostics.acquisition.frames_processed;
+  result.work_budget_pauses = diagnostics.work_budget_pauses;
   return result;
+}
+
+SyntheticBenchmarkProgress synthetic_benchmark_progress() noexcept {
+  return {benchmark_started.load(std::memory_order_acquire),
+          benchmark_work_budget_pauses.load(std::memory_order_acquire),
+          TelemetryConfig{}.budget_pause_ms};
 }
 
 } // namespace mazda::benchmark
