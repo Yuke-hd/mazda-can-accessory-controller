@@ -26,8 +26,24 @@ constexpr std::uint32_t kTaskStackBytes = 6144;
 constexpr UBaseType_t kTaskPriority = tskIDLE_PRIORITY + 1;
 constexpr std::size_t kTaskCapacity = 40;
 
-std::array<TaskStatus_t, kTaskCapacity> previous_tasks{};
-std::array<TaskStatus_t, kTaskCapacity> current_tasks{};
+struct TaskSnapshot final {
+  TaskHandle_t handle{nullptr};
+  UBaseType_t task_number{0};
+  eTaskState state{eInvalid};
+  UBaseType_t current_priority{0};
+  configRUN_TIME_COUNTER_TYPE runtime_counter{0};
+  configSTACK_DEPTH_TYPE stack_high_water_mark{0};
+  std::array<char, configMAX_TASK_NAME_LEN> name{};
+#if defined(CONFIG_FREERTOS_SMP) && (configUSE_CORE_AFFINITY == 1) && (configNUMBER_OF_CORES > 1)
+  UBaseType_t core_affinity_mask{0};
+#elif configTASKLIST_INCLUDE_COREID == 1
+  BaseType_t core_id{0};
+#endif
+};
+
+std::array<TaskStatus_t, kTaskCapacity> raw_tasks{};
+std::array<TaskSnapshot, kTaskCapacity> previous_tasks{};
+std::array<TaskSnapshot, kTaskCapacity> current_tasks{};
 UBaseType_t previous_task_count{0};
 configRUN_TIME_COUNTER_TYPE previous_total_runtime{0};
 
@@ -36,18 +52,49 @@ struct Capture final {
   configRUN_TIME_COUNTER_TYPE total_runtime{0};
 };
 
-[[nodiscard]] bool capture(std::array<TaskStatus_t, kTaskCapacity> &tasks,
+void copy_task_snapshot(const TaskStatus_t &source, TaskSnapshot &destination) noexcept {
+  destination.handle = source.xHandle;
+  destination.task_number = source.xTaskNumber;
+  destination.state = source.eCurrentState;
+  destination.current_priority = source.uxCurrentPriority;
+  destination.runtime_counter = source.ulRunTimeCounter;
+  destination.stack_high_water_mark = source.usStackHighWaterMark;
+  destination.name.fill('\0');
+  if (source.pcTaskName != nullptr)
+    std::memcpy(destination.name.data(), source.pcTaskName, configMAX_TASK_NAME_LEN - 1);
+#if defined(CONFIG_FREERTOS_SMP) && (configUSE_CORE_AFFINITY == 1) && (configNUMBER_OF_CORES > 1)
+  destination.core_affinity_mask = source.uxCoreAffinityMask;
+#elif configTASKLIST_INCLUDE_COREID == 1
+  destination.core_id = source.xCoreID;
+#endif
+}
+
+[[nodiscard]] bool capture(std::array<TaskSnapshot, kTaskCapacity> &tasks,
                            Capture &result) noexcept {
+  // TaskStatus_t::pcTaskName points into the task's TCB. FreeRTOS suspends and
+  // resumes the scheduler inside uxTaskGetSystemState(), so keep an outer
+  // suspension around the call and copy every name before task deletion can
+  // reclaim that TCB.
+  vTaskSuspendAll();
   const auto required = uxTaskGetNumberOfTasks();
   if (required > tasks.size()) {
+    (void)xTaskResumeAll();
     ESP_LOGW(kTag, "task snapshot needs %u entries; fixed capacity is %u",
              static_cast<unsigned>(required), static_cast<unsigned>(tasks.size()));
     return false;
   }
 
-  result.task_count = uxTaskGetSystemState(tasks.data(), static_cast<UBaseType_t>(tasks.size()),
-                                           &result.total_runtime);
-  if (result.task_count == 0) {
+  const auto task_count = uxTaskGetSystemState(
+      raw_tasks.data(), static_cast<UBaseType_t>(raw_tasks.size()), &result.total_runtime);
+  const bool capture_succeeded = task_count != 0 && task_count <= tasks.size();
+  if (capture_succeeded) {
+    for (UBaseType_t index = 0; index < task_count; ++index)
+      copy_task_snapshot(raw_tasks[index], tasks[index]);
+  }
+  (void)xTaskResumeAll();
+
+  result.task_count = capture_succeeded ? task_count : 0;
+  if (!capture_succeeded) {
     ESP_LOGW(kTag, "task snapshot failed; task count changed or capacity was insufficient");
     return false;
   }
@@ -59,9 +106,10 @@ template <typename Counter>
   return static_cast<std::uint64_t>(current - previous);
 }
 
-[[nodiscard]] const TaskStatus_t *find_previous(const TaskHandle_t handle) noexcept {
+[[nodiscard]] const TaskSnapshot *find_previous(const TaskHandle_t handle,
+                                                const UBaseType_t task_number) noexcept {
   for (UBaseType_t index = 0; index < previous_task_count; ++index) {
-    if (previous_tasks[index].xHandle == handle)
+    if (previous_tasks[index].handle == handle && previous_tasks[index].task_number == task_number)
       return &previous_tasks[index];
   }
   return nullptr;
@@ -74,10 +122,10 @@ template <typename Counter>
   return std::strncmp(actual, expected, configMAX_TASK_NAME_LEN - 1) == 0;
 }
 
-[[nodiscard]] const TaskStatus_t *find_current_named(const Capture &capture,
+[[nodiscard]] const TaskSnapshot *find_current_named(const Capture &capture,
                                                      const char *const name) noexcept {
   for (UBaseType_t index = 0; index < capture.task_count; ++index) {
-    if (task_name_matches(current_tasks[index].pcTaskName, name))
+    if (task_name_matches(current_tasks[index].name.data(), name))
       return &current_tasks[index];
   }
   return nullptr;
@@ -109,24 +157,24 @@ template <typename Counter>
   return "unknown";
 }
 
-void format_affinity(const TaskStatus_t &task, char *const destination,
+void format_affinity(const TaskSnapshot &task, char *const destination,
                      const std::size_t capacity) noexcept {
 #if defined(CONFIG_FREERTOS_SMP) && (configUSE_CORE_AFFINITY == 1) && (configNUMBER_OF_CORES > 1)
   const auto all_cores = (static_cast<UBaseType_t>(1) << configNUMBER_OF_CORES) - 1;
-  if (task.uxCoreAffinityMask == all_cores)
+  if (task.core_affinity_mask == all_cores)
     (void)std::snprintf(destination, capacity, "any");
-  else if (task.uxCoreAffinityMask == 1)
+  else if (task.core_affinity_mask == 1)
     (void)std::snprintf(destination, capacity, "core0");
-  else if (task.uxCoreAffinityMask == 2)
+  else if (task.core_affinity_mask == 2)
     (void)std::snprintf(destination, capacity, "core1");
   else
     (void)std::snprintf(destination, capacity, "mask_0x%lx",
-                        static_cast<unsigned long>(task.uxCoreAffinityMask));
+                        static_cast<unsigned long>(task.core_affinity_mask));
 #elif configTASKLIST_INCLUDE_COREID == 1
-  if (task.xCoreID == tskNO_AFFINITY)
+  if (task.core_id == tskNO_AFFINITY)
     (void)std::snprintf(destination, capacity, "any");
   else
-    (void)std::snprintf(destination, capacity, "core%ld", static_cast<long>(task.xCoreID));
+    (void)std::snprintf(destination, capacity, "core%ld", static_cast<long>(task.core_id));
 #else
   (void)task;
   (void)std::snprintf(destination, capacity, "unavailable");
@@ -152,28 +200,28 @@ void log_task(const Capture &capture, const char *const expected_name,
 
   char affinity[16]{};
   format_affinity(*current, affinity, sizeof(affinity));
-  const auto *const previous = find_previous(current->xHandle);
+  const auto *const previous = find_previous(current->handle, current->task_number);
   if (previous == nullptr) {
     ESP_LOGI(kTag,
              "TASKSTAT_TASK v=1 name=%s status=new priority=%u affinity=%s "
              "observed_core=unavailable stack_hwm_bytes=%llu state=%s",
-             current->pcTaskName, static_cast<unsigned>(current->uxCurrentPriority), affinity,
-             static_cast<unsigned long long>(current->usStackHighWaterMark) * sizeof(StackType_t),
-             task_state_name(current->eCurrentState));
+             current->name.data(), static_cast<unsigned>(current->current_priority), affinity,
+             static_cast<unsigned long long>(current->stack_high_water_mark) * sizeof(StackType_t),
+             task_state_name(current->state));
     return;
   }
 
-  const auto runtime = counter_delta(current->ulRunTimeCounter, previous->ulRunTimeCounter);
+  const auto runtime = counter_delta(current->runtime_counter, previous->runtime_counter);
   const auto share = share_x100(runtime, interval_runtime);
   ESP_LOGI(kTag,
            "TASKSTAT_TASK v=1 name=%s status=ok runtime_us=%llu cpu_pct=%llu.%02llu "
            "priority=%u affinity=%s observed_core=unavailable stack_hwm_bytes=%llu state=%s",
-           current->pcTaskName, static_cast<unsigned long long>(runtime),
+           current->name.data(), static_cast<unsigned long long>(runtime),
            static_cast<unsigned long long>(share / 100),
            static_cast<unsigned long long>(share % 100),
-           static_cast<unsigned>(current->uxCurrentPriority), affinity,
-           static_cast<unsigned long long>(current->usStackHighWaterMark) * sizeof(StackType_t),
-           task_state_name(current->eCurrentState));
+           static_cast<unsigned>(current->current_priority), affinity,
+           static_cast<unsigned long long>(current->stack_high_water_mark) * sizeof(StackType_t),
+           task_state_name(current->state));
 }
 
 void log_ble_nimble_group(const Capture &capture, const std::uint64_t interval_runtime) noexcept {
@@ -188,17 +236,17 @@ void log_ble_nimble_group(const Capture &capture, const std::uint64_t interval_r
 
   for (UBaseType_t index = 0; index < capture.task_count; ++index) {
     const auto &task = current_tasks[index];
-    if (!is_ble_nimble_task(task.pcTaskName))
+    if (!is_ble_nimble_task(task.name.data()))
       continue;
     ++members;
-    minimum_stack = std::min(minimum_stack, static_cast<std::uint64_t>(task.usStackHighWaterMark) *
+    minimum_stack = std::min(minimum_stack, static_cast<std::uint64_t>(task.stack_high_water_mark) *
                                                 sizeof(StackType_t));
-    maximum_priority = std::max(maximum_priority, task.uxCurrentPriority);
-    const auto *const previous = find_previous(task.xHandle);
+    maximum_priority = std::max(maximum_priority, task.current_priority);
+    const auto *const previous = find_previous(task.handle, task.task_number);
     if (previous == nullptr)
       ++new_members;
     else
-      runtime += counter_delta(task.ulRunTimeCounter, previous->ulRunTimeCounter);
+      runtime += counter_delta(task.runtime_counter, previous->runtime_counter);
     char task_affinity[16]{};
     format_affinity(task, task_affinity, sizeof(task_affinity));
     if (!affinity_initialized) {
