@@ -6,12 +6,12 @@ dependencies:
   vehicle_core:
     git: "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     path: "components/vehicle_core"
-    version: "0.2.0"
+    version: "0.2.1"
   can_bus:
     git: "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     path: "components/can_bus"
-    version: "0.2.0"
+    version: "0.2.1"
   vehicle_telemetry:
     git: "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     path: "components/vehicle_telemetry"
-    version: "0.2.0"
+    version: "0.2.1"

@@ -103,7 +103,7 @@ headroom, and affinity reporting.
 
 ## Pause and watchdog limits
 
-The pinned `esp32-vehicle-can-core` 0.2.0 runtime exposes the cumulative
+The pinned `esp32-vehicle-can-core` 0.2.1 runtime exposes the cumulative
 `work_budget_pauses` count and the configured request. It records the count
 immediately before its private `vTaskDelay(1)` loop, but exposes no completion
 timestamp or hook. Consequently this firmware can distinguish intervals with
@@ -169,7 +169,7 @@ measurement. The documented cost remains qualitative: runtime counters and
 task metadata are enabled only by the opt-in Kconfig, the logger samples every
 five seconds, and each snapshot temporarily suspends scheduling.
 
-The pinned `vehicle_core` 0.2.0 interface exposes the pause count and the
+The pinned `vehicle_core` 0.2.1 interface exposes the pause count and the
 tick-rounded request but no exact completion timestamp, so every target header
 reports `pause_actual_us=unavailable`. The application watchdogs expose
 fail-off/restart behavior but no sampled event counter, so every header also

@@ -6,7 +6,7 @@ namespace weact_can485::freertos_runtime_stats {
 
 // Supplied by the firmware composition so the logger can correlate scheduler
 // runtime with the generic Runtime's deliberate work-budget pauses. The core
-// 0.2.0 interface exposes the pause count and request, but no completion
+// 0.2.1 interface exposes the pause count and request, but no completion
 // timestamp for measuring the actual block duration.
 struct PauseSnapshot final {
   bool available{false};

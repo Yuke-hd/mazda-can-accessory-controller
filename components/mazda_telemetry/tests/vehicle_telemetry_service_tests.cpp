@@ -794,7 +794,7 @@ void test_runtime_budget_configuration_contract() {
 
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
-  // 0.2.0 accepts the complete facade budget, including a frame limit above
+  // 0.2.1 accepts the complete facade budget, including a frame limit above
   // the former controller-local cap of 16.
   EXPECT(service.configure(config).ok());
 
@@ -1459,8 +1459,6 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
   EXPECT(source.inject(frame(mazda::candidate::kEngineDataId, 10,
                              {0, 0, 0x2e, 0xe0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
   EXPECT(wait_for_reading(service));
-  EXPECT(service.diagnostics().acquisition.frames_received == 1);
-  EXPECT(service.diagnostics().acquisition.frames_processed == 1);
   EXPECT(service.diagnostics().transport == vehicle_core::TransportHealth::Live);
   EXPECT(service.speed_kph().value == 120.0F);
 
@@ -1473,12 +1471,14 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
 
   // An ignored frame is still receive progress. Diagnostics-only publication
   // must recover transport without replacing the retained semantic value.
+  // Acquisition statistics are sampled periodically by the generic core, so
+  // transport state is the synchronization point for this short timeline.
   clock.set(30);
   EXPECT(source.inject(frame(0x7ff, 30, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
   EXPECT(wait_for_flag([&service] {
     const auto reading = service.speed_kph();
-    return service.diagnostics().acquisition.frames_processed >= 2 && reading.value == 120.0F &&
-           reading.availability == mazda::Availability::Fresh;
+    return service.diagnostics().transport == vehicle_core::TransportHealth::Live &&
+           reading.value == 120.0F && reading.availability == mazda::Availability::Fresh;
   }));
 
   // A later ignored frame keeps transport live at the point where the
@@ -1487,8 +1487,8 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
   EXPECT(source.inject(frame(0x7ff, 111, {0, 0, 0, 0, 0, 0, 0, 0})) == mazda::ResultCode::Ok);
   EXPECT(wait_for_flag([&service] {
     const auto reading = service.speed_kph();
-    return service.diagnostics().acquisition.frames_processed >= 3 && reading.value == 120.0F &&
-           reading.availability == mazda::Availability::Stale;
+    return service.diagnostics().transport == vehicle_core::TransportHealth::Live &&
+           reading.value == 120.0F && reading.availability == mazda::Availability::Stale;
   }));
   EXPECT(service.stop().ok());
 }

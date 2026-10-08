@@ -53,7 +53,7 @@ hardware changes, consult `docs/architecture/hardware/weact-can485-v1.1.md`.
   belongs in `lib/`; ESP-IDF bindings belong in `components/` or the sole
   firmware target at `firmware/weact-can485-v1.1/`.
 - Generic `vehicle_core`, `can_bus`, and `vehicle_telemetry` are owned by
-  `Yuke-hd/esp32-vehicle-can-core` and pinned at release `0.2.0`. Do not copy
+  `Yuke-hd/esp32-vehicle-can-core` and pinned at release `0.2.1`. Do not copy
   those components into this repository. Keep the CMake pin and all ESP-IDF
   manifest references synchronized when updating that dependency.
 - Preserve the public/internal include boundaries in the module ownership map.
