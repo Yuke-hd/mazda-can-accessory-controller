@@ -1478,8 +1478,7 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
   EXPECT(wait_for_flag([&service] {
     const auto reading = service.speed_kph();
     return service.diagnostics().transport == vehicle_core::TransportHealth::Live &&
-           reading.value == 120.0F &&
-           reading.availability == mazda::Availability::Fresh;
+           reading.value == 120.0F && reading.availability == mazda::Availability::Fresh;
   }));
 
   // A later ignored frame keeps transport live at the point where the
@@ -1489,8 +1488,7 @@ void test_unknown_frame_is_transport_traffic_and_expires() {
   EXPECT(wait_for_flag([&service] {
     const auto reading = service.speed_kph();
     return service.diagnostics().transport == vehicle_core::TransportHealth::Live &&
-           reading.value == 120.0F &&
-           reading.availability == mazda::Availability::Stale;
+           reading.value == 120.0F && reading.availability == mazda::Availability::Stale;
   }));
   EXPECT(service.stop().ok());
 }
