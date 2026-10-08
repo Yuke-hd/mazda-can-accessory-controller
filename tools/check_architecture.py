@@ -1343,8 +1343,8 @@ def _check_dependency_layout(root: Path) -> None:
     if tag_match is None:
         raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must name a release tag")
     release_tag = tag_match.group(1)
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_tag) or release_tag != "0.2.0":
-        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must be the 0.2.0 release tag")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_tag) or release_tag != "0.2.1":
+        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must be the 0.2.1 release tag")
     manifest = root / "firmware/weact-can485-v1.1/main/idf_component.yml"
     if not manifest.exists():
         raise ArchitectureFailure(f"firmware dependency manifest is missing: {manifest}")
@@ -1367,7 +1367,7 @@ def _check_dependency_layout(root: Path) -> None:
             component_refs.append(version_match.group(1))
     if len(component_refs) != 3 or set(component_refs) != {release_tag}:
         raise ArchitectureFailure(
-            "CMake and all three ESP-IDF generic component refs must use the same 0.2.0 release tag"
+            "CMake and all three ESP-IDF generic component refs must use the same 0.2.1 release tag"
         )
     print("OK   generic vehicle-core components are external and pinned")
 

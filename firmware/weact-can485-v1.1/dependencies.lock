@@ -6,7 +6,7 @@ dependencies:
       git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
       path: components/can_bus
       type: git
-    version: 9720e57ea501469377521d1b9e511e2e812b3b19
+    version: b3d87ac094576f7a787114a1bd24db5cf427a4f7
   espressif/led_strip:
     component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
     dependencies:
@@ -28,21 +28,21 @@ dependencies:
       git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
       path: components/vehicle_core
       type: git
-    version: 9720e57ea501469377521d1b9e511e2e812b3b19
+    version: b3d87ac094576f7a787114a1bd24db5cf427a4f7
   vehicle_telemetry:
-    component_hash: d6c2842a264d428bbb30c28194179b222394657ced306d1f48d19bad5efbb441
+    component_hash: 08f63be9c76a3ac5885479bbb0e580086c2f8afbdf2c48e33324295b7576c43c
     dependencies: []
     source:
       git: https://github.com/Yuke-hd/esp32-vehicle-can-core.git
       path: components/vehicle_telemetry
       type: git
-    version: 9720e57ea501469377521d1b9e511e2e812b3b19
+    version: b3d87ac094576f7a787114a1bd24db5cf427a4f7
 direct_dependencies:
 - can_bus
 - espressif/led_strip
 - idf
 - vehicle_core
 - vehicle_telemetry
-manifest_hash: fc128ff39ca42ddbf31a6be4a208c6cc539fe732487d27d1c712e10f2399c428
+manifest_hash: 8c6dcf157c520ee493e599a28d967809fca8e49143b84e3f8d3c61b4ee643a6e
 target: esp32
 version: 2.0.0

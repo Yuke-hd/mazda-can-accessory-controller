@@ -794,7 +794,7 @@ void test_runtime_budget_configuration_contract() {
 
   mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
 
-  // 0.2.0 accepts the complete facade budget, including a frame limit above
+  // 0.2.1 accepts the complete facade budget, including a frame limit above
   // the former controller-local cap of 16.
   EXPECT(service.configure(config).ok());
 

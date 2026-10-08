@@ -364,7 +364,7 @@ public:
 private:
   enum class State : std::uint8_t { Ready, Starting, Running, Failed, Stopped };
 
-  // Pinned to vehicle-can-core 0.2.0: each acquisition grant reaches exactly
+  // Pinned to vehicle-can-core 0.2.1: each acquisition grant reaches exactly
   // one on_diagnostics callback, which completes one publication epoch. The
   // barrier below relies on that one-grant/one-on_diagnostics relationship.
   [[nodiscard]] ReplayStepResult process_input(const GatedReplaySource::Grant grant) noexcept {
