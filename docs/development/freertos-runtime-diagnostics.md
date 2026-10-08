@@ -27,6 +27,13 @@ suspends the scheduler and is intended as a debug aid. The diagnostic therefore
 uses fixed storage for 40 task records, samples only every five seconds, and is
 off in `sdkconfig.defaults`.
 
+The task rows use `xTaskGetHandle()` for the persistent task names and match
+the returned handles plus each snapshot's task number. They never dereference
+`TaskStatus_t::pcTaskName` after `uxTaskGetSystemState()` returns: that pointer
+belongs to TCB storage and can become invalid when another SMP core deletes a
+task. The BLE aggregate is reported as unavailable until the firmware has an
+explicit stable handle set for the dynamic NimBLE task group.
+
 Build the normal diagnostic image out of tree:
 
 ```sh
@@ -87,11 +94,12 @@ state at the end snapshot.
 `observed_core=unavailable` is explicit because ESP-IDF's task snapshot exposes
 configured affinity, not the last core on which an unpinned task ran.
 
-`TASKSTAT_GROUP v=1 name=ble_nimble` aggregates the current NimBLE host,
-NimBLE timer, Bluetooth controller, and related BLE tasks by their ESP-IDF task
-names. It reports aggregate runtime, member count, maximum priority, minimum
-member stack headroom, and a common or mixed affinity. A missing task or group
-is reported instead of silently omitted.
+`TASKSTAT_GROUP v=1 name=ble_nimble` is currently reported as unavailable.
+Dynamic NimBLE task names do not provide a lifecycle-safe handle set for this
+diagnostic, so the logger does not scan borrowed `TaskStatus_t::pcTaskName`
+pointers to guess group membership. A future explicit stable handle set can
+restore aggregate runtime, member count, maximum priority, minimum member stack
+headroom, and affinity reporting.
 
 ## Pause and watchdog limits
 
@@ -146,8 +154,9 @@ interval reported `can_rx` at 0.33% (priority 23, blocked, 3,328 bytes),
 `vehicle_telemet` at 1.98% (priority 1, ready, 1,856 bytes), `mazda_notify`
 at 0.43% (priority 21, blocked, 1,900 bytes), `local_argb` at 0.54%
 (priority 2, blocked, 2,884 bytes), `IDLE0` at 38.76% on core 0 with 892
-bytes, `IDLE1` at 49.01% on core 1 with 996 bytes, and a two-member
-`ble_nimble` group at 6.06% with 1,972 bytes minimum stack headroom.
+bytes, and `IDLE1` at 49.01% on core 1 with 996 bytes. The BLE group reports
+`status=unavailable` because this implementation has no explicit stable handle
+set for the dynamic NimBLE tasks.
 Configured affinity and `observed_core=unavailable` are both retained in the
 record because the snapshot does not expose the last core for an unpinned
 task.

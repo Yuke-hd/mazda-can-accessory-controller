@@ -9,8 +9,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
-#include <limits>
 
 #if !CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER
 #error "FreeRTOS task runtime diagnostics require the ESP timer runtime-stat clock"
@@ -25,6 +23,26 @@ constexpr std::uint32_t kIntervalMs = 5000;
 constexpr std::uint32_t kTaskStackBytes = 6144;
 constexpr UBaseType_t kTaskPriority = tskIDLE_PRIORITY + 1;
 constexpr std::size_t kTaskCapacity = 40;
+constexpr std::size_t kImportantTaskCount = 6;
+
+struct TaskLabel final {
+  const char *display_name;
+  const char *lookup_name;
+};
+
+constexpr std::array<TaskLabel, kImportantTaskCount> kImportantTasks{
+    TaskLabel{"can_rx", "can_rx"},
+    TaskLabel{"vehicle_telemetry", "vehicle_telemet"},
+    TaskLabel{"mazda_notify", "mazda_notify"},
+    TaskLabel{"local_argb", "local_argb"},
+    TaskLabel{"IDLE0", "IDLE0"},
+    TaskLabel{"IDLE1", "IDLE1"},
+};
+
+struct TaskIdentity final {
+  TaskHandle_t handle{nullptr};
+  UBaseType_t task_number{0};
+};
 
 struct TaskSnapshot final {
   TaskHandle_t handle{nullptr};
@@ -33,7 +51,6 @@ struct TaskSnapshot final {
   UBaseType_t current_priority{0};
   configRUN_TIME_COUNTER_TYPE runtime_counter{0};
   configSTACK_DEPTH_TYPE stack_high_water_mark{0};
-  std::array<char, configMAX_TASK_NAME_LEN> name{};
 #if defined(CONFIG_FREERTOS_SMP) && (configUSE_CORE_AFFINITY == 1) && (configNUMBER_OF_CORES > 1)
   UBaseType_t core_affinity_mask{0};
 #elif configTASKLIST_INCLUDE_COREID == 1
@@ -50,6 +67,7 @@ configRUN_TIME_COUNTER_TYPE previous_total_runtime{0};
 struct Capture final {
   UBaseType_t task_count{0};
   configRUN_TIME_COUNTER_TYPE total_runtime{0};
+  std::array<TaskIdentity, kImportantTaskCount> important_tasks{};
 };
 
 void copy_task_snapshot(const TaskStatus_t &source, TaskSnapshot &destination) noexcept {
@@ -59,9 +77,6 @@ void copy_task_snapshot(const TaskStatus_t &source, TaskSnapshot &destination) n
   destination.current_priority = source.uxCurrentPriority;
   destination.runtime_counter = source.ulRunTimeCounter;
   destination.stack_high_water_mark = source.usStackHighWaterMark;
-  destination.name.fill('\0');
-  if (source.pcTaskName != nullptr)
-    std::memcpy(destination.name.data(), source.pcTaskName, configMAX_TASK_NAME_LEN - 1);
 #if defined(CONFIG_FREERTOS_SMP) && (configUSE_CORE_AFFINITY == 1) && (configNUMBER_OF_CORES > 1)
   destination.core_affinity_mask = source.uxCoreAffinityMask;
 #elif configTASKLIST_INCLUDE_COREID == 1
@@ -71,14 +86,17 @@ void copy_task_snapshot(const TaskStatus_t &source, TaskSnapshot &destination) n
 
 [[nodiscard]] bool capture(std::array<TaskSnapshot, kTaskCapacity> &tasks,
                            Capture &result) noexcept {
-  // TaskStatus_t::pcTaskName points into the task's TCB. FreeRTOS suspends and
-  // resumes the scheduler inside uxTaskGetSystemState(), so keep an outer
-  // suspension around the call and copy every name before task deletion can
-  // reclaim that TCB.
-  vTaskSuspendAll();
+  // TaskStatus_t::pcTaskName points into the task's TCB and may be reclaimed
+  // by another SMP core after uxTaskGetSystemState() returns. Resolve the
+  // persistent task handles through the official lookup API before taking the
+  // snapshot, then copy only value metadata from TaskStatus_t. No borrowed
+  // task-name pointer is retained or dereferenced here or later.
+  std::array<TaskHandle_t, kImportantTaskCount> resolved_handles{};
+  for (std::size_t index = 0; index < kImportantTasks.size(); ++index)
+    resolved_handles[index] = xTaskGetHandle(kImportantTasks[index].lookup_name);
+
   const auto required = uxTaskGetNumberOfTasks();
   if (required > tasks.size()) {
-    (void)xTaskResumeAll();
     ESP_LOGW(kTag, "task snapshot needs %u entries; fixed capacity is %u",
              static_cast<unsigned>(required), static_cast<unsigned>(tasks.size()));
     return false;
@@ -90,8 +108,20 @@ void copy_task_snapshot(const TaskStatus_t &source, TaskSnapshot &destination) n
   if (capture_succeeded) {
     for (UBaseType_t index = 0; index < task_count; ++index)
       copy_task_snapshot(raw_tasks[index], tasks[index]);
+
+    for (std::size_t important_index = 0; important_index < resolved_handles.size();
+         ++important_index) {
+      const auto handle = resolved_handles[important_index];
+      if (handle == nullptr)
+        continue;
+      for (UBaseType_t task_index = 0; task_index < task_count; ++task_index) {
+        if (tasks[task_index].handle == handle) {
+          result.important_tasks[important_index] = {handle, tasks[task_index].task_number};
+          break;
+        }
+      }
+    }
   }
-  (void)xTaskResumeAll();
 
   result.task_count = capture_succeeded ? task_count : 0;
   if (!capture_succeeded) {
@@ -115,28 +145,16 @@ template <typename Counter>
   return nullptr;
 }
 
-[[nodiscard]] bool task_name_matches(const char *const actual,
-                                     const char *const expected) noexcept {
-  if (actual == nullptr)
-    return false;
-  return std::strncmp(actual, expected, configMAX_TASK_NAME_LEN - 1) == 0;
-}
-
-[[nodiscard]] const TaskSnapshot *find_current_named(const Capture &capture,
-                                                     const char *const name) noexcept {
+[[nodiscard]] const TaskSnapshot *find_current(const Capture &capture,
+                                               const TaskIdentity &identity) noexcept {
+  if (identity.handle == nullptr)
+    return nullptr;
   for (UBaseType_t index = 0; index < capture.task_count; ++index) {
-    if (task_name_matches(current_tasks[index].name.data(), name))
+    if (current_tasks[index].handle == identity.handle &&
+        current_tasks[index].task_number == identity.task_number)
       return &current_tasks[index];
   }
   return nullptr;
-}
-
-[[nodiscard]] bool is_ble_nimble_task(const char *const name) noexcept {
-  if (name == nullptr)
-    return false;
-  return std::strncmp(name, "nimble", 6) == 0 || std::strncmp(name, "ble_", 4) == 0 ||
-         std::strncmp(name, "bt", 2) == 0 || std::strncmp(name, "BT", 2) == 0 ||
-         std::strcmp(name, "hciT") == 0 || std::strcmp(name, "hciR") == 0;
 }
 
 [[nodiscard]] const char *task_state_name(const eTaskState state) noexcept {
@@ -190,11 +208,12 @@ void format_affinity(const TaskSnapshot &task, char *const destination,
   return task_runtime * 10'000ULL / capacity_runtime;
 }
 
-void log_task(const Capture &capture, const char *const expected_name,
+void log_task(const Capture &capture, const std::size_t task_index,
               const std::uint64_t interval_runtime) noexcept {
-  const auto *const current = find_current_named(capture, expected_name);
+  const auto &label = kImportantTasks[task_index];
+  const auto *const current = find_current(capture, capture.important_tasks[task_index]);
   if (current == nullptr) {
-    ESP_LOGI(kTag, "TASKSTAT_TASK v=1 name=%s status=missing", expected_name);
+    ESP_LOGI(kTag, "TASKSTAT_TASK v=1 name=%s status=missing", label.display_name);
     return;
   }
 
@@ -205,7 +224,7 @@ void log_task(const Capture &capture, const char *const expected_name,
     ESP_LOGI(kTag,
              "TASKSTAT_TASK v=1 name=%s status=new priority=%u affinity=%s "
              "observed_core=unavailable stack_hwm_bytes=%llu state=%s",
-             current->name.data(), static_cast<unsigned>(current->current_priority), affinity,
+             label.display_name, static_cast<unsigned>(current->current_priority), affinity,
              static_cast<unsigned long long>(current->stack_high_water_mark) * sizeof(StackType_t),
              task_state_name(current->state));
     return;
@@ -216,7 +235,7 @@ void log_task(const Capture &capture, const char *const expected_name,
   ESP_LOGI(kTag,
            "TASKSTAT_TASK v=1 name=%s status=ok runtime_us=%llu cpu_pct=%llu.%02llu "
            "priority=%u affinity=%s observed_core=unavailable stack_hwm_bytes=%llu state=%s",
-           current->name.data(), static_cast<unsigned long long>(runtime),
+           label.display_name, static_cast<unsigned long long>(runtime),
            static_cast<unsigned long long>(share / 100),
            static_cast<unsigned long long>(share % 100),
            static_cast<unsigned>(current->current_priority), affinity,
@@ -225,55 +244,10 @@ void log_task(const Capture &capture, const char *const expected_name,
 }
 
 void log_ble_nimble_group(const Capture &capture, const std::uint64_t interval_runtime) noexcept {
-  std::uint64_t runtime = 0;
-  std::uint64_t minimum_stack = std::numeric_limits<std::uint64_t>::max();
-  UBaseType_t maximum_priority = 0;
-  std::size_t members = 0;
-  std::size_t new_members = 0;
-  char common_affinity[16]{};
-  bool affinity_initialized = false;
-  bool affinity_mixed = false;
-
-  for (UBaseType_t index = 0; index < capture.task_count; ++index) {
-    const auto &task = current_tasks[index];
-    if (!is_ble_nimble_task(task.name.data()))
-      continue;
-    ++members;
-    minimum_stack = std::min(minimum_stack, static_cast<std::uint64_t>(task.stack_high_water_mark) *
-                                                sizeof(StackType_t));
-    maximum_priority = std::max(maximum_priority, task.current_priority);
-    const auto *const previous = find_previous(task.handle, task.task_number);
-    if (previous == nullptr)
-      ++new_members;
-    else
-      runtime += counter_delta(task.runtime_counter, previous->runtime_counter);
-    char task_affinity[16]{};
-    format_affinity(task, task_affinity, sizeof(task_affinity));
-    if (!affinity_initialized) {
-      (void)std::snprintf(common_affinity, sizeof(common_affinity), "%s", task_affinity);
-      affinity_initialized = true;
-    } else if (std::strcmp(common_affinity, task_affinity) != 0) {
-      affinity_mixed = true;
-    }
-  }
-
-  if (members == 0) {
-    ESP_LOGI(kTag, "TASKSTAT_GROUP v=1 name=ble_nimble status=missing members=0");
-    return;
-  }
-
-  const char *affinity = common_affinity;
-  if (affinity_mixed)
-    affinity = "mixed";
-  const auto share = share_x100(runtime, interval_runtime);
-  ESP_LOGI(kTag,
-           "TASKSTAT_GROUP v=1 name=ble_nimble status=ok runtime_us=%llu cpu_pct=%llu.%02llu "
-           "priority_max=%u affinity=%s observed_core=unavailable stack_hwm_min_bytes=%llu "
-           "members=%u new_members=%u",
-           static_cast<unsigned long long>(runtime), static_cast<unsigned long long>(share / 100),
-           static_cast<unsigned long long>(share % 100), static_cast<unsigned>(maximum_priority),
-           affinity, static_cast<unsigned long long>(minimum_stack), static_cast<unsigned>(members),
-           static_cast<unsigned>(new_members));
+  (void)capture;
+  (void)interval_runtime;
+  ESP_LOGI(kTag, "TASKSTAT_GROUP v=1 name=ble_nimble status=unavailable members=0 "
+                 "reason=stable_handles_not_declared");
 }
 
 } // namespace
@@ -362,10 +336,8 @@ void Logger::run() noexcept {
                static_cast<unsigned long long>(requested_us));
     }
 
-    constexpr std::array<const char *, 6> kImportantTasks{
-        "can_rx", "vehicle_telemetry", "mazda_notify", "local_argb", "IDLE0", "IDLE1"};
-    for (const auto *const name : kImportantTasks)
-      log_task(current_capture, name, interval_runtime);
+    for (std::size_t index = 0; index < kImportantTasks.size(); ++index)
+      log_task(current_capture, index, interval_runtime);
     log_ble_nimble_group(current_capture, interval_runtime);
 
     std::copy_n(current_tasks.begin(), current_capture.task_count, previous_tasks.begin());
