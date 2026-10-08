@@ -32,10 +32,10 @@ public:
   // the real Runtime worker with a fixed AcquisitionSource while keeping the
   // production facade's CanBusSource private and untouched.
   static void emplace_benchmark_service(VehicleTelemetry &facade,
-                                         vehicle_core::MonotonicClock &clock,
-                                         vehicle_telemetry::AcquisitionSource &source,
-                                         LightingSink &lighting_sink,
-                                         const TelemetryConfig &config = {}) noexcept;
+                                        vehicle_core::MonotonicClock &clock,
+                                        vehicle_telemetry::AcquisitionSource &source,
+                                        LightingSink &lighting_sink,
+                                        const TelemetryConfig &config = {}) noexcept;
 #endif
 };
 

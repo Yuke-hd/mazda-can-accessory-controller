@@ -5,8 +5,8 @@
 #include "freertos/task.h"
 #include "mazda/definitions.hpp"
 #include "mazda/vehicle_telemetry_internal.hpp"
-#include "vehicle_telemetry/receive.hpp"
 #include "vehicle_core/frame.hpp"
+#include "vehicle_telemetry/receive.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -28,8 +28,9 @@ public:
   }
 };
 
-vehicle_core::RawCanFrame synthetic_frame(
-    const std::size_t index, const vehicle_core::MonotonicTimestamp timestamp_us) noexcept {
+vehicle_core::RawCanFrame
+synthetic_frame(const std::size_t index,
+                const vehicle_core::MonotonicTimestamp timestamp_us) noexcept {
   vehicle_core::RawCanFrame frame{};
   frame.timestamp_us = timestamp_us;
   frame.dlc = 8;
@@ -81,8 +82,8 @@ public:
     return {vehicle_telemetry::ResultCode::Ok};
   }
 
-  [[nodiscard]] vehicle_telemetry::ReceiveStatus
-  receive(vehicle_core::RawCanFrame &frame, const std::uint32_t) noexcept override {
+  [[nodiscard]] vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &frame,
+                                                         const std::uint32_t) noexcept override {
     if (!running_.load(std::memory_order_acquire))
       return vehicle_telemetry::ReceiveStatus::NotStarted;
 
@@ -172,10 +173,9 @@ SyntheticBenchmarkResult run_synthetic_benchmark() noexcept {
     const auto profile_deadline = clock.now() + kProfileWaitTimeoutUs;
     for (;;) {
       result.profile = telemetry.telemetry_profile_snapshot();
-      const auto &total = result.profile.stages[static_cast<std::size_t>(
-          TelemetryProfileStage::Total)];
-      if (result.profile.enabled && result.profile.interval_end_us != 0 &&
-          total.calls > 0) {
+      const auto &total =
+          result.profile.stages[static_cast<std::size_t>(TelemetryProfileStage::Total)];
+      if (result.profile.enabled && result.profile.interval_end_us != 0 && total.calls > 0) {
         result.profile_ready = true;
         break;
       }

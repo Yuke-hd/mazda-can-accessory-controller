@@ -1,5 +1,5 @@
-#include "esp_log.h"
 #include "board/board_config.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mazda/telemetry_synthetic_benchmark.hpp"
@@ -36,8 +36,7 @@ void benchmark_task(void *) noexcept {
 #else
            "off",
 #endif
-           result.started, result.timed_out,
-           static_cast<unsigned long long>(result.elapsed_us),
+           result.started, result.timed_out, static_cast<unsigned long long>(result.elapsed_us),
            static_cast<unsigned long long>(result.frames_received),
            static_cast<unsigned long long>(result.frames_processed), result.profile_ready,
            static_cast<unsigned long long>(result.profile.interval_duration_us),
@@ -48,7 +47,7 @@ void benchmark_task(void *) noexcept {
            static_cast<unsigned>(stack_headroom_bytes));
   vTaskDelete(nullptr);
 }
-}
+} // namespace
 
 extern "C" void app_main() {
   if (!board::initialize_safe_defaults()) {
