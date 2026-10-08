@@ -30,6 +30,20 @@ config WEACT_CAN_TELEMETRY_PROFILING
         per-frame output and does not measure task CPU time. Leave this off for
         normal vehicle images.
 
+config WEACT_CAN_FREERTOS_RUNTIME_STATS
+    bool "Enable five-second FreeRTOS task runtime diagnostics"
+    default n
+    select FREERTOS_GENERATE_RUN_TIME_STATS
+    select FREERTOS_VTASKLIST_INCLUDE_COREID
+    help
+        Starts a low-priority diagnostic task that calls uxTaskGetSystemState()
+        every five seconds and reports interval CPU share, task priority, core
+        affinity, and stack high-water marks. It also correlates the summary
+        with telemetry work-budget pause counts. This enables the global
+        FreeRTOS runtime-stat counters and trace-facility task metadata. The
+        ESP timer runtime-stat clock must remain selected. Leave this off for
+        normal vehicle images.
+
 config WEACT_CAN_TELEMETRY_BENCHMARK
     bool "Run the synthetic telemetry workload at boot"
     default n

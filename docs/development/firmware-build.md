@@ -47,6 +47,10 @@ For the bounded, opt-in investigation of `0x091` freshness incidents, use the
 [CAN freshness debug runbook](can-freshness-debug.md). It keeps the production
 freshness and receive-only policies unchanged.
 
+For default-off five-second per-task CPU/runtime, idle progress, stack, and
+telemetry budget-pause diagnostics, use the
+[FreeRTOS task runtime diagnostic guide](freertos-runtime-diagnostics.md).
+
 ## Partition layout
 
 The firmware uses a custom single-app partition table,

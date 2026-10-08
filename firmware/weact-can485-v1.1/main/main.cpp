@@ -30,6 +30,9 @@
 #if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
 #include "telemetry_profiling_logger.hpp"
 #endif
+#if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+#include "freertos_runtime_stats_logger.hpp"
+#endif
 
 #include <cstdint>
 #include <memory>
@@ -116,6 +119,16 @@ static weact_can485::freshness_debug::Logger freshness_debug_logger{telemetry};
 #endif
 #if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
 static weact_can485::telemetry_profiling::Logger telemetry_profiling_logger{telemetry};
+#endif
+#if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+weact_can485::freertos_runtime_stats::PauseSnapshot
+read_telemetry_pause_snapshot(const void *const context) noexcept {
+  const auto &source = *static_cast<const mazda::VehicleTelemetry *>(context);
+  const auto diagnostics = source.diagnostics();
+  return {true, diagnostics.work_budget_pauses, mazda::TelemetryConfig{}.budget_pause_ms, false, 0};
+}
+static weact_can485::freertos_runtime_stats::Logger freertos_runtime_stats_logger{
+    &read_telemetry_pause_snapshot, &telemetry};
 #endif
 static controller_config::persisted::ControllerConfig active_configuration{};
 // The NVS config store. The vehicle I/O startup task creates it and then
@@ -380,6 +393,10 @@ extern "C" void app_main(void) {
   // The companion link starts only after startup black, NVS initialization and
   // CAN start, and its result never gates lighting.
   start_companion_link();
+#if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+  if (!freertos_runtime_stats_logger.start())
+    ESP_LOGW(kTag, "FreeRTOS runtime diagnostic task could not be created; control continues");
+#endif
   for (;;) {
     const auto speed = telemetry.speed_kph();
     const auto engine_rpm = telemetry.engine_rpm();

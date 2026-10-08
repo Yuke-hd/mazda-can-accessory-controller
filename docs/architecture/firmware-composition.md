@@ -163,6 +163,14 @@ These calls consume value-only contracts. The application does not receive
 frames or invoke decoder, freshness, dispatcher, publication, or renderer
 operations.
 
+An opt-in composition-root diagnostic can start a low-priority FreeRTOS task
+after CAN and the asynchronous companion startup are requested. It samples
+read-only scheduler task state and the facade's published work-budget pause
+counter every five seconds. It neither owns nor calls the CAN, decoder,
+notification, policy, or renderer paths and is compiled out of ordinary
+images. Its configuration and record format are documented in
+[FreeRTOS task runtime diagnostics](../development/freertos-runtime-diagnostics.md).
+
 The vehicle project selects `vehicle_can_rx`, `mazda_telemetry`,
 `vehicle_lighting_policy`, `vehicle_signals`, `action_engine`,
 `local_argb_actions`, `local_argb_sink_contract`, `local_argb`,
