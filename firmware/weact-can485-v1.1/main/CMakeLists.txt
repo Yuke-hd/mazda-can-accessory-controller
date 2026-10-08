@@ -1,10 +1,14 @@
-set(main_sources "main.cpp")
-# Keep the diagnostic task and its state out of production images entirely.
-if(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
-  list(APPEND main_sources "freshness_debug_logger.cpp")
-endif()
-if(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
-  list(APPEND main_sources "telemetry_profiling_logger.cpp")
+if(CONFIG_WEACT_CAN_TELEMETRY_BENCHMARK)
+  set(main_sources "telemetry_synthetic_benchmark_main.cpp")
+else()
+  set(main_sources "main.cpp")
+  # Keep diagnostic tasks and their state out of production images entirely.
+  if(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
+    list(APPEND main_sources "freshness_debug_logger.cpp")
+  endif()
+  if(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
+    list(APPEND main_sources "telemetry_profiling_logger.cpp")
+  endif()
 endif()
 
 idf_component_register(

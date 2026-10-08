@@ -11,6 +11,9 @@ if(COMMAND idf_component_register)
   if(CONFIG_WEACT_CAN_FRESHNESS_DEBUG)
     list(APPEND mazda_telemetry_idf_sources "src/debug_telemetry.cpp")
   endif()
+  if(CONFIG_WEACT_CAN_TELEMETRY_BENCHMARK)
+    list(APPEND mazda_telemetry_idf_sources "src/telemetry_synthetic_benchmark.cpp")
+  endif()
   idf_component_register(SRCS ${mazda_telemetry_idf_sources}
                          INCLUDE_DIRS "include"
                          PRIV_INCLUDE_DIRS "private_include"

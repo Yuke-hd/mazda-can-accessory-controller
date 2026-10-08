@@ -30,4 +30,14 @@ config WEACT_CAN_TELEMETRY_PROFILING
         per-frame output and does not measure task CPU time. Leave this off for
         normal vehicle images.
 
+config WEACT_CAN_TELEMETRY_BENCHMARK
+    bool "Run the synthetic telemetry workload at boot"
+    default n
+    help
+        Selects a benchmark-only app entrypoint that feeds a fixed synthetic
+        frame sequence through the Mazda telemetry Runtime. It does not start
+        TWAI, CAN acquisition, BLE, or LED rendering. Compare equivalent
+        firmware builds with WEACT_CAN_TELEMETRY_PROFILING disabled and
+        enabled. Leave this off for normal vehicle images.
+
 endmenu

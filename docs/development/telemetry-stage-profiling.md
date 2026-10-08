@@ -55,14 +55,64 @@ build can additionally set `-DMAZDA_ENABLE_TELEMETRY_STAGE_PROFILING=ON` to
 compile the same fixed accumulator into the service and run deterministic
 processed, ignored, malformed, and timeout path checks. Firmware builds with
 the option off and on verify that the production and diagnostic compositions
-both compile. These checks are software evidence only. A board, CAN bus, and
-vehicle workload are required to measure actual ESP scheduling or vehicle
-traffic; this feature does not claim hardware or vehicle validation.
+both compile. These checks are software evidence only. The synthetic ESP
+comparison below measures the Runtime on a target board with CAN disconnected;
+it does not measure CAN-driver behavior, vehicle traffic, or asynchronous task
+CPU time.
 
 The profiler reports bounded wall-clock distributions, not per-stage CPU
-attribution, asynchronous notification dispatch latency, or a complete
-firmware overhead benchmark. Compare equivalent synthetic workloads on the
-target when making a device-specific budget.
+attribution or asynchronous notification dispatch latency. Compare equivalent
+synthetic workloads on the target when making a device-specific budget.
+
+## ESP synthetic overhead workload
+
+`CONFIG_WEACT_CAN_TELEMETRY_BENCHMARK` is a separate default-off firmware
+option. When enabled, the target selects a benchmark-only `app_main` that
+constructs the Mazda service with a fixed `AcquisitionSource` sequence. The
+sequence contains 4096 deterministic, synthetic valid frames and runs through
+the real Runtime worker, decoder, publication, notification, and no-op
+lighting sink. The benchmark does not call the normal vehicle-I/O startup;
+it applies the board's safe GPIO defaults first, while TWAI, CAN acquisition,
+BLE, and the LED renderer remain unstarted.
+
+Build the same target twice, changing only
+`CONFIG_WEACT_CAN_TELEMETRY_PROFILING` while leaving
+`CONFIG_WEACT_CAN_TELEMETRY_BENCHMARK=y`. Each run emits one summary with
+`elapsed_us`, `frames_received`, and `frames_processed`. Profiling-enabled runs
+also wait for a completed bounded interval and report the total-stage calls
+and approximate p50/p95/p99 values; this wait is excluded from `elapsed_us`.
+If the workload crosses a profiling rollover, these statistics describe the
+published interval's subset of frames and `total_calls` reports that subset.
+The frame sequence and service boundary are identical in both builds, so the
+elapsed values are comparable target workload evidence. The benchmark source
+uses fixed storage and does not allocate or log individual frames.
+
+The paired elapsed comparison isolates synchronous profiler instrumentation in
+the telemetry worker. The benchmark entrypoint omits the normal low-priority
+telemetry profiling logger task, so logger scheduling and serial output are
+outside the comparison.
+
+The comparison requires executing the benchmark image on an ESP target. The
+following target evidence used a WeAct CAN485 V1.1 board with an ESP32-D0WD-V3,
+powered by USB with CAN disconnected. It exercised only the synthetic Runtime
+workload; no CAN frames were sent or received, and this is not vehicle
+validation.
+
+Three runs per configuration used the same board and workload. Only
+`CONFIG_WEACT_CAN_TELEMETRY_PROFILING` changed between the benchmark images.
+All runs received and processed 4,096 synthetic frames.
+
+| Profiling | Elapsed runs (µs) | Median (µs) | Range (µs) | Minimum free benchmark-task stack |
+| --- | --- | ---: | ---: | ---: |
+| Off | 4,914,371 / 4,914,372 / 4,914,371 | 4,914,371 | 4,914,371–4,914,372 | 1,748 B |
+| On | 5,209,159 / 5,239,217 / 5,214,249 | 5,214,249 | 5,209,159–5,239,217 | 1,268 B |
+
+The median profiling-on run took 299,878 µs (6.1%) longer than the median
+profiling-off run. These results show the instrumentation cost for this
+synthetic target workload, not a vehicle-traffic budget. The completed
+profiling intervals reported 3,914–3,938 total-stage calls because the workload
+crossed an interval boundary; these are interval subsets, not the full
+4,096-frame workload.
 
 ## Host overhead evidence
 
@@ -79,7 +129,6 @@ measurements noisy.
 | Finite FIFO burst | 6.643 | 6.395 | 0.593 | 1.039 |
 
 This is host scheduling evidence for the added fixed timing reads and does not
-substitute for the required identical synthetic workload on an ESP target.
-That device comparison, including target-specific CPU and task-runtime
-effects, remains deferred until a board or an ESP execution harness is
-available.
+substitute for the target synthetic workload reported above. Per-task CPU
+attribution and asynchronous notification/action latency remain outside this
+comparison.

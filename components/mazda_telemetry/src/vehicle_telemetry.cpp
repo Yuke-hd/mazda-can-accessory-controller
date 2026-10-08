@@ -1679,6 +1679,20 @@ internal::VehicleTelemetryAccess::drain_host_notifications(VehicleTelemetry &fac
   return reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_)
       ->drain_notifications();
 }
+#else
+// Only used by the opt-in firmware synthetic benchmark. The normal facade
+// constructor remains bound to CanBusSource, and this replacement occurs
+// before the service is started so no production acquisition or renderer
+// lifecycle is entered.
+void internal::VehicleTelemetryAccess::emplace_benchmark_service(
+    VehicleTelemetry &facade, vehicle_core::MonotonicClock &clock,
+    vehicle_telemetry::AcquisitionSource &source, internal::LightingSink &lighting_sink,
+    const TelemetryConfig &config) noexcept {
+  reinterpret_cast<internal::VehicleTelemetryService *>(facade.implementation_storage_)
+      ->~VehicleTelemetryService();
+  ::new (static_cast<void *>(facade.implementation_storage_))
+      internal::VehicleTelemetryService{clock, source, lighting_sink, config};
+}
 #endif
 
 static_assert(sizeof(internal::VehicleTelemetryService) <= sizeof(VehicleTelemetry));
