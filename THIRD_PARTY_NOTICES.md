@@ -67,6 +67,13 @@ source, exact version or commit, license, and required notices.
 - **License:** Apache-2.0, upstream [LICENSE](https://github.com/espressif/esp-idf/blob/v5.5.4/LICENSE)
 - **Role/status:** required firmware toolchain and manifest dependency; no ESP-IDF source is copied into this repository. The upstream notices remain authoritative.
 
+## Yuke-hd esp32-vehicle-can-core
+
+- **Source:** <https://github.com/Yuke-hd/esp32-vehicle-can-core/tree/0.2.1>
+- **Exact version/commit:** `0.2.1`, `b3d87ac094576f7a787114a1bd24db5cf427a4f7`
+- **License:** Apache-2.0, upstream [LICENSE](https://github.com/Yuke-hd/esp32-vehicle-can-core/blob/0.2.1/LICENSE)
+- **Role/status:** external `vehicle_core`, `can_bus`, and `vehicle_telemetry` dependencies consumed through CMake FetchContent and ESP-IDF Component Manager. No core source is copied into this repository; the upstream license and notices remain authoritative.
+
 ## Espressif led_strip
 
 - **Source:** <https://components.espressif.com/components/espressif/led_strip/versions/3.0.3>
