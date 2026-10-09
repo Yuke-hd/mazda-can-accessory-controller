@@ -41,6 +41,18 @@ python3 tools/check_iram_placement.py \
   --nm xtensa-esp32-elf-nm --objdump xtensa-esp32-elf-objdump
 ```
 
+### Debugging at a lower optimisation level
+
+The `-O2` option is added after the global
+`CONFIG_COMPILER_OPTIMIZATION_*` level, so it overrides menuconfig for the
+listed components. Choosing Debug (`-Og`) or None (`-O0`) in menuconfig does
+not change them, and GDB shows optimised-out variables and inlined frames in
+that code. To debug these components at a lower level, temporarily remove
+`-O2` from the loop in `firmware/weact-can485-v1.1/CMakeLists.txt`. Such a
+build has different IRAM usage and telemetry performance; the worst-case
+profiling configuration may no longer link. Do not ship or vehicle-test it,
+and restore `-O2` before committing.
+
 ## Updating `hot_code.lf`
 
 When a hot `VehicleTelemetryService` function is added, renamed, or changes
