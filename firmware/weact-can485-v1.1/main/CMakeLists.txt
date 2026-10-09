@@ -22,4 +22,6 @@ idf_component_register(
            controller_config vehicle_can_rx mazda_telemetry freertos vehicle_core esp_timer
            companion_ble companion_config esp_app_format
   PRIV_REQUIRES esp_driver_twai
+  # Flash-cache layout; see docs/development/flash-cache-layout.md.
+  LDFRAGMENTS "hot_rodata.lf" "hot_code.lf"
 )
