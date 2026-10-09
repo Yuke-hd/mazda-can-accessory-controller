@@ -66,8 +66,22 @@ python3 tools/check_architecture.py --root . \
 dependency validators. It requires the pinned vehicle-core checkout configured
 by `VEHICLE_CAN_CORE_SOURCE_DIR` when an offline source tree is used.
 
-Format C/C++ with the pinned CI formatter when available. Use `apply_patch`
-for focused edits and inspect `git diff` before submitting.
+Format every C/C++ change with clang-format major version `14` before
+committing. This is the same version CI checks; other majors can produce
+different output and fail the `Validate C++ formatting` job. Install it (for
+example `brew install llvm@14` on macOS, which is keg-only, so put
+`$(brew --prefix llvm@14)/bin` on `PATH` or call that binary directly; or
+`clang-format-14` on Debian and Ubuntu). Make sure `clang-format --version`
+reports 14.x, then format and verify the changed files:
+
+```sh
+clang-format --version
+clang-format -i <changed .h, .hpp, and .cpp files>
+clang-format --dry-run --Werror <changed .h, .hpp, and .cpp files>
+```
+
+Run the `--dry-run --Werror` check over the full source set listed in
+`README.md` before opening a PR. Inspect `git diff` before submitting.
 
 ## Generic dependency updates
 
