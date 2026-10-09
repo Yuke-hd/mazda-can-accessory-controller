@@ -1,294 +1,171 @@
 # Mazda CAN Accessory Controller
 
-An ESP32 accessory controller that listens to Mazda CAN traffic and drives a
-separate addressable-light strip from decoded turn and brake state. The assumed
-future repository URL is [Yuke-hd/mazda-can-accessory-controller](https://github.com/Yuke-hd/mazda-can-accessory-controller);
-the URL is documented for orientation only and does not imply that a public
-repository, release, or hardware validation exists today.
+An ESP32 controller that passively listens to a Mazda's CAN bus, turns what the
+car is doing into simple **actions**, and sends them to pluggable **outputs
+(sinks)**. The built-in sink drives an addressable LED strip, and you can write
+your own. An iOS companion app configures the rules over Bluetooth LE and shows
+live signals.
 
-## Table of Contents
+> **Status: engineering starting point.** Host tests pass in software only.
+> Nothing here has been validated as a complete installation on a vehicle,
+> harness, or power supply. Bench and vehicle validation are required before
+> any installation.
 
-- [About](#about)
-- [Safety Boundary](#safety-boundary)
-- [Built With](#built-with)
-- [Hardware](#hardware)
-- [Getting Started](#getting-started)
-- [Usage](#usage)
-- [Architecture and Data Flow](#architecture-and-data-flow)
-- [Actions and Animations](#actions-and-animations)
-- [Repository Layout](#repository-layout)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License and Data Policy](#license-and-data-policy)
-- [Acknowledgments](#acknowledgments)
+## What it does
 
-## About
+1. **Read** decoded signals (turn, brake, RPM and more) from the car.
+2. **Decide** with configurable rules: "when this signal matches, fire this action".
+3. **Output** each action to every registered sink.
 
-The project turns reviewed, decoded vehicle signals into a bounded accessory
-lighting command. The pinned companion core owns generic frame validation, CAN
-acquisition, and the receive/runtime lifecycle. This controller owns Mazda
-candidate decoding, signal freshness, message health, fail-safe availability,
-board startup, strict listen-only CAN receive, and the LED sink.
+The factory profile ([`config/default.yaml`](config/default.yaml)) ships with the
+LED strip sink and these rules:
 
-This repository is an engineering starting point. Host tests and structural
-validators do not demonstrate correct behavior on a vehicle, in a harness, or
-under a particular power supply. Hardware and vehicle validation are still
-required before any installation or release decision.
+| Car state | LED strip behaviour |
+| --- | --- |
+| Turn signal / hazard | Amber animation on the matching side, flowing out from the center |
+| Brake pressed | Center region solid red |
+| RPM above threshold (6000 by default) | Center region solid red |
+| Anything unknown, stale, or faulty | **Everything off** |
 
-## Safety Boundary
+Rules and thresholds live in a config profile, not in code. See the
+[configuration spec](docs/specs/configuration/controller-config.md) and the
+[lighting profile](docs/specs/configuration/lighting-profile.md).
 
-- The vehicle firmware uses strict classic-CAN `TWAI_MODE_LISTEN_ONLY` with a
-  zero-length transmit queue. It must not transmit CAN data frames, inject
-  diagnostics, acknowledge as an application, or poll the vehicle.
-- Unknown, stale, malformed, unavailable, stopped, or faulted telemetry is
-  mapped to a black LED frame. A decoder error is not cleared by unrelated
-  traffic; recovery requires a newer valid observation.
-- Brake decoding is present, but its freshness timeout is intentionally unset
-  until timing evidence is established. The factory controller profile's
-  `brake` action uses the owner-approved `fresh_or_unverified` opt-in, so an
-  unverified pressed observation lights the brake region. Without a timeout,
-  the last decoded value can remain eligible if brake frames stop while other
-  CAN traffic continues; the observation is never promoted to `Fresh`.
-- This is not a replacement for factory indicators, brake lamps, a dashboard,
-  or any certified safety system. Do not use LED output as a safety-critical
-  indication.
-- Verify CAN wiring, termination, polarity, ground, connector pinout, and
-  transceiver behavior before connection. Use an appropriate fuse and
-  current-limited, protected power source. Calculate strip current for the
-  chosen LEDs and brightness; do not assume the controller or vehicle circuit
-  can supply it.
-- WS2812B-class strips may require level shifting and local bulk/decoupling
-  capacitors. Confirm logic levels, ground reference, connector protection,
-  thermal behavior, and enclosure strain relief on the actual assembly.
+## Bring your own sink
 
-## Built With
+The rule engine knows nothing about LEDs. It emits generic action commands
+(activate, deactivate, trigger, set level) to any number of sinks, and each sink
+decides what an action id means and ignores the ones it does not handle. The LED
+strip is just the first sink. To add another output, implement the
+`ActionSink` port and register it with the engine. See the
+[action engine spec](docs/specs/action-engine.md) and
+[module boundaries](docs/architecture/module-boundaries.md).
 
-- C++17 portable libraries and CMake host tests
-- ESP-IDF **5.5.4**, target `esp32`
-- Espressif `led_strip` **3.0.3** (pinned in the component manifest; the ESP-IDF configure step generates the lock)
-- WeAct Studio CAN485 DevBoard V1.1
-- Classic CAN receive through ESP-IDF TWAI in listen-only mode
+## Companion app
+
+An iOS companion app talks to the controller over Bluetooth LE to:
+
+- upload and read back a controller config (rules and lighting profile)
+- watch live decoded signals
+
+The link cannot transmit on the CAN bus or control pixels directly, and the
+lights keep working whether or not a phone is connected. See the
+[companion BLE protocol](docs/specs/companion/ble-protocol.md),
+[config transfer](docs/specs/companion/config-transfer.md), and
+[live signals](docs/specs/companion/live-signals.md).
+
+## Safety first
+
+- **Listen-only.** The controller never transmits on the CAN bus: no frames, no
+  diagnostics, no acknowledgements.
+- **Fail dark.** If the controller is unsure about the car's state, the strip
+  goes black rather than guessing.
+- **Not a safety device.** It does not replace factory indicators or brake
+  lamps. Do not rely on the LEDs for safety-critical signalling.
+- **Brake timing is unverified.** The brake signal has no freshness timeout yet,
+  so the red region can stay lit if brake frames stop while other CAN traffic
+  continues. See [signal evidence](docs/protocol/signal-evidence.md).
+- **Check the electrical side yourself.** Before connecting to a vehicle, verify
+  CAN wiring and termination, use a fused and current-limited supply, and
+  work out the strip's current draw. WS2812B strips may need level shifting and
+  local capacitors.
+
+## How it works
+
+```text
+CAN bus (listen-only) -> Mazda decoder -> signals -> rule engine -> actions -> sinks
+                                                                     |-> LED strip
+                                                                     '-> your sink
+```
+
+Each stage has one job and is kept separate, so decoding and rules are portable
+C++ with host tests, and only the thin ESP-IDF layer touches hardware. Details:
+[module boundaries](docs/architecture/module-boundaries.md) and
+[firmware composition](docs/architecture/firmware-composition.md).
+
+Generic CAN and telemetry code lives in the companion project
+[`esp32-vehicle-can-core`](https://github.com/Yuke-hd/esp32-vehicle-can-core)
+(pinned at `0.2.1`) and is fetched automatically at build time.
 
 ## Hardware
 
-The checked-in board capability record is in
-[`components/board/include/board/board_config.h`](components/board/include/board/board_config.h).
-The intended board is WeAct Studio CAN485 DevBoard V1.1; verify the physical
-revision and assembly before use.
+- [WeAct Studio CAN485 DevBoard V1.1](docs/architecture/hardware/weact-can485-v1.1.md)
+  (ESP32)
+- For the built-in LED sink: a 100-pixel WS2812B strip on GPIO16
+- A CAN connection to the vehicle (receive only)
 
-| Function | Pin | Role |
-| --- | ---: | --- |
-| CAN RX | GPIO26 | listen-only input |
-| CAN TX | GPIO27 | held recessive; no application transmit API |
-| Onboard WS2812 status pixel | GPIO4 | one-pixel status projection |
-| Vehicle WS2812B strip | GPIO16 | 100-pixel accessory output |
-| RS485 DE / RO / DI | GPIO17 / GPIO21 / GPIO22 | disabled auxiliary interface |
+Pin assignments and validation requirements are in the hardware record linked
+above.
 
-The strip orientation is a wiring decision: the renderer preserves the
-left/right region mapping used by the current accessory design, but the
-physical direction must be confirmed during hardware validation.
+## Quick start
 
-## Getting Started
+Requirements: CMake 3.20+, a C++17 compiler, Ninja, and Python 3. Firmware work
+also needs ESP-IDF 5.5.4.
 
-### Prerequisites
-
-- CMake 3.20 or newer and a C++17 compiler
-- Ninja (recommended)
-- Python 3 for validators and the host-only YAML compiler
-- ESP-IDF 5.5.4 and `idf.py` for firmware work
-- A correctly fused, current-limited bench supply for hardware work
-
-The generic CAN/frame/runtime code is consumed from the pinned vehicle-core
-dependency through CMake `FetchContent` at
-`https://github.com/Yuke-hd/esp32-vehicle-can-core`. `VEHICLE_CAN_CORE_TAG`
-selects release tag `0.2.1`. For offline work, set
-`VEHICLE_CAN_CORE_SOURCE_DIR` to a checkout of that exact release. Do not copy
-generic components back into this repository.
-
-### Host build, test, and validation
-
-Use a new build directory so an older configuration cannot hide a change:
+Build and run the host tests:
 
 ```sh
-cmake -S . -B /tmp/mazda-accessory-controller-host -G Ninja \
-  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
-cmake --build /tmp/mazda-accessory-controller-host --parallel
-ctest --test-dir /tmp/mazda-accessory-controller-host --output-on-failure
-python3 tools/check_architecture.py --root . \
-  --core-root /path/to/esp32-vehicle-can-core
+cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/host --parallel
+ctest --test-dir build/host --output-on-failure
 ```
 
-To author controller configuration in YAML and generate canonical JSON for
-the controller-config runtime/tooling:
-
-```sh
-python3 -m pip install --user -r tools/requirements.txt
-python3 tools/compile_controller_config.py \
-  config/default.yaml /tmp/controller-config-v1.json
-```
-
-`config/default.yaml` is the factory profile the firmware embeds by default.
-Keep local profiles in `config/`; everything there except `default.yaml` is
-git-ignored.
-
-The ESP32 does not include a YAML parser; compilation is host-only. See the
-[persisted configuration schema](docs/specs/configuration/controller-config.md) for
-the accepted fields and validation rules.
-
-Run the host formatter used by CI when available:
-
-```sh
-clang-format --dry-run --Werror $(find lib components firmware tests -type f \
-  \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
-```
-
-### Firmware build and flash
-
-The firmware job builds only `firmware/weact-can485-v1.1` with ESP-IDF 5.5.4:
+Build the firmware (after activating ESP-IDF, see the
+[firmware build guide](docs/development/firmware-build.md)):
 
 ```sh
 cd firmware/weact-can485-v1.1
 idf.py set-target esp32
 idf.py build
-idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-Check the port, power, fuse, CAN wiring, and strip wiring for the actual host
-before flashing. A successful compile or flash is not vehicle validation.
+Before flashing or connecting anything, read the safety notes above and the
+[firmware build guide](docs/development/firmware-build.md). Every supported build mode (sanitizers, offline,
+custom profile, validators) is listed in
+[build modes](docs/development/build-modes.md).
 
-## Usage
+## Try it without a car
 
-The application starts board safe defaults, clears both LED surfaces to black,
-starts the listen-only CAN receiver, starts the bounded telemetry service, and
-publishes only a private lighting command to the renderer. The renderer owns
-the LED driver task; the telemetry producer never performs LED or RMT/SPI work.
+Replay synthetic CAN logs on your computer and watch the resulting LED frames:
 
-Keep the controller disconnected from a vehicle while checking the image,
-startup logs, polarity, strip current, and fail-off behavior. Public evidence
-must not contain raw captures, VINs, credentials, precise location, or
-reconstructable trip data.
+- [`can-replay`](docs/specs/replay/pixel-frame-output.md) renders replayed
+  frames as JSONL.
+- [`gvret-led-emulator`](docs/specs/replay/web-emulator.md) shows them in a
+  local browser page.
 
-Host replay output is available through
-[`can-replay render`](docs/specs/replay/pixel-frame-output.md). It
-emits a versioned header followed by typed JSONL records carrying relative
-timestamps and 100 RGB pixel values; supply an explicit replay horizon with
-`--end-us`. The rendered RGB is derived vehicle telemetry: output from a real
-capture can reconstruct RPM bands and turn or hazard timing, so it follows the
-same privacy and publication restrictions as the capture. Publish only output
-generated from synthetic fixtures.
-`--signals` adds decoded
-[signal records](docs/specs/replay/signal-observers.md) to the same
-stream under the same restrictions.
+Replay output from a real capture can reveal trip details, so only publish
+output generated from synthetic fixtures.
 
-The local browser protocol adapter is available as
-[`gvret-led-emulator`](docs/specs/replay/web-emulator.md). It binds to
-`127.0.0.1` by default, optionally `::1`, serves its HTML/CSS/JS assets from
-the executable, and streams the same D1 JSONL records over a WebSocket. The
-page [draws each streamed frame](docs/specs/replay/browser-renderer.md)
-as-is. It does not accept capture uploads or make outbound network requests.
+## Documentation
 
-## Architecture and Data Flow
+Start at [`docs/README.md`](docs/README.md); it routes by task. Common entry
+points:
 
-```text
-CAN transceiver (listen-only)
-        -> vehicle_can_rx / can_bus
-        -> vehicle_telemetry service
-        -> Mazda candidate decoder + freshness/health state
-        -> MazdaSignalProvider -> ActionEngine turn-state rules
-        -> LedActionSink private lighting command
-        -> local_argb bounded mailbox
-        -> 100-pixel GPIO16 strip + GPIO4 status projection
-```
-
-The vehicle target selects `vehicle_can_rx`; no bench ACK target is part of
-this repository. Decoder and policy libraries are hardware independent. The
-engine turns a stale or unavailable turn state into black, and driver failure
-attempts an immediate black frame before retrying under the worker watchdog.
-See [`docs/specs/lighting/local-led-actions.md`](docs/specs/lighting/local-led-actions.md).
-
-## Actions and Animations
-
-- **Off / fail-off:** all 100 logical pixels are black for startup, unknown,
-  stale, unavailable, stopped, malformed, or expired state.
-- **Turn:** the left and right regions each contain 35 pixels. The preserved
-  running-flow strategy uses an amber five-pixel tail that travels from the
-  center toward the corresponding outer edge. The preserved center-out-fill
-  strategy fills each region from the center outward and is the current WeAct
-  runtime strategy.
-- **Brake / RPM red zone:** the renderer can light the center 30-pixel region
-  solid red. The factory profile lights it while `vehicle.brake_pressed` is
-  `true` (the `brake` action, priority 200) and while engine speed is above a
-  configurable RPM red-zone threshold (6000 rpm by default, priority 150). The
-  region stays lit while either action is active and takes the higher active
-  priority. `vehicle.brake_pressed` is a Boolean Read + Notify signal whose
-  default availability remains `FreshnessUnverified`; the brake rule accepts it
-  through `fresh_or_unverified`, and unavailable, stale or missing observations
-  fail it off. See
-  [lighting profile](docs/specs/configuration/lighting-profile.md#rpm-threshold-red-zone).
-- **Overlap:** turn animation and the brake region may coexist; the single
-  GPIO4 status pixel prioritizes red brake status, otherwise amber turn status,
-  otherwise black.
-- **Brightness:** the generic solid-color path caps each RGB component at its
-  configured ceiling. Animation palettes use explicit bounded colors, and the
-  renderer suppresses redundant physical refreshes.
-
-The strip's left/right physical orientation and electrical behavior must be
-verified on the assembled hardware; software tests do not establish those
-facts.
-
-## Repository Layout
-
-- `firmware/weact-can485-v1.1/` — the sole ESP-IDF accessory firmware target
-- `components/board/` — WeAct pin capabilities and safe startup defaults
-- `components/vehicle_can_rx/` — the WeAct receive binding
-- `components/mazda_telemetry/` — Mazda decoder, publication, subscriptions,
-  and facade adaptation over the generic runtime
-- `third_party/esp32-vehicle-can-core/` — optional local checkout location for
-  the pinned generic dependency (not vendored in this repository)
-- `components/local_argb/` — renderer, animations, watchdog, and GPIO4/GPIO16
-  LED sinks
-- `lib/mazda/` — Mazda definitions, decoder, health, and state
-- `vehicle-can-core` (FetchContent/ESP-IDF dependency) — portable frames,
-  signals, receive-only CAN, runtime, and notification contracts
-- `tests/host/` and component tests — deterministic host coverage
-- [`docs/`](docs/README.md) — architecture, current specs, protocol evidence,
-  development procedures, and historical work items; use its task index to
-  find relevant context
-- `tools/` — architecture, receive-only, boundary, and artifact validators
+- [Architecture](docs/architecture/) — boundaries and invariants
+- [Specs](docs/specs/) — intended behaviour of each component
+- [Protocol](docs/protocol/) — Mazda CAN signals, evidence, provenance
+- [Development](docs/development/) — build, test, and validation procedures
 
 ## Roadmap
 
-- Validate the WeAct V1.1 pinout, CAN electrical path, fuse, termination, and
-  current budget on an isolated bench.
-- Establish reviewed brake freshness evidence before enabling a fresh brake
-  action in a deployment configuration.
-- Validate strip orientation, logic-level margins, thermal behavior, warm-reset
-  clearing, and sustained CAN/LED load on hardware.
-- Keep signal provenance, privacy review, and vehicle-specific compatibility
-  evidence current before any installation decision.
-- Update the core dependency only by reviewing its release tag, updating the tag
-  in CMake and ESP-IDF manifests/lock data, and running the architecture
-  validator plus host tests against that exact release.
+- Validate the pinout, CAN electrical path, fuse, and current budget on an
+  isolated bench.
+- Document a worked example of writing a custom sink.
+- Gather reviewed timing evidence for brake freshness.
+- Validate strip orientation, logic levels, thermal behaviour, and sustained
+  load on hardware.
 
 ## Contributing
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md), preserve the strict listen-only and
-fail-off boundary, and run host tests plus relevant Python validators. Do not
-submit raw vehicle captures or credentials. Hardware and vehicle results must
-be reported separately from deterministic host evidence.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md). Keep the listen-only and fail-off
+guarantees intact, and report hardware and vehicle results separately from host
+test results. Never submit raw vehicle captures, VINs, or credentials; see the
+[vehicle-data policy](docs/development/license-and-vehicle-data.md).
 
-## License and Data Policy
+## License
 
-Project-authored source, documentation, tests, and tooling are licensed under
-Apache-2.0; see [`LICENSE`](LICENSE). Third-party material retains its own
-license and attribution in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-Vehicle data follows [`docs/development/license-and-vehicle-data.md`](docs/development/license-and-vehicle-data.md):
-use synthetic, reviewed, anonymized fixtures only, and never commit raw
-captures, VINs, credentials, precise locations, or absolute trip timestamps.
+Apache-2.0; see [`LICENSE`](LICENSE). Third-party material keeps its own
+license, listed in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-## Acknowledgments
-
-- WeAct Studio board documentation for the CAN485 V1.1 hardware record.
-- Espressif ESP-IDF and the `led_strip` 3.0.3 component.
-- The opendbc project for candidate signal provenance, with attribution kept
-  in the repository notices and signal-evidence documentation.
+Thanks to WeAct Studio, Espressif (ESP-IDF and `led_strip`), and the
+[opendbc](https://github.com/commaai/opendbc) project for signal provenance.
