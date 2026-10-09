@@ -28,6 +28,7 @@ All of this is unconditional for `firmware/weact-can485-v1.1`. Host builds of
 | `hot_rodata.lf` | `firmware/weact-can485-v1.1/main/` | `noflash_data` moves those archives' and `libmain.a`'s `.rodata` to DRAM, removing the data side of the cache conflict. |
 | `hot_code.lf` | `firmware/weact-can485-v1.1/main/` | `noflash` places the per-frame `VehicleTelemetryService` functions in IRAM by exact mangled symbol. |
 | Clone-free flags | `firmware/weact-can485-v1.1/CMakeLists.txt` | `mazda_telemetry` uses `-fno-ipa-sra -fno-ipa-cp-clone -fno-partial-inlining -fno-ipa-cp`. ldgen symbol entries cannot contain the `$` of GCC clone names (`.isra`, `.constprop`, `.part`), so the hot functions must keep their plain symbols. |
+| 80 MHz DIO flash | `firmware/weact-can485-v1.1/sdkconfig.defaults` | `CONFIG_ESPTOOLPY_FLASHFREQ_80M` doubles the flash clock from the 40 MHz default, roughly halving the refill time of the cache misses that remain for code and data still in flash. The mode stays DIO. The firmware configure step fails if a stale `sdkconfig` does not select 80 MHz DIO. |
 | `tools/check_iram_placement.py` | POST_BUILD step of the application ELF | Fails the build if any `hot_code.lf` symbol is missing from the ELF or lies outside `.iram0.text`. ldgen silently ignores a symbol entry that matches nothing. |
 
 Because the checker is part of the ELF build, `idf.py build` (including the CI
@@ -71,14 +72,14 @@ Keep the list to functions on the per-frame path. Every entry consumes IRAM.
 
 ESP32 static IRAM is the binding constraint. Measured in bytes with
 `python -m esp_idf_size <build-dir>/weact_can485_v11_vehicle_listen_only.map`
-for fresh builds of this layout at the default 40 MHz flash frequency
+for fresh builds of this layout with 80 MHz DIO flash
 (ESP-IDF 5.5.4):
 
 | Build | `SDKCONFIG_DEFAULTS` | IRAM used / free | DRAM used / free |
 | --- | --- | --- | --- |
-| Production | `sdkconfig.defaults` | 124,939 / 6,133 | 81,204 / 43,376 |
-| Worst-case profiling | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 129,723 / 1,349 | 89,444 / 35,136 |
-| Synthetic benchmark | `sdkconfig.defaults;sdkconfig.runtime-stats-synthetic.defaults` | 73,615 / 57,457 | 60,732 / 63,848 |
+| Production | `sdkconfig.defaults` | 124,911 / 6,161 | 81,204 / 43,376 |
+| Worst-case profiling | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 129,695 / 1,377 | 89,444 / 35,136 |
+| Synthetic benchmark | `sdkconfig.defaults;sdkconfig.runtime-stats-synthetic.defaults` | 73,587 / 57,485 | 60,732 / 63,848 |
 
 The worst-case profiling build leaves about 1.3 KiB of IRAM. Before adding
 symbols to `hot_code.lf` or enabling Kconfig options that place code in IRAM,

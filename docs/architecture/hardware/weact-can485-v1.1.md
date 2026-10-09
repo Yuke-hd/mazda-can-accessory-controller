@@ -48,6 +48,18 @@ power, standby, speed-select, or boost pin, and the shared vehicle components
 must not expose an API for one. `initialize_safe_defaults()` only establishes
 safe GPIO direction and levels; it does not switch transceiver power.
 
+### SPI flash
+
+The firmware configures 4 MB of SPI flash in DIO mode at 80 MHz
+(`sdkconfig.defaults`); see [flash-cache layout](../../development/flash-cache-layout.md).
+The bench board's flash reports JEDEC manufacturer `0xC8` (GigaDevice) and
+device `0x4017`. The project owner approved 80 MHz DIO without a cited
+flash-part datasheet. The ESP32 supports 80 MHz flash, and the bench board's
+second-stage bootloader reported `SPI Speed: 80MHz` and `SPI Mode: DIO` and ran
+under CAN load. That is bench evidence for one board, not a part-number
+datasheet rating. Confirm the flash part on any other V1.1 board before vehicle
+use.
+
 ## Vehicle safety boundary
 
 Before connecting to a vehicle:

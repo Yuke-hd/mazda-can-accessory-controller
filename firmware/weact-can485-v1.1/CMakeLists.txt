@@ -121,3 +121,12 @@ if(NOT CONFIG_PARTITION_TABLE_CUSTOM
     "'idf.py set-target esp32' or delete sdkconfig to regenerate it from "
     "sdkconfig.defaults (see docs/development/firmware-build.md).")
 endif()
+
+# The flash-cache layout assumes 80 MHz DIO flash. A stale sdkconfig would keep
+# the slower 40 MHz default without any other symptom.
+if(NOT CONFIG_ESPTOOLPY_FLASHFREQ_80M OR NOT CONFIG_ESPTOOLPY_FLASHMODE_DIO)
+  message(FATAL_ERROR
+    "sdkconfig does not select 80 MHz DIO flash. Run 'idf.py set-target esp32' "
+    "or delete sdkconfig to regenerate it from sdkconfig.defaults (see "
+    "docs/development/flash-cache-layout.md).")
+endif()

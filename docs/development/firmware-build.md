@@ -78,7 +78,9 @@ before this layout keeps the old default table. Run `idf.py set-target esp32`
 confirm that `idf.py partition-table` shows the 64 KiB `nvs` before flashing.
 The firmware configure step fails unless `CONFIG_PARTITION_TABLE_CUSTOM` is
 set and `CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` is `partitions.csv`, so a stale
-configuration cannot build silently.
+configuration cannot build silently. The same step also fails unless
+`sdkconfig` selects 80 MHz DIO flash (see
+[flash-cache layout](flash-cache-layout.md)).
 
 `nvs` keeps the ESP-IDF default offset and only grows from the default
 24 KiB, so a board flashed with the default table upgrades in place:
