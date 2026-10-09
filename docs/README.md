@@ -30,7 +30,7 @@ current requirements unless a task explicitly references them.
 | Firmware wiring or startup | [Firmware composition](architecture/firmware-composition.md), [WeAct hardware record](architecture/hardware/weact-can485-v1.1.md). |
 | Host ingestion or replay output | [GVRET ingestion](specs/replay/gvret-ingestion.md), [pixel-frame output](specs/replay/pixel-frame-output.md), [signal observers](specs/replay/signal-observers.md). |
 | Browser emulator or playback | [Web emulator](specs/replay/web-emulator.md), [browser renderer](specs/replay/browser-renderer.md), [playback](specs/replay/playback.md). |
-| Build, test or CI | [Supported host builds](development/supported-build.md), [firmware builds](development/firmware-build.md), [architecture validation](development/architecture-validation.md). |
+| Build, test or CI | [Build modes](development/build-modes.md), [Supported host builds](development/supported-build.md), [firmware builds](development/firmware-build.md), [architecture validation](development/architecture-validation.md). |
 | Host telemetry baseline | [Telemetry performance baseline](development/telemetry-performance-baseline.md). |
 | Firmware telemetry profiling | [Telemetry stage profiling](development/telemetry-stage-profiling.md). |
 | Firmware flash-cache layout, IRAM/DRAM placement or IRAM headroom | [Flash-cache layout](development/flash-cache-layout.md). |
