@@ -78,6 +78,39 @@ add_custom_target(controller_config_factory_json
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(weact_can485_v11_vehicle_listen_only)
 
+# Flash-cache layout (docs/development/flash-cache-layout.md). The ESP32's
+# shared flash cache made telemetry throughput depend on how unrelated Kconfig
+# options shifted the flash layout. Compile the project's own components with
+# -O2; main/hot_rodata.lf and main/hot_code.lf move their rodata to DRAM and
+# the hot telemetry functions to IRAM. These options apply to this firmware
+# target only; host builds of lib/ and tests are unaffected.
+foreach(_component mazda_telemetry mazda vehicle_telemetry vehicle_core vehicle_signals
+                   action_engine vehicle_lighting_policy vehicle_can_rx can_bus local_argb
+                   local_argb_actions)
+  idf_component_get_property(_component_lib ${_component} COMPONENT_LIB)
+  get_target_property(_component_type ${_component_lib} TYPE)
+  if(NOT _component_type STREQUAL "INTERFACE_LIBRARY")
+    target_compile_options(${_component_lib} PRIVATE -O2)
+  endif()
+endforeach()
+# ldgen symbol entries cannot contain the `$` of GCC clone suffixes, so keep
+# the hot_code.lf functions clone-free.
+idf_component_get_property(_mazda_telemetry_lib mazda_telemetry COMPONENT_LIB)
+target_compile_options(${_mazda_telemetry_lib} PRIVATE
+  -fno-ipa-sra -fno-ipa-cp-clone -fno-partial-inlining -fno-ipa-cp)
+
+# ldgen silently ignores a symbol entry that matches nothing. Fail the build
+# when any hot_code.lf symbol is missing from the ELF or outside IRAM.
+idf_build_get_property(_idf_python PYTHON)
+idf_build_get_property(_project_elf EXECUTABLE)
+add_custom_command(TARGET ${_project_elf} POST_BUILD
+  COMMAND "${_idf_python}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/check_iram_placement.py"
+          --fragment "${CMAKE_CURRENT_LIST_DIR}/main/hot_code.lf"
+          --elf "$<TARGET_FILE:${_project_elf}>"
+          --nm "${CMAKE_NM}" --objdump "${CMAKE_OBJDUMP}"
+  COMMENT "Checking IRAM placement of hot_code.lf symbols"
+  VERBATIM)
+
 # sdkconfig.defaults does not override an existing sdkconfig. Refuse to build
 # with a stale configuration that would flash the old 24 KiB NVS table and
 # strand entries written to the larger partition.

@@ -1,0 +1,73 @@
+# Place the project components' read-only data in internal DRAM.
+#
+# The ESP32 executes flash code in place through a 32 KiB per-core cache that
+# instructions and data share. With .rodata in flash, the hot CAN/telemetry
+# path's code and constant data compete for the same cache lines, and the
+# relative placement of .flash.text and .flash.rodata decides how many
+# conflict misses occur. Unrelated Kconfig changes reshuffle that layout, so
+# throughput varied 3-4x between otherwise equivalent builds. Moving these
+# archives' rodata to DRAM removes the data side of that conflict.
+#
+# `noflash_data` places .rodata in DRAM; code placement is unchanged. Check
+# DRAM headroom when adding archives; see
+# docs/development/flash-cache-layout.md.
+
+[mapping:dram_rodata_mazda_telemetry]
+archive: libmazda_telemetry.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_mazda]
+archive: libmazda.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_vehicle_telemetry]
+archive: libvehicle_telemetry.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_vehicle_core]
+archive: libvehicle_core.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_vehicle_signals]
+archive: libvehicle_signals.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_action_engine]
+archive: libaction_engine.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_vehicle_lighting_policy]
+archive: libvehicle_lighting_policy.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_local_argb]
+archive: liblocal_argb.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_local_argb_actions]
+archive: liblocal_argb_actions.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_vehicle_can_rx]
+archive: libvehicle_can_rx.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_can_bus]
+archive: libcan_bus.a
+entries:
+    * (noflash_data)
+
+[mapping:dram_rodata_main]
+archive: libmain.a
+entries:
+    * (noflash_data)

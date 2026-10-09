@@ -43,6 +43,11 @@ listen-only behavior under vehicle conditions, LED timing, wiring, termination,
 or physical vehicle acceptance. Report firmware and hardware verification
 separately from host tests.
 
+The build places the hot telemetry functions in IRAM and the project
+components' rodata in DRAM, and a POST_BUILD check fails the build if a pinned
+symbol did not reach IRAM. See [flash-cache layout](flash-cache-layout.md)
+before changing the hot telemetry functions or IRAM-consuming options.
+
 For the bounded, opt-in investigation of `0x091` freshness incidents, use the
 [CAN freshness debug runbook](can-freshness-debug.md). It keeps the production
 freshness and receive-only policies unchanged.
