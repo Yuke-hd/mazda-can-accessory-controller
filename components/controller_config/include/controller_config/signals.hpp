@@ -8,4 +8,7 @@ namespace controller_config {
 // it; the provider reports it Read-only.
 inline constexpr std::string_view kEngineRpmSignal{"vehicle.engine_rpm"};
 
+// The choice-bearing signal that drives the controller's turn actions.
+inline constexpr std::string_view kTurnStateSignal{"vehicle.turn_state"};
+
 } // namespace controller_config
