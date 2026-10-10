@@ -7,6 +7,7 @@
 #include "action_engine/action.hpp"
 #include "controller_config/rpm_level_fill.hpp"
 #include "controller_config/rpm_threshold.hpp"
+#include "controller_config/signals.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/lighting_zone.hpp"
 #include "local_argb_actions/effect_bindings.hpp"
@@ -34,7 +35,7 @@ struct TurnEffectBinding {
 // from the action engine and LED sink contract; firmware lifecycle, telemetry,
 // GPIO, and task ownership remain outside this profile.
 struct LightingProfile final {
-  std::string_view turn_state_signal{"vehicle.turn_state"};
+  std::string_view turn_state_signal{kTurnStateSignal};
 
   TurnActionConfig turn_left{"left", action_engine::ActionId{1}};
   TurnActionConfig turn_right{"right", action_engine::ActionId{2}};
