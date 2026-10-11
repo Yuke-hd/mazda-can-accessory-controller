@@ -4,6 +4,15 @@
 #include "../support/fake_clock.hpp"
 #include "mazda/state.hpp"
 
+#include <type_traits>
+#include <utility>
+
+// The state store is a concrete value owner, not a public virtual
+// snapshot-provider hierarchy, and hands out snapshots only by value.
+static_assert(!std::is_polymorphic_v<mazda::VehicleStateStore>);
+static_assert(std::is_same_v<decltype(std::declval<const mazda::VehicleStateStore &>().snapshot()),
+                             mazda::VehicleState>);
+
 TEST_CASE("turn updates create semantic edge events without CAN identity") {
   mazda::VehicleState state{};
   CHECK(state.turn_state.is_unknown());
