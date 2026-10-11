@@ -13,6 +13,10 @@ the façade without manually receiving frames, decoding signals, managing
 freshness, dispatching notifications, or driving the LED. See
 [Firmware composition](../../architecture/firmware-composition.md).
 
+The façade holds the private service in fixed opaque storage, so construction
+does not allocate. The per-target reservation is a compile-time-checked
+budget; see [Facade storage budget](../../development/facade-storage-budget.md).
+
 ## Clock domain
 
 The ESP default `mazda::internal::SteadyClock` reads

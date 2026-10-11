@@ -1695,10 +1695,19 @@ void internal::VehicleTelemetryAccess::emplace_benchmark_service(
 }
 #endif
 
-static_assert(sizeof(internal::VehicleTelemetryService) <= sizeof(VehicleTelemetry));
-static_assert(alignof(internal::VehicleTelemetryService) <= alignof(std::max_align_t));
-
 VehicleTelemetry::VehicleTelemetry() noexcept {
+  // Size budget guard for the opaque placement storage. The measured sizes per
+  // supported configuration and the headroom policy are recorded in
+  // docs/development/facade-storage-budget.md.
+  static_assert(sizeof(internal::VehicleTelemetryService) <= kImplementationStorageBytes,
+                "VehicleTelemetryService exceeds the VehicleTelemetry facade storage budget "
+                "(kImplementationStorageBytes); re-measure and update the budget per "
+                "docs/development/facade-storage-budget.md");
+  static_assert(alignof(internal::VehicleTelemetryService) <= kImplementationStorageAlignment,
+                "VehicleTelemetryService alignment exceeds the VehicleTelemetry facade "
+                "storage alignment (kImplementationStorageAlignment)");
+  static_assert(sizeof(VehicleTelemetry) == kImplementationStorageBytes,
+                "VehicleTelemetry must contain only the opaque implementation storage");
   ::new (static_cast<void *>(implementation_storage_)) internal::VehicleTelemetryService{};
 }
 
