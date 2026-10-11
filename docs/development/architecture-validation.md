@@ -108,6 +108,11 @@ isolated `vehicle_signals`, `action_engine`, and `companion_protocol`
 dependency checks belong to
 `architecture_contracts`.
 
+The lower-level `mazda/state.hpp` API exposes no public virtual
+snapshot-provider hierarchy: `mazda::VehicleStateStore` is a concrete value
+owner. The host state tests statically assert that it is non-polymorphic and
+returns `mazda::VehicleState` snapshots by value.
+
 The public-header gate verifies compilation and dependency boundaries. It does
 not establish runtime linkage, ESP-IDF or Arduino support, CAN safety on
 hardware, or physical LED behavior.

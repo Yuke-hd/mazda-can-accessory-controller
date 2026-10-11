@@ -56,9 +56,15 @@ strictly newer valid frame.
 `mazda::TurnEdgeEvent` contains only semantic previous/current turn states and a
 monotonic timestamp. It deliberately has no CAN ID or payload. A
 `vehicle_core::MonotonicClock` adapter supplies time, while `mazda::VehicleStateStore` owns one
-state by value and provides deterministic snapshots through the
-`SnapshotProvider` interface. Host tests can provide a fixed clock; firmware
+state by value and returns deterministic snapshots by value from its
+non-virtual `snapshot()` member. Host tests can provide a fixed clock; firmware
 can adapt its monotonic timer without changing the domain model.
+
+Compatibility note: the former public `mazda::SnapshotProvider` virtual
+interface has been removed. No production path consumed it polymorphically.
+Callers that held a `SnapshotProvider &` should hold the concrete
+`mazda::VehicleStateStore` (or a `const VehicleState &` plus a timestamp and
+policy for `VehicleState::snapshot(now, policy)`) instead.
 
 All ownership is explicit and non-owning at interfaces: `mazda::VehicleStateStore`
 keeps a pointer to the caller-owned clock, which must outlive the store. Frames,

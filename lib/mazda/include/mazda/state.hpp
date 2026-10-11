@@ -123,22 +123,18 @@ struct VehicleState {
       vehicle_core::TransportHealth transport = vehicle_core::TransportHealth::Live) const noexcept;
 };
 
-class SnapshotProvider {
-public:
-  virtual ~SnapshotProvider() = default;
-  [[nodiscard]] virtual VehicleState snapshot() const noexcept = 0;
-};
-
 // A small state owner for deterministic integrations. It owns one state by
-// value, performs no allocation, and exposes snapshots only by value.
-class VehicleStateStore final : public SnapshotProvider {
+// value, performs no allocation, and exposes snapshots only by value. It is a
+// concrete, non-virtual value owner; there is no public snapshot-provider
+// interface.
+class VehicleStateStore final {
 public:
   explicit VehicleStateStore(vehicle_core::MonotonicClock &clock,
                              VehicleFreshnessPolicy policy = {}) noexcept;
 
   [[nodiscard]] VehicleState &mutable_state() noexcept { return state_; }
   [[nodiscard]] const VehicleState &state() const noexcept { return state_; }
-  [[nodiscard]] VehicleState snapshot() const noexcept override;
+  [[nodiscard]] VehicleState snapshot() const noexcept;
 
 private:
   vehicle_core::MonotonicClock *clock_;
