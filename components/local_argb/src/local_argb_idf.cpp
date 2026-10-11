@@ -88,18 +88,12 @@ void disarm_worker_lease() noexcept {
   taskEXIT_CRITICAL(&g_watchdog_lock);
 }
 
-class LedStripSink final : public PixelSink, public PixelFrameSink {
+class LedStripSink final : public PixelFrameSink {
 public:
   void set_handles(const led_strip_handle_t onboard_handle,
                    const led_strip_handle_t vehicle_handle) noexcept {
     onboard_handle_ = onboard_handle;
     vehicle_handle_ = vehicle_handle;
-  }
-
-  bool write(const Rgb color) noexcept override {
-    PixelFrame frame{};
-    frame.fill(color);
-    return write(frame);
   }
 
   bool write(const PixelFrame &frame) noexcept override {
@@ -329,7 +323,7 @@ bool start() noexcept {
   }
   if (worker_created != pdPASS) {
     disarm_worker_lease();
-    (void)g_sink.write(kBlack);
+    (void)g_sink.write(kBlackFrame);
     (void)led_strip_del(g_vehicle_strip);
     (void)led_strip_del(g_onboard_strip);
     g_vehicle_strip = nullptr;
@@ -347,7 +341,7 @@ void fail_off() noexcept {
   // Invalidate starts overwritten before the worker saw them, while preserving
   // a progress stall's closed gate. Racing publishers detect the epoch change.
   if (!g_runtime.fail_off(g_queue_sink)) {
-    (void)g_sink.write(kBlack);
+    (void)g_sink.write(kBlackFrame);
   }
 }
 

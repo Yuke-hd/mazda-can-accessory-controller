@@ -21,10 +21,6 @@ vehicle_core::MonotonicTimestamp earliest_deadline(const TurnInput &input) noexc
   return std::min(signal, transport);
 }
 
-bool semantic_equal(const TurnInput &left, const TurnInput &right) noexcept {
-  return left.turn.value == right.turn.value && left.turn.availability == right.turn.availability;
-}
-
 } // namespace
 
 LightingCommand command_for(const TurnInput &input) noexcept {
@@ -54,22 +50,6 @@ LightingCommand command_for(const TurnInput &input) noexcept {
   }
   result.actionable = true;
   return result;
-}
-
-bool PublicationPolicy::should_publish(const TurnInput input,
-                                       const vehicle_core::MonotonicTimestamp now_us) noexcept {
-  latest_ = input;
-  const bool changed = !has_published_ || !semantic_equal(input, published_);
-  const bool heartbeat =
-      has_published_ && (now_us < last_publish_us_ || now_us - last_publish_us_ >= kHeartbeatUs);
-  has_input_ = true;
-  if (!changed && !heartbeat)
-    return false;
-
-  published_ = input;
-  last_publish_us_ = now_us;
-  has_published_ = true;
-  return true;
 }
 
 } // namespace vehicle_lighting_policy

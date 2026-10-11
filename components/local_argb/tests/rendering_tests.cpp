@@ -87,6 +87,104 @@ void test_failed_colour_attempt_retries_black_then_recovers() {
   assert(!renderer.faulted());
 }
 
+void test_duplicate_command_and_tick_write_once() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(green(250), 100));
+  assert(sink.writes.size() == 2);
+  assert(renderer.apply(green(250), 110));
+  assert(renderer.tick(120));
+  assert(sink.writes.size() == 2); // identical frames are not rewritten
+}
+
+void test_failed_startup_clear_stays_faulted_and_retries_black() {
+  FakePixelSink sink;
+  sink.failures_remaining = 1;
+  local_argb::internal::RendererController renderer{sink};
+  assert(!renderer.start());
+  assert(renderer.faulted());
+  assert(renderer.tick(10));
+  assert(renderer.faulted()); // only a newer command may clear the fault
+  assert(sink.writes.size() == 2);
+  for (const auto &frame : sink.writes)
+    assert(frame == local_argb::kBlackFrame);
+}
+
+void test_failed_fallback_clear_needs_black_before_recovery() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  sink.failures_remaining = 2; // colour and its immediate black fallback fail
+  assert(!renderer.apply(green(1'000), 100));
+  assert(renderer.faulted());
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  // Black was never confirmed, so the next command only retries black.
+  assert(renderer.apply(green(1'000), 200));
+  assert(renderer.faulted());
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  // After a confirmed black, a newer command recovers.
+  assert(renderer.apply(green(1'000), 300));
+  assert(!renderer.faulted());
+  assert((sink.writes.back().front() == local_argb::Rgb{0, local_argb::kBrightnessCeiling, 0}));
+}
+
+void test_faulted_tick_does_not_retry_colour() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  sink.failures_remaining = 1;
+  assert(!renderer.apply(green(1'000), 100));
+  const auto writes = sink.writes.size();
+  assert(renderer.tick(150));
+  assert(renderer.tick(200));
+  assert(renderer.faulted());
+  assert(sink.writes.size() == writes);
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+}
+
+void test_expiry_then_newer_command_relights() {
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  assert(renderer.apply(green(250), 100));
+  assert(renderer.tick(251));
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(renderer.tick(300));
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(renderer.apply(green(600), 350));
+  assert((sink.writes.back().front() == local_argb::Rgb{0, local_argb::kBrightnessCeiling, 0}));
+}
+
+void test_driver_watchdog_boundaries() {
+  local_argb::internal::DriverWatchdog watchdog;
+  assert(!watchdog.restart_due(1'000'000)); // disarmed
+  watchdog.begin(50);
+  assert(!watchdog.restart_due(50 + local_argb::kDriverHangRestartUs));
+  assert(watchdog.restart_due(51 + local_argb::kDriverHangRestartUs));
+  assert(local_argb::kDriverRestartRequestBoundUs == 110'000);
+  watchdog.end();
+  assert(!watchdog.restart_due(1'000'000));
+  watchdog.begin(500);
+  assert(watchdog.restart_due(499)); // a backwards clock fails safe
+}
+
+void test_worker_lease_boundaries() {
+  local_argb::internal::WorkerLease lease;
+  lease.heartbeat(10); // an unarmed heartbeat does not arm the lease
+  assert(!lease.restart_due(1'000'000));
+  lease.arm(50);
+  assert(!lease.restart_due(50 + local_argb::kWorkerStallRestartUs));
+  assert(lease.restart_due(51 + local_argb::kWorkerStallRestartUs));
+  lease.heartbeat(100);
+  assert(!lease.restart_due(100 + local_argb::kWorkerStallRestartUs));
+  assert(lease.restart_due(101 + local_argb::kWorkerStallRestartUs));
+  assert(lease.restart_due(99)); // a backwards clock fails safe
+  lease.disarm();
+  assert(!lease.restart_due(1'000'000));
+  assert(local_argb::kWorkerRestartRequestBoundUs == 110'000);
+}
+
 void test_bounded_overwrite_and_generic_sink() {
   local_argb::internal::Mailbox mailbox;
   mailbox.submit(green(10));
@@ -744,6 +842,13 @@ int main() {
   test_startup_and_independent_expiry();
   test_failed_colour_attempt_retries_black_then_recovers();
   test_bounded_overwrite_and_generic_sink();
+  test_duplicate_command_and_tick_write_once();
+  test_failed_startup_clear_stays_faulted_and_retries_black();
+  test_failed_fallback_clear_needs_black_before_recovery();
+  test_faulted_tick_does_not_retry_colour();
+  test_expiry_then_newer_command_relights();
+  test_driver_watchdog_boundaries();
+  test_worker_lease_boundaries();
   test_renderer_enforces_brightness_ceiling();
   test_turn_flow_and_brake_regions();
   test_turn_flow_starts_at_inner_edges_and_moves_outward();

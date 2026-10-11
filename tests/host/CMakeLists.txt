@@ -384,25 +384,6 @@ target_include_directories(board_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/compon
 target_compile_features(board_config_tests PRIVATE cxx_std_17)
 add_test(NAME board_config_tests COMMAND board_config_tests)
 
-add_executable(
-  local_argb_tests
-  local_argb_tests.cpp
-  ${CMAKE_SOURCE_DIR}/firmware/weact-can485-v1.1/main/semantic_led_policy.cpp
-)
-target_include_directories(
-  local_argb_tests
-  PRIVATE
-    ${CMAKE_SOURCE_DIR}/components/local_argb/include
-    ${CMAKE_SOURCE_DIR}/firmware/weact-can485-v1.1/main
-    ${MAZDA_VEHICLE_CAN_CORE_ROOT}/components/vehicle_core/include
-)
-target_link_libraries(
-  local_argb_tests
-  PRIVATE local_argb_firmware_compat doctest::doctest
-)
-target_compile_features(local_argb_tests PRIVATE cxx_std_17)
-doctest_discover_tests(local_argb_tests)
-
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(
   NAME architecture_contracts

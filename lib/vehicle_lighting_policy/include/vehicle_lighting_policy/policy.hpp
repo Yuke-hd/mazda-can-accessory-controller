@@ -10,7 +10,6 @@ namespace vehicle_lighting_policy {
 using Rgb = LightingRgb;
 
 inline constexpr std::uint8_t kBrightnessCeiling = 16;
-inline constexpr vehicle_core::Microseconds kHeartbeatUs = 100'000;
 
 inline constexpr LightingRgb kBlack{};
 inline constexpr LightingRgb kLeftGreen{0, kBrightnessCeiling, 0};
@@ -45,24 +44,8 @@ command_for(const mazda::Reading<mazda::TurnState> &turn,
   return command_for(input);
 }
 
-// A bounded change/heartbeat gate for the private sink.  Every call records
-// the newest input, but returns true only for a semantic transition or the
-// bounded private heartbeat.  Thus repeated same-turn frames refresh the
-// private command at a bounded cadence without creating public callbacks.
-class PublicationPolicy {
-public:
-  [[nodiscard]] bool should_publish(TurnInput input,
-                                    vehicle_core::MonotonicTimestamp now_us) noexcept;
-
-  [[nodiscard]] LightingCommand command() const noexcept { return command_for(latest_); }
-  [[nodiscard]] bool has_input() const noexcept { return has_input_; }
-
-private:
-  TurnInput latest_{};
-  TurnInput published_{};
-  vehicle_core::MonotonicTimestamp last_publish_us_{0};
-  bool has_input_{false};
-  bool has_published_{false};
-};
+// Publication change/heartbeat gating is owned solely by the telemetry
+// service's private lighting publication (VehicleTelemetryService); this
+// module only maps one reading to a value-only command.
 
 } // namespace vehicle_lighting_policy
