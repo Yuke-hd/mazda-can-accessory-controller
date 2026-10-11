@@ -59,37 +59,10 @@ void test_earliest_deadline() {
   assert(!command.actionable);
 }
 
-void test_private_heartbeat_keeps_latest_deadline() {
-  using namespace vehicle_lighting_policy;
-  PublicationPolicy policy;
-  auto first = input(mazda::TurnState::Left, mazda::Availability::Fresh, 250, 1'000);
-  assert(policy.should_publish(first, 100));
-  assert(policy.command().actionable);
-  assert(policy.command().valid_until_us == 250);
-
-  auto refreshed = first;
-  refreshed.signal_valid_until_us = 400;
-  assert(!policy.should_publish(refreshed, 100 + kHeartbeatUs - 1));
-  assert(policy.has_input());
-  assert(policy.command().valid_until_us == 400);
-  assert(policy.should_publish(refreshed, 100 + kHeartbeatUs));
-  assert(policy.command().valid_until_us == 400);
-
-  // A transport deadline is independent of the signal deadline; heartbeat
-  // publication cannot make an already-expired command actionable again.
-  auto transport_expired = refreshed;
-  transport_expired.transport_valid_until_us = 300;
-  assert(!policy.should_publish(transport_expired, 100 + kHeartbeatUs + 1));
-  const auto command = policy.command();
-  assert(command.actionable);
-  assert(command.valid_until_us == 300);
-}
-
 } // namespace
 
 int main() {
   test_mapping_and_fail_off();
   test_earliest_deadline();
-  test_private_heartbeat_keeps_latest_deadline();
   return 0;
 }

@@ -41,14 +41,6 @@ inline constexpr vehicle_core::Microseconds kProgressFailOffBoundUs =
 inline constexpr vehicle_core::Microseconds kRestartFailOffWaitUs =
     kDriverHangRestartUs + 2 * kSupervisorPollUs;
 
-// Compatibility seam for the older single-colour host model; the renderer
-// writes whole frames to PixelFrameSink.
-class PixelSink {
-public:
-  virtual ~PixelSink() = default;
-  virtual bool write(Rgb color) noexcept = 0;
-};
-
 // Reads a wrapping count that a monitored loop advances on every pass.
 // It is called from the renderer supervisor task and must not block.
 using ProgressProbe = std::uint32_t (*)(const void *context) noexcept;

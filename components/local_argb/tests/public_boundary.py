@@ -22,7 +22,8 @@ def main() -> int:
     core_root = (args.core_root or root / "third_party/esp32-vehicle-can-core").resolve()
     component_root = root / "components/local_argb"
     public_root = component_root / "include/local_argb"
-    compatibility_root = root / "components/local_argb_compat/include/local_argb"
+    # Retired in #115: the legacy Mazda/decoder adapter must not return.
+    compatibility_root = root / "components/local_argb_compat"
     sink_component_root = root / "components/local_argb_sink_contract"
     sink_root = sink_component_root / "include/local_argb"
     frame_root = sink_component_root / "frame_include/local_argb"
@@ -54,10 +55,8 @@ def main() -> int:
         failures.append("host local_argb target compiles or exports Mazda")
     if (public_root / "legacy_compat.hpp").exists():
         failures.append("legacy compatibility header remains in ordinary local_argb include root")
-    if not (compatibility_root / "legacy_compat.hpp").is_file():
-        failures.append("firmware compatibility header is missing from its dedicated include root")
-    if not (root / "components/local_argb_compat/src/legacy_compat.cpp").is_file():
-        failures.append("firmware compatibility source is missing from its dedicated source root")
+    if compatibility_root.exists():
+        failures.append("retired local_argb_compat component has been restored")
     if not (sink_root / "lighting_sink.hpp").is_file():
         failures.append("lighting sink contract is missing from its dedicated internal include root")
     if not (frame_root / "pixel_frame.hpp").is_file():
@@ -158,39 +157,6 @@ def main() -> int:
         )
         if frame_result.returncode != 0:
             failures.append(f"standalone pixel frame consumer failed: {frame_result.stderr.strip()}")
-
-        # The ordinary consumer must not be able to acquire the temporary
-        # Mazda/decoder adapter by including a header outside its declared
-        # public include root.
-        legacy_probe = directory_path / "legacy_probe.cpp"
-        legacy_probe.write_text(
-            '#include "local_argb/legacy_compat.hpp"\n'
-            "int main() { return 0; }\n",
-            encoding="utf-8",
-        )
-        legacy_result = subprocess.run(
-            [
-                compiler,
-                "-std=c++17",
-                "-Wall",
-                "-Wextra",
-                "-Werror",
-                "-I",
-                str(root / "components/local_argb/include"),
-                "-I",
-                str(frame_root.parent),
-                "-I",
-                str(core_root / "components/vehicle_core/include"),
-                "-c",
-                str(legacy_probe),
-                "-o",
-                str(directory_path / "legacy_probe.o"),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if legacy_result.returncode == 0:
-            failures.append("ordinary local_argb consumer can include firmware compatibility header")
 
         # The sink contract is intentionally consumable by an explicitly
         # authorized implementation target/path, while the ordinary public
