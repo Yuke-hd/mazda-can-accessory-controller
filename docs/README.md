@@ -33,6 +33,7 @@ current requirements unless a task explicitly references them.
 | New signal | [Adding a signal](development/adding-a-signal.md), [signal evidence](protocol/signal-evidence.md), [decoder mappings](protocol/decoder-mappings.md), [signal layering](architecture/signal-layering.md). |
 | Build, test or CI | [Build modes](development/build-modes.md), [Supported host builds](development/supported-build.md), [firmware builds](development/firmware-build.md), [architecture validation](development/architecture-validation.md). |
 | Host telemetry baseline | [Telemetry performance baseline](development/telemetry-performance-baseline.md). |
+| Telemetry facade size or opaque service storage | [Facade storage budget](development/facade-storage-budget.md). |
 | Firmware telemetry profiling | [Telemetry stage profiling](development/telemetry-stage-profiling.md). |
 | Firmware flash-cache layout, IRAM/DRAM placement or IRAM headroom | [Flash-cache layout](development/flash-cache-layout.md). |
 | FreeRTOS task CPU and scheduler diagnostics | [FreeRTOS task runtime diagnostics](development/freertos-runtime-diagnostics.md). |

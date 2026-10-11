@@ -110,8 +110,20 @@ private:
   // The service keeps all notification channels, worker state and the
   // publication store in one fixed opaque allocation. It remains private so
   // task/lock/decoder types never enter the public include graph.
-  static constexpr std::size_t kImplementationStorageBytes = 32768;
-  alignas(std::max_align_t) std::byte implementation_storage_[kImplementationStorageBytes]{};
+  //
+  // The reservation is a measured per-target budget, enforced at compile time
+  // in vehicle_telemetry.cpp. The 32-bit ESP32 layout is smaller than the
+  // 64-bit host layout, so the firmware budget is tighter; it keeps at least
+  // the host's headroom so service growth fails the host build first. See
+  // docs/development/facade-storage-budget.md before changing either value.
+#if defined(ESP_PLATFORM)
+  static constexpr std::size_t kImplementationStorageBytes = 28U * 1024U;
+#else
+  static constexpr std::size_t kImplementationStorageBytes = 32U * 1024U;
+#endif
+  static constexpr std::size_t kImplementationStorageAlignment = alignof(std::max_align_t);
+  alignas(kImplementationStorageAlignment) std::byte
+      implementation_storage_[kImplementationStorageBytes]{};
 };
 
 } // namespace mazda
