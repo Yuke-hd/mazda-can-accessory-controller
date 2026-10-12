@@ -33,8 +33,9 @@ CONFIG_BT_NIMBLE_SM_SC=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_MAX_BONDS=4
-# Four bonds x three CCCDs each, so a full CCCD store never needs eviction.
-CONFIG_BT_NIMBLE_MAX_CCCDS=12
+# Four bonds x four persisted notification CCCDs each (config status, legacy
+# live signals, Service Changed and extensible live signals).
+CONFIG_BT_NIMBLE_MAX_CCCDS=16
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
 # Config transfer (#165): a commit parses, dry-runs and saves the upload inside

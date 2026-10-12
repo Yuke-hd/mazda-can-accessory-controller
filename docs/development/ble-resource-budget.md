@@ -113,9 +113,9 @@ share the 24 KiB partition:
   `CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=y` stores it on first boot; the
   bench log shows it being saved.
 - NimBLE bonds in the `nimble_bond` namespace. Each of the four bonds stores
-  our and peer security records, a peer address record and up to three CCCD
-  records (config status, live signals and Service Changed) as separate
-  blobs.
+  our and peer security records, a peer address record and up to four CCCD
+  records (Config Status, legacy Live signals, Service Changed and
+  extensible Live signals) as separate blobs.
 
 Estimated against the 630 entries available on five usable 4 KiB pages:
 
@@ -123,7 +123,7 @@ Estimated against the 630 entries available on five usable 4 KiB pages:
 | --- | ---: |
 | Configuration slots, worst case during replacement | ~390 |
 | PHY calibration | ~66 |
-| Four NimBLE bonds | ~100–120 |
+| Four NimBLE bonds with up to four CCCDs each | ~104–124 |
 | Total | ~560–580 |
 
 This leaves little room for page fragmentation, garbage collection, or a
@@ -183,9 +183,9 @@ CONFIG_BT_NIMBLE_SM_SC=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_MAX_BONDS=4
-# Four bonds × three CCCDs each. Below this, a full CCCD store makes the
-# stock overflow handler unpair the oldest peer outside the pairing window.
-CONFIG_BT_NIMBLE_MAX_CCCDS=12
+# Four bonds × four persisted notification CCCDs each (Config Status, legacy
+# Live signals, Service Changed and extensible Live signals).
+CONFIG_BT_NIMBLE_MAX_CCCDS=16
 
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247
 # Config transfer commits run in the host task (static estimate, about
@@ -201,9 +201,16 @@ Pairing Request and refuses bond-store writes, so no bond reaches the
 `nimble_bond` namespace outside a window (see the
 [NimBLE implementation notes](../specs/companion/ble-protocol.md#nimble-implementation-notes)).
 
-`CONFIG_BT_NIMBLE_MAX_CCCDS=12` was added after measurement; the tuned images
-used the default of 8. The four extra 16-byte store slots add 64 B of static
-RAM.
+The tuned images used ESP-IDF's default of eight CCCD slots. The project set
+the capacity to 12 after measurement; under ESP-IDF's
+`CONFIG_BT_NIMBLE_STATIC_TO_DYNAMIC=y`, NimBLE allocates its store structure
+from internal heap at initialization, so the 8-to-12 increase reserves
+64 B there. The extensible Live signals characteristic adds one persisted
+CCCD per bonded peer, so four peers need 16 slots. NimBLE's 16-byte CCCD
+records make the 12-to-16 increase another 64 B of internal heap allocation.
+The firmware build comparison below records linked image and static DRAM
+measurements; the heap allocation is derived from the NimBLE source and was
+not measured on hardware.
 
 `CONFIG_BT_NIMBLE_SM_SC_ONLY` stays at its default of `0`. The protocol spec
 requires Secure Connections without authenticated (MITM) keys, which
@@ -357,6 +364,38 @@ Upload a 4 KiB document with maximum nesting and the longest field paths,
 commit it to a nearly full NVS partition so that a page erase runs, and
 read the headroom the handler logs. Tune the stack from that measurement.
 
+## Extensible Live signals CCCD capacity (#202)
+
+The CCCD store is shared across bonded peers. Each peer can retain four
+notification or indication settings: Config Status, legacy Live signals,
+Service Changed and extensible Live signals. Four bonds therefore require 16
+CCCD records. If all 12 existing slots are occupied, a subscription to the
+extensible characteristic can exceed store capacity and fail to persist its
+setting. NimBLE reports store-capacity
+overflow to the application; this firmware only allows overflow cleanup
+while the pairing window is open, preserving stored bonds outside that window.
+Keep `CONFIG_BT_NIMBLE_MAX_CCCDS` at 16 together with the four-bond limit.
+
+ESP-IDF 5.5.4 builds for `esp32` on the #201 source at `bb00ce8` measured the
+effect of increasing the store from 12 to 16. Both builds used separate fresh
+build directories and the same factory profile:
+
+| CCCD slots | Store struct allocation | `.text` | `.bss` | `.data` | Static DRAM | Total image | Application `.bin` |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 12 | 1,104 B | 455,626 B | 49,520 B | 27,564 B | 77,084 B | 701,721 B | 701,840 B |
+| 16 | 1,168 B | 455,630 B | 49,520 B | 27,564 B | 77,084 B | 701,725 B | 701,840 B |
+| Change | +64 B | +4 B | 0 B | 0 B | 0 B | +4 B | 0 B |
+
+The config-store allocation sizes come from the NimBLE `ble_store_config_vars_t`
+definition compiled with each generated configuration. Its four additional
+16-byte `ble_store_value_cccd` records add 64 B to the runtime internal-heap
+allocation made by `nimble_platform_mem_calloc()` at initialization. They do
+not change linked `.bss` or `.data`; the 4-byte `.text` difference is the only
+measured image-size change, and the application binary remains the same
+padded size. This is software/build evidence only, not a hardware heap
+measurement; subscriptions, CCCD persistence and reconnect behavior still
+need phone and physical checks.
+
 ## Live signals cost (#166)
 
 The Live signals characteristic samples the read-only provider on the NimBLE
@@ -364,10 +403,10 @@ host task through one NimBLE callout and tracks its link through one GAP
 event listener. It creates no task and never waits for the stack. This is
 software evidence only; nothing here was measured on hardware.
 
-- **GATT.** It is the fifth companion characteristic, which fills
-  `kMaxCompanionCharacteristics` (5). Its CCCD is one of the three per bond
-  that `CONFIG_BT_NIMBLE_MAX_CCCDS=12` already allows for. No sdkconfig
-  setting changes.
+- **GATT.** The legacy Live signals characteristic remains the fifth in the
+  existing protocol version. Its CCCD is included in the four-per-bond
+  capacity described in
+  [Extensible Live signals CCCD capacity](#extensible-live-signals-cccd-capacity-202).
 - **Buffers.** Each frame takes one mbuf from the NimBLE pool for as long as
   the stack holds it. When none is free, or the stack refuses the frame, it
   is dropped and the latest state is offered at the next 100 ms slot; frames
