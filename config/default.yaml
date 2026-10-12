@@ -9,6 +9,8 @@ actions:
   - name: left_turn
   - name: right_turn
   - name: hazard
+  - name: rpm_fill
+  - name: red_zone
   - name: brake
 
 rules:
@@ -33,6 +35,24 @@ rules:
     comparison: equal
     operand: {choice: hazard}
     freshness: fresh
+
+  - type: range
+    action: rpm_fill
+    signal_key: vehicle.engine_rpm
+    input:
+      from: 0
+      to: 6500
+    output:
+      from: 0
+      to: 1
+    freshness: fresh_or_unverified
+
+  - type: sampled_state
+    action: red_zone
+    signal_key: vehicle.engine_rpm
+    comparison: greater
+    operand: {number: 6000}
+    freshness: fresh_or_unverified
 
   # Brake freshness is unset; this owner-approved opt-in accepts an
   # unverified observation without promoting it to fresh.
@@ -60,6 +80,28 @@ outputs:
     action: hazard
     effect: right_turn
     priority: 100
+  - type: led_fill
+    action: rpm_fill
+    zone:
+      start: 0
+      length: 100
+      direction: center_out
+    color:
+      red: 0
+      green: 16
+      blue: 32
+    priority: 50
+  - type: led_solid
+    action: red_zone
+    zone:
+      start: 35
+      length: 30
+      direction: start_to_end
+    color:
+      red: 16
+      green: 0
+      blue: 0
+    priority: 150
   - type: led_solid
     action: brake
     zone:
