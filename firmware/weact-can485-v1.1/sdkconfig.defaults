@@ -33,7 +33,7 @@ CONFIG_BT_NIMBLE_SM_SC=y
 CONFIG_BT_NIMBLE_SM_LEGACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_MAX_BONDS=4
-# Four bonds x four persisted notification CCCDs each (config status, legacy
+# Four bonds x four persisted CCCD settings each (config status, legacy
 # live signals, Service Changed and extensible live signals).
 CONFIG_BT_NIMBLE_MAX_CCCDS=16
 
