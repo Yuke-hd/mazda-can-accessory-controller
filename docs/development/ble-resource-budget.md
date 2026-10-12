@@ -141,7 +141,7 @@ factory,  app,  factory, 0x20000,  0x1E0000
 ```
 
 This gives 64 KiB of NVS (15 usable pages, about 1,890 entries, against the
-~560–580 estimate above) and a 1,920 KiB application. It stays inside 4 MB
+~570–590 estimate above) and a 1,920 KiB application. It stays inside 4 MB
 and leaves 0x200000–0x3FFFFF free for a later OTA layout without moving
 `nvs`. Any OTA mechanism needs its own decision; ADR-0001 excludes Wi-Fi.
 
