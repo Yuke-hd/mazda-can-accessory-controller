@@ -13,10 +13,10 @@ SOURCE = (REPOSITORY / "components/companion_ble/src/companion_ble.cpp").read_te
 )
 
 
-def function_body(name: str) -> str:
+def function_body_in(source: str, name: str) -> str:
     signature = re.search(
         rf"\b{re.escape(name)}\s*\([^;{{}}]*\)\s*(?:noexcept\s*)?\{{",
-        SOURCE,
+        source,
         re.DOTALL,
     )
     if signature is None:
@@ -24,14 +24,18 @@ def function_body(name: str) -> str:
 
     opening = signature.end() - 1
     depth = 0
-    for index in range(opening, len(SOURCE)):
-        if SOURCE[index] == "{":
+    for index in range(opening, len(source)):
+        if source[index] == "{":
             depth += 1
-        elif SOURCE[index] == "}":
+        elif source[index] == "}":
             depth -= 1
             if depth == 0:
-                return SOURCE[opening + 1 : index]
+                return source[opening + 1 : index]
     raise AssertionError(f"function {name} has an unterminated body")
+
+
+def function_body(name: str) -> str:
+    return function_body_in(SOURCE, name)
 
 
 class CompanionBleStartupContractTests(unittest.TestCase):
@@ -68,12 +72,19 @@ class CompanionBleStartupContractTests(unittest.TestCase):
         device_info = (
             REPOSITORY / "components/companion_ble/src/device_info_characteristic.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn("const auto bytes = value.view();", device_info)
+        access = function_body_in(device_info, "access_device_info")
+        self.assertIn(
+            "const auto &value = pairing_window_open() ? values.window_open : values.window_closed;",
+            access,
+        )
+        self.assertIn("const auto bytes = value.view();", access)
         self.assertIn(
             "os_mbuf_append(context->om, bytes.data(), static_cast<std::uint16_t>(bytes.size()))",
-            device_info,
+            access,
         )
         self.assertIn("NimBLE applies Read Blob offsets itself", device_info)
+        access_code = re.sub(r"//[^\n]*|/\*.*?\*/", "", access, flags=re.DOTALL)
+        self.assertNotRegex(access_code, r"\boffsets?\b")
 
     def test_host_sync_queues_whole_table_service_changed_before_advertising(self) -> None:
         body = function_body("on_host_sync")
