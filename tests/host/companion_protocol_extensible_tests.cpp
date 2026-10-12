@@ -437,7 +437,7 @@ TEST_CASE("the maximum packet ceiling keeps only complete records") {
 
   // The eight-byte header plus 26 nine-byte Number records is 242 bytes;
   // record 27 would exceed the 244-byte protocol ceiling by seven bytes.
-  ExtensibleLiveSignalPacketBuilder builder{catalog, provider, 1, 0, false, 247};
+  ExtensibleLiveSignalPacketBuilder builder{catalog, provider, 1, 0, false, 512};
   for (std::uint16_t handle = 1; handle <= 26; ++handle) {
     REQUIRE(builder.append(handle));
   }
