@@ -644,55 +644,70 @@ TEST_CASE("catalog discovery and extensible streaming preserve semantic state en
   CHECK(number_value(*rpm) == doctest::Approx(650.0F));
 
   // Drive an actual synthetic Config transfer while both live streams are
-  // subscribed. A write handler pauses extensible sampling while the legacy
-  // fixed-layout subscription continues to publish its changed frame.
+  // subscribed. Samples interleave between accepted writes while the transfer
+  // remains Receiving on the serialized NimBLE host-task model.
   SyntheticConfigCommitter config_committer{};
   ConfigTransfer config_transfer{config_committer, {true, ActiveDocument{}}};
   constexpr std::array<std::uint8_t, 8> config_bytes{'s', 'y', 'n', 't', 'h', 'e', 't', 'i'};
   const std::vector<std::uint8_t> config_document{config_bytes.begin(), config_bytes.end()};
   const auto start_pdu = config_start_pdu(config_document);
-  const auto started = config_transfer.handle_write(ByteView{start_pdu.data(), start_pdu.size()},
-                                                    ConfigWriteContext{64, TransferClock{1000}});
+  const auto started =
+      config_transfer.handle_write(ByteView{start_pdu.data(), start_pdu.size()},
+                                   ConfigWriteContext{64, TransferClock{now.count()}});
   REQUIRE(started.error == AttError::None);
   CHECK(config_transfer.status().state == TransferState::Receiving);
 
-  extensible.set_config_paused(true);
   first.provider.set(SignalId{44}, SyntheticFixture::reading(SignalValue::number(700.0F)));
   const auto chunk_pdu = config_chunk_pdu(config_document);
-  const auto chunked = config_transfer.handle_write(ByteView{chunk_pdu.data(), chunk_pdu.size()},
-                                                    ConfigWriteContext{64, TransferClock{1100}});
+  const auto chunked =
+      config_transfer.handle_write(ByteView{chunk_pdu.data(), chunk_pdu.size()},
+                                   ConfigWriteContext{64, TransferClock{now.count() + 100}});
   REQUIRE(chunked.error == AttError::None);
   CHECK(config_transfer.status().received_length == config_document.size());
+  CHECK(config_transfer.status().state == TransferState::Receiving);
+
   const LiveSignalContent changed_legacy = legacy_sampler.sample(true);
-  const std::size_t extensible_packets_before_pause = packet_sink.packets.size();
-  CHECK_FALSE(extensible.offer(now + milliseconds{100}, true, packet_sink));
-  CHECK(packet_sink.packets.size() == extensible_packets_before_pause);
-  REQUIRE(legacy.offer(now + milliseconds{100}, changed_legacy, legacy_sink));
+  now += milliseconds{100};
+  REQUIRE(legacy.offer(now, changed_legacy, legacy_sink));
   CHECK(legacy_sink.frames.size() == 2);
   CHECK(legacy_sink.frames.back()[0] == kLiveSignalLayoutVersion);
   CHECK(legacy.streaming());
 
-  const std::array<std::uint8_t, 1> commit_pdu{0x03};
-  const auto committed = config_transfer.handle_write(
-      ByteView{commit_pdu.data(), commit_pdu.size()}, ConfigWriteContext{64, TransferClock{1200}});
-  CHECK(committed.error == AttError::None);
-  CHECK(config_transfer.restart_pending());
-  CHECK(config_committer.commit_count == 1);
-
-  extensible.set_config_paused(false);
-  now += milliseconds{200};
-  bool rpm_update_accepted = false;
-  for (std::size_t slot = 0; slot < 24 && !rpm_update_accepted; ++slot) {
+  bool rpm_update_during_transfer = false;
+  for (std::size_t slot = 0; slot < 24 && !rpm_update_during_transfer; ++slot) {
     now += milliseconds{100};
     if (!extensible.offer(now, true, packet_sink)) {
       continue;
     }
     REQUIRE(consumer.ingest(packet_sink.packets.back(), packet_sink.accept));
-    rpm_update_accepted =
+    rpm_update_during_transfer =
         consumer.known("vehicle.engine_rpm") != nullptr &&
         number_value(*consumer.known("vehicle.engine_rpm")) == doctest::Approx(700.0F);
   }
-  REQUIRE(rpm_update_accepted);
+  REQUIRE(rpm_update_during_transfer);
+  CHECK(config_transfer.status().state == TransferState::Receiving);
+
+  const std::array<std::uint8_t, 1> commit_pdu{0x03};
+  const auto committed = config_transfer.handle_write(
+      ByteView{commit_pdu.data(), commit_pdu.size()}, ConfigWriteContext{64, now});
+  CHECK(committed.error == AttError::None);
+  CHECK(config_transfer.restart_pending());
+  CHECK(config_committer.commit_count == 1);
+
+  first.provider.set(SignalId{44}, SyntheticFixture::reading(SignalValue::number(701.0F)));
+  now += milliseconds{200};
+  bool rpm_update_after_commit = false;
+  for (std::size_t slot = 0; slot < 24 && !rpm_update_after_commit; ++slot) {
+    now += milliseconds{100};
+    if (!extensible.offer(now, true, packet_sink)) {
+      continue;
+    }
+    REQUIRE(consumer.ingest(packet_sink.packets.back(), packet_sink.accept));
+    rpm_update_after_commit =
+        consumer.known("vehicle.engine_rpm") != nullptr &&
+        number_value(*consumer.known("vehicle.engine_rpm")) == doctest::Approx(701.0F);
+  }
+  REQUIRE(rpm_update_after_commit);
 
   // The stream consumer keeps its previous semantic state when the BLE stack
   // refuses a packet, then applies the latest value only after a later packet
