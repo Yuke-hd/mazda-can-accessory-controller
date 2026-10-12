@@ -21,7 +21,9 @@ CHECKER_CMAKE = "cmake"
 
 sys.path.insert(0, str(ROOT))
 from tools.check_public_headers import (
+    COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES,
     _compile_database_command,
+    _dependency_violation,
     _include_directory_arguments,
     check_public_headers,
 )
@@ -111,6 +113,30 @@ class PublicHeaderCheckerTests(unittest.TestCase):
             output,
         )
         self.assertIn("BLE stack dependency", output)
+
+    def test_pinned_generic_contract_under_host_build_root_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = Path(directory) / "repository"
+            dependency = (
+                root
+                / "build/host/_deps/vehicle_can_core-src/components/vehicle_core/include/"
+                "vehicle_core/telemetry_contracts.hpp"
+            )
+            dependency.parent.mkdir(parents=True)
+            dependency.write_text(
+                "#pragma once\n#include <cstdint>\n"
+                "namespace vehicle_core {\n"
+                "enum class Availability : std::uint8_t { NoData, Fresh };\n"
+                "enum class ValidationStatus : std::uint8_t { Reference };\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            violation = _dependency_violation(
+                dependency, root, COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES
+            )
+
+        self.assertIsNone(violation)
 
     def test_provider_reaching_telemetry_service_is_detected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:

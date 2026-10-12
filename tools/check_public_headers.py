@@ -75,7 +75,7 @@ COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES: DependencyRules = (
     ("vehicle/Mazda dependency", ("include/mazda/", "mazda_telemetry/")),
     (
         "BLE stack dependency",
-        ("host/", "nimble/", "services/gap/", "services/gatt/", "ble_hs", "ble_gatt"),
+        ("host/ble_", "nimble/", "services/gap/", "services/gatt/", "ble_hs", "ble_gatt"),
     ),
     (
         "ESP-IDF/RTOS dependency",
