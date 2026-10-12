@@ -5,11 +5,12 @@
 // ab49xxxx-09b6-4509-bf8e-2790253baf98; only the 16-bit `xxxx` field differs.
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace companion_ble {
 
-// The `xxxx` field of each companion attribute. Values 0x0006-0xffff are
+// The `xxxx` field of each companion attribute. Values 0x0008-0xffff are
 // reserved for later characteristics.
 enum class CompanionAttribute : std::uint16_t {
   Service = 0x0000,
@@ -18,7 +19,34 @@ enum class CompanionAttribute : std::uint16_t {
   ConfigStatus = 0x0003,
   LiveSignals = 0x0004,
   Command = 0x0005,
+  SignalCatalog = 0x0006,
+  ExtensibleLiveSignals = 0x0007,
 };
+
+// Seven characteristics are defined by ble-protocol.md. Keep the service
+// table's fixed storage and its host regression assertion tied to this count.
+inline constexpr std::size_t kCompanionCharacteristicCount = 7U;
+
+// Characteristic properties and pairing policy frozen by ble-protocol.md.
+// The GATT binder validates its definitions against this host-tested table.
+struct CharacteristicProfile {
+  CompanionAttribute attribute;
+  bool readable;
+  bool writable;
+  bool notifiable;
+  bool open_access;
+};
+
+inline constexpr std::array<CharacteristicProfile, kCompanionCharacteristicCount>
+    kCompanionCharacteristicProfiles{{
+        {CompanionAttribute::DeviceInfo, true, false, false, true},
+        {CompanionAttribute::Config, true, true, false, false},
+        {CompanionAttribute::ConfigStatus, true, false, true, false},
+        {CompanionAttribute::LiveSignals, false, false, true, false},
+        {CompanionAttribute::Command, false, true, false, false},
+        {CompanionAttribute::SignalCatalog, true, true, false, false},
+        {CompanionAttribute::ExtensibleLiveSignals, false, false, true, false},
+    }};
 
 // A 128-bit UUID in BLE wire order (least significant byte first).
 using Uuid128 = std::array<std::uint8_t, 16>;

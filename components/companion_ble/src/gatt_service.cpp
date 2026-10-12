@@ -6,6 +6,7 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include <algorithm>
 #include <array>
 
 namespace companion_ble::internal {
@@ -23,6 +24,8 @@ std::array<ble_gatt_svc_def, 2U> service_table{};
 // overwrites a slot before NimBLE can use it, and unused slots are never
 // referenced.
 std::array<CharacteristicDefinition, kMaxCompanionCharacteristics> registered{
+    CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},
@@ -80,12 +83,40 @@ bool attributes_are_distinct(
   return true;
 }
 
+ble_gatt_chr_flags profile_flags(const CharacteristicProfile &profile) noexcept {
+  ble_gatt_chr_flags flags = 0U;
+  if (profile.readable)
+    flags |= BLE_GATT_CHR_F_READ;
+  if (profile.writable)
+    flags |= BLE_GATT_CHR_F_WRITE;
+  if (profile.notifiable)
+    flags |= BLE_GATT_CHR_F_NOTIFY;
+  return flags;
+}
+
+bool definitions_match_profile(
+    const std::initializer_list<CharacteristicDefinition> characteristics) noexcept {
+  for (const auto &definition : characteristics) {
+    const auto profile = std::find_if(kCompanionCharacteristicProfiles.begin(),
+                                      kCompanionCharacteristicProfiles.end(),
+                                      [&definition](const CharacteristicProfile &candidate) {
+                                        return candidate.attribute == definition.attribute;
+                                      });
+    if (profile == kCompanionCharacteristicProfiles.end() ||
+        definition.flags != profile_flags(*profile) ||
+        definition.security !=
+            (profile->open_access ? AttributeSecurity::Open : AttributeSecurity::EncryptedBonded))
+      return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int register_companion_service(
     const std::initializer_list<CharacteristicDefinition> characteristics) noexcept {
   if (characteristics.size() == 0U || characteristics.size() > kMaxCompanionCharacteristics ||
-      !attributes_are_distinct(characteristics))
+      !attributes_are_distinct(characteristics) || !definitions_match_profile(characteristics))
     return BLE_HS_EINVAL;
 
   std::size_t index = 0U;

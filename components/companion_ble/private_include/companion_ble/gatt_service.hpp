@@ -21,10 +21,9 @@ enum class AttributeSecurity : std::uint8_t {
 
 // One characteristic of the companion service. Each characteristic lives in
 // its own translation unit and returns its definition; the service module
-// turns the definitions into the NimBLE attribute table. Later
-// characteristics (Command, Config and Config status #165, Live signals
-// #166) add a definition here without changing the service, advertising or
-// startup code.
+// turns the definitions into the NimBLE attribute table. The startup
+// registration list and fixed storage bound must include every characteristic
+// in the protocol profile.
 struct CharacteristicDefinition {
   // The attribute has no default: every characteristic names its own UUID.
   explicit constexpr CharacteristicDefinition(const CompanionAttribute companion_attribute) noexcept
@@ -41,8 +40,8 @@ struct CharacteristicDefinition {
   std::uint16_t *value_handle{nullptr};
 };
 
-// The spec defines five companion characteristics.
-inline constexpr std::size_t kMaxCompanionCharacteristics = 5U;
+// The spec defines seven companion characteristics.
+inline constexpr std::size_t kMaxCompanionCharacteristics = kCompanionCharacteristicCount;
 
 // Adds the GAP and GATT services and the companion primary service with
 // `characteristics` to the NimBLE attribute table. Call it once, after

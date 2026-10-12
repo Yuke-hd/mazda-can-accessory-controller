@@ -400,6 +400,13 @@ target_compile_features(board_config_tests PRIVATE cxx_std_17)
 add_test(NAME board_config_tests COMMAND board_config_tests)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# companion_ble.cpp is ESP-IDF/NimBLE-only, so host CTest protects its startup
+# forwarding and Service Changed sequencing with a narrow source contract.
+add_test(
+  NAME companion_ble_startup_contracts
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/companion_ble_startup_contract_test.py
+)
 add_test(
   NAME architecture_contracts
   COMMAND ${Python3_EXECUTABLE}
