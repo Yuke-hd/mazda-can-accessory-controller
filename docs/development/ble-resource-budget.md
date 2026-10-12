@@ -396,6 +396,51 @@ padded size. This is software/build evidence only, not a hardware heap
 measurement; subscriptions, CCCD persistence and reconnect behavior still
 need phone and physical checks.
 
+## Discovery and extensible streaming integration (#205)
+
+The full image was rebuilt from the #204 base (`47241fc`) with ESP-IDF `v5.5.4`,
+target `esp32`, the default factory profile, the 16-slot CCCD setting, and a
+fresh out-of-tree build directory. The #205 change covers host tests and these
+development notes, so it adds no firmware code. `idf.py size` reported:
+
+| Measure | #204 firmware image |
+| --- | ---: |
+| Flash `.text` | 463,746 B |
+| Flash `.rodata` | 93,604 B |
+| Static IRAM used / remaining | 124,911 B / 6,161 B |
+| Static DRAM `.bss` | 52,024 B |
+| Static DRAM `.data` | 27,660 B |
+| Static DRAM used / remaining | 79,684 B / 44,896 B |
+| Total image size | 710,209 B |
+| Application `.bin` | 710,320 B (`0xAD6B0`) |
+| Free in 1,920 KiB `factory` partition | 1,255,760 B (`0x132950`, 64%) |
+
+The ESP-IDF Xtensa linker map reports the persistent extensible stream object
+as 2,112 B in `.bss` and the optional `SignalCatalogExport` as 268 B in `.bss`.
+These are part of the static DRAM total above. The stream retains one accepted
+record and timestamp per catalog handle; it does not allocate a task or heap
+buffer for discovery or sampling.
+
+The portable limits bound work per operation. Discovery accepts at most 64
+Read signals and a 16 KiB document. Each read encodes at most 200 document
+bytes plus the 11-byte page header, scans at most 64 descriptors, and the
+largest document takes at most 82 pages. Streaming scans at most 64 provider
+records per 100 ms sampling slot, attempts at most one notification per slot,
+and caps each packet at `min(ATT MTU - 3, 244)` bytes (61 bytes at MTU 64).
+Records are appended whole; the next packet resumes from its handle cursor.
+Sampling and page encoding run synchronously on the NimBLE host task. The
+configured host task stack is 8,192 B. Config commit remains the stack-sensitive
+path: its static worst-path estimate is about 5.1 KiB, as detailed in
+[Config transfer cost](#config-transfer-cost-165). Page and sample buffers are
+fixed-size local objects; this source/compiler review is not a stack
+high-water measurement.
+
+**Deferred to #167 (not run):** phone Service Changed/cache refresh, bonded
+security and CCCD restoration, notification throughput and packet-loss
+behavior, NimBLE host stack high-water, and simultaneous CAN receive plus LED
+rendering under BLE traffic. The image, linker map and host tests are software
+evidence only; no board was flashed or exercised for these measurements.
+
 ## Live signals cost (#166)
 
 The Live signals characteristic samples the read-only provider on the NimBLE

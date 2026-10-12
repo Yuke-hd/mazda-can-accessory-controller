@@ -21,6 +21,25 @@ idf.py set-target esp32
 idf.py build
 ```
 
+For a fresh out-of-tree build and a linker size report, keep both the build
+directory and generated `sdkconfig` outside the checkout:
+
+```sh
+source /path/to/esp-idf/v5.5.4/export.sh
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-firmware-size \
+  -D SDKCONFIG=/tmp/mazda-firmware-size/sdkconfig set-target esp32
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-firmware-size \
+  -D SDKCONFIG=/tmp/mazda-firmware-size/sdkconfig build
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-firmware-size \
+  -D SDKCONFIG=/tmp/mazda-firmware-size/sdkconfig size
+```
+
+This reports compiler/linker estimates for static memory and image size; it
+does not measure runtime heap use or task stack high-water. See the
+[BLE resource budget](ble-resource-budget.md) for the current extensible
+discovery/streaming image measurements, static object sizes, bounded-work
+analysis, and physical checks still required.
+
 The factory profile defaults to `config/default.yaml`. To build with a local
 profile, place it in `config/` (git-ignored apart from `default.yaml`) and pass
 `-DCONTROLLER_CONFIG_DEFAULT_YAML=<path>` to `idf.py`.

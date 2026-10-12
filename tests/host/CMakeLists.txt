@@ -363,6 +363,10 @@ add_executable(companion_protocol_extensible_stream_tests
                companion_protocol_extensible_stream_tests.cpp)
 target_link_libraries(companion_protocol_extensible_stream_tests PRIVATE companion_protocol
                                                                          doctest::doctest)
+add_executable(companion_protocol_extensible_integration_tests
+               companion_protocol_extensible_integration_tests.cpp)
+target_link_libraries(companion_protocol_extensible_integration_tests PRIVATE companion_protocol
+                                                                              doctest::doctest)
 add_executable(companion_protocol_live_stream_tests companion_protocol_live_stream_tests.cpp)
 target_link_libraries(companion_protocol_live_stream_tests PRIVATE companion_protocol
                                                                    vehicle_signals_test_support
@@ -382,6 +386,7 @@ foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protoco
                                 companion_protocol_live_signals_tests
                                 companion_protocol_extensible_tests
                                 companion_protocol_extensible_stream_tests
+                                companion_protocol_extensible_integration_tests
                                 companion_protocol_live_stream_tests
                                 companion_protocol_provider_tests
                                 companion_protocol_pairing_tests)
