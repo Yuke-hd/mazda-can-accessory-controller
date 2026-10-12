@@ -1998,6 +1998,51 @@ void test_lighting_decoder_error_recovers_only_on_newer_valid_turn() {
   EXPECT(service.stop().ok());
 }
 
+void test_lighting_decoder_error_ignores_older_and_equal_time_valid_turns() {
+  // Recovery from a latched decoder fault requires a strictly newer valid turn
+  // observation. Older and equal-time valid frames are still processed as
+  // traffic but must not relight the private lighting value.
+  FakeClock clock;
+  mazda::internal::HostAcquisitionSource source;
+  FakeLightingSink lighting;
+  mazda::TelemetryConfig config{};
+  config.callback_stop_timeout_us = 20'000;
+  mazda::internal::VehicleTelemetryService service{clock, source, lighting, config};
+  EXPECT(service.start().ok());
+  EXPECT(wait_for_lighting_count(lighting, 1));
+
+  const std::initializer_list<std::uint8_t> kLeft{0, 0x20, 0, 0, 0, 0, 0, 0};
+  clock.set(100);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 100, kLeft)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_lighting_count(lighting, 2));
+  EXPECT(lighting.at(1).turn == mazda::TurnState::Left);
+
+  clock.set(110);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 110, {0})) == mazda::ResultCode::Ok);
+  EXPECT(wait_for_lighting_count(lighting, 3));
+  EXPECT(lighting.at(2).turn == mazda::TurnState::Unknown);
+  EXPECT(lighting.at(2).availability == mazda::Availability::Unavailable);
+
+  clock.set(120);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 105, kLeft)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 110, kLeft)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_flag(
+      [&service] { return service.diagnostics().acquisition.frames_processed >= 4; }));
+  EXPECT(lighting.size() == 3);
+
+  clock.set(130);
+  EXPECT(source.inject(frame(mazda::candidate::kTurnSwitchId, 111, kLeft)) ==
+         mazda::ResultCode::Ok);
+  EXPECT(wait_for_lighting_count(lighting, 4));
+  EXPECT(lighting.at(3).turn == mazda::TurnState::Left);
+  EXPECT(lighting.at(3).availability == mazda::Availability::Fresh);
+  EXPECT(lighting.size() == 4);
+  EXPECT(service.stop().ok());
+}
+
 void test_lighting_heartbeat_for_off_unknown_nodata_and_unavailable() {
   // Startup emits Unknown/NoData. A later heartbeat must still refresh the
   // private sink even though there is no actionable turn value.
@@ -2154,6 +2199,7 @@ int main() {
   test_lighting_brake_update_remains_unverified_and_binding_fails_off();
   test_lighting_heartbeat_for_off_unknown_nodata_and_unavailable();
   test_lighting_decoder_error_recovers_only_on_newer_valid_turn();
+  test_lighting_decoder_error_ignores_older_and_equal_time_valid_turns();
   test_public_facade_private_lighting_binding();
   test_public_facade_lifecycle_contract();
   return failures == 0 ? 0 : 1;
