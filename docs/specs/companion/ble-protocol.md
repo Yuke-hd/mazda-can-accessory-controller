@@ -1,4 +1,4 @@
-# Companion BLE protocol (protocol version 1)
+# Companion BLE protocol (major version 1; current minor version 1)
 
 This document is the authoritative core profile for the Bluetooth Low Energy
 (BLE) link between the controller and the iOS companion app. It defines the
@@ -6,7 +6,7 @@ safety invariants, roles, advertising, pairing and bonding, the GATT service
 and characteristic table, the device info and command payloads, versioning and
 ATT MTU assumptions.
 
-The config transfer protocol and the live-signal frame are specified in their
+The config transfer protocol and live-signal formats are specified in their
 own companion documents:
 
 - [`config-transfer.md`](config-transfer.md): the Config and Config status
@@ -14,9 +14,12 @@ own companion documents:
   behaviour.
 - [`live-signals.md`](live-signals.md): the Live signals frame layout,
   availability encoding and rate cap.
+- [`extensible-live-signals.md`](extensible-live-signals.md): protocol 1.1
+  catalog discovery and extensible live-signal packets.
 
-This is a specification only. No firmware or app implementation exists yet, and
-nothing here has been validated on hardware, on a phone, or in a vehicle.
+The protocol 1.1 extension is a specification for follow-on implementation.
+The existing fixed-layout firmware and app decoders remain supported. This
+extension has not been validated on hardware, on a phone, or in a vehicle.
 
 ## Safety invariants
 
@@ -397,9 +400,11 @@ ab49xxxx-09b6-4509-bf8e-2790253baf98
 | Config status | `0003` | `ab490003-09b6-4509-bf8e-2790253baf98` |
 | Live signals | `0004` | `ab490004-09b6-4509-bf8e-2790253baf98` |
 | Command | `0005` | `ab490005-09b6-4509-bf8e-2790253baf98` |
+| Signal catalog | `0006` | `ab490006-09b6-4509-bf8e-2790253baf98` |
+| Extensible live signals | `0007` | `ab490007-09b6-4509-bf8e-2790253baf98` |
 
 These UUIDs are fixed for every protocol version, so an app can always find the
-device info characteristic and read the protocol version. Values `0006`–`ffff`
+device info characteristic and read the protocol version. Values `0008`–`ffff`
 are reserved for later characteristics.
 
 ### Characteristics
@@ -409,8 +414,10 @@ are reserved for later characteristics.
 | Device info | Read | None (readable before pairing) | [Device info](#device-info) |
 | Config | Read, Write | Encrypted, bonded | [Config transfer](config-transfer.md#config-characteristic) |
 | Config status | Read, Notify | Encrypted, bonded | [Config transfer](config-transfer.md#config-status-characteristic) |
-| Live signals | Notify | Encrypted, bonded | [`live-signals.md`](live-signals.md) |
+| Live signals (fixed layout) | Notify | Encrypted, bonded | [`live-signals.md`](live-signals.md) |
 | Command | Write | Encrypted, bonded | [Command](#command) |
+| Signal catalog | Read, Write | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#catalog-discovery) |
+| Extensible live signals | Notify | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#extensible-value-packets) |
 
 "Write" means ATT Write Request (write with response). No characteristic
 supports Write Without Response, so every write is acknowledged and flow
@@ -466,7 +473,7 @@ Device info is a read-only binary value. A read returns the whole value; it is
 longer than a default-MTU read, so the client reads it with ATT Read Blob,
 which CoreBluetooth does automatically.
 
-| Offset | Size | Field | Version 1 value |
+| Offset | Size | Field | Protocol 1.0 value |
 | ---: | ---: | --- | --- |
 | 0 | 1 | `protocol_major` (u8) | `1` |
 | 1 | 1 | `protocol_minor` (u8) | `0` |
@@ -476,11 +483,13 @@ which CoreBluetooth does automatically.
 | 6 | 2 | `max_config_bytes` (u16) | `4096` |
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |
 | 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 31 bytes. |
+| after `hardware_id` | 1 | `extension_version` (u8) | Protocol 1.1: `1`. |
+| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable; other bits zero. |
 
 Both strings are at most 31 bytes. For `firmware_version` this matches the
 32-byte, NUL-terminated `esp_app_desc_t` version field; `hardware_id` is a
-protocol constant with the same cap. The version 1 value is therefore at most
-72 bytes.
+protocol constant with the same cap. A protocol 1.0 value is at most 72 bytes;
+protocol 1.1 appends two bytes, for at most 74 bytes.
 
 - `protocol_major` and `protocol_minor` stay at offsets 0 and 1 in every
   protocol version.
@@ -492,6 +501,10 @@ protocol constant with the same cap. The version 1 value is therefore at most
 - `firmware_version` is the ESP-IDF application version string. It is
   informational; the app must not parse it for compatibility.
 - `hardware_id` identifies the board record. It is informational.
+- Protocol 1.1 appends `extension_version` and `extension_flags` after the
+  complete length-prefixed `hardware_id`. It reports extension version `1`
+  even when the extension is unusable; bit 0 is then clear. When the extension
+  is usable, bit 0 is set. All other extension flag bits are reserved and zero.
 - `flags` bit 0 is readable before pairing, so any central in range can learn
   whether the window is open. This is accepted: the window relies on the
   owner's physical presence, not on secrecy. The advertisement still omits it.
@@ -584,13 +597,16 @@ presses the user key.
 
 ## Versioning and compatibility
 
-The protocol uses three independent versions, all reported in device info:
+Protocol and config versions are reported in Device info. The live-signal
+format versions are carried by their respective extension payloads:
 
 | Version | Covers | Changes when |
 | --- | --- | --- |
 | Protocol (`major.minor`) | UUIDs, characteristic properties, security, PDUs, error codes, device info and command layouts. | Major: any incompatible change. Minor: backward-compatible additions. |
 | Config schema | The JSON document carried by the Config characteristic. | The persisted schema changes; see the configuration spec. |
 | Live-signal layout | The Live signals frame. | The frame layout or signal set changes. |
+| Catalog format | The 0006 catalog document and paging bytes. | Existing catalog framing or field meaning changes incompatibly. |
+| Extensible live format | The 0007 packet and record grammar. | Existing packet framing or field meaning changes incompatibly. |
 
 A minor protocol version may add fields at the end of a value, flag bits,
 opcodes, error codes and characteristics. It may not remove, reorder or
@@ -609,6 +625,11 @@ The app must enforce this compatibility rule:
    version only as opaque JSON.
 5. The app decodes live signals only for a `live_signal_layout_version` it
    supports. Otherwise it does not subscribe.
+6. A client uses the extensible stream only when it supports
+   `extension_version` and Device info `extension_flags` bit 0 is set. It reads
+   and validates the complete catalog before subscribing to UUID `0007`. If
+   the extension is absent, disabled, or unknown, the client may use the
+   supported fixed layout reported by `live_signal_layout_version` instead.
 
 A later minor version may append a lowest accepted schema version to device
 info if the firmware gains schema migrations. Version 1 accepts exactly one
@@ -623,10 +644,12 @@ malformed PDUs, and `validate()` rejects a config whose `version` is not
 - The controller's preferred ATT MTU is **247**. iOS normally negotiates a
   larger MTU than the default of 23 after connecting.
 - Device info, the Command characteristic, Config read-back and Config status
-  reads work at the default MTU of 23.
+  reads, catalog paging and the seven-byte catalog selector work at the
+  default MTU of 23.
 - Config uploads and notifications need a negotiated ATT MTU of at least
   **64**. Below that, the controller rejects a config transfer with
-  `MtuTooSmall` and sends no Config status or Live signals notifications.
+  `MtuTooSmall` and sends no Config status, fixed-layout Live signals, or
+  extensible Live signals notifications.
 - A notification never exceeds `MTU - 3` bytes. The protocol never splits one
   PDU across notifications.
 
