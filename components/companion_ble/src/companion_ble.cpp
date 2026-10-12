@@ -72,7 +72,6 @@ void on_host_sync() {
 void on_host_reset(const int reason) { ESP_LOGW(kTag, "NimBLE host reset (reason=%d)", reason); }
 
 int register_services() noexcept {
-  signal_catalog.emplace(live_signal_provider->catalog());
   int rc =
       config_transfer
           ? internal::register_companion_service(
@@ -145,9 +144,13 @@ bool start(const companion_protocol::DeviceInfo &device_info,
     return false;
   companion_protocol::DeviceInfo served = device_info;
   served.pairing_window_open = false;
-  const auto closed = companion_protocol::encode_device_info(served);
+  signal_catalog.emplace(inputs.live_signals->catalog());
+  const auto extension_status = signal_catalog->available()
+                                    ? companion_protocol::DeviceInfoExtensionStatus::Usable
+                                    : companion_protocol::DeviceInfoExtensionStatus::Unusable;
+  const auto closed = companion_protocol::encode_device_info(served, extension_status);
   served.pairing_window_open = true;
-  const auto open = companion_protocol::encode_device_info(served);
+  const auto open = companion_protocol::encode_device_info(served, extension_status);
   if (!closed.has_value() || !open.has_value()) {
     ESP_LOGW(kTag, "Device info string longer than %u bytes",
              static_cast<unsigned>(companion_protocol::kMaxDeviceInfoTextBytes));
