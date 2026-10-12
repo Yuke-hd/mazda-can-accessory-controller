@@ -123,8 +123,8 @@ Estimated against the 630 entries available on five usable 4 KiB pages:
 | --- | ---: |
 | Configuration slots, worst case during replacement | ~390 |
 | PHY calibration | ~66 |
-| Four NimBLE bonds with up to four CCCDs each | ~104–124 |
-| Total | ~560–580 |
+| Four NimBLE bonds with up to four CCCDs each | ~112–132 |
+| Total (rounded from ~568–588) | ~570–590 |
 
 This leaves little room for page fragmentation, garbage collection, or a
 future namespace. When NVS is exhausted, a configuration commit fails with
