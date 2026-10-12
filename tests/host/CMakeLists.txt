@@ -357,6 +357,8 @@ add_executable(companion_protocol_extensible_tests companion_protocol_extensible
 target_link_libraries(companion_protocol_extensible_tests PRIVATE companion_protocol
                                                                   vehicle_signals_test_support
                                                                   doctest::doctest)
+target_compile_definitions(companion_protocol_extensible_tests PRIVATE
+                           EXTENSIBLE_LIVE_FIXTURE_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/companion/extensible-live-v1.json")
 add_executable(companion_protocol_live_stream_tests companion_protocol_live_stream_tests.cpp)
 target_link_libraries(companion_protocol_live_stream_tests PRIVATE companion_protocol
                                                                    vehicle_signals_test_support
