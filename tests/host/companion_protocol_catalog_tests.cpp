@@ -487,7 +487,9 @@ TEST_CASE("catalog selector keeps a failed write from changing the selected page
   constexpr std::uint32_t connection = 7U;
   constexpr std::uint32_t token = 0x10203040U;
   selector.connect(connection, token);
-  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token, 0U)) ==
+  const std::uint16_t selected_offset = catalog.document_length();
+  REQUIRE(selected_offset > 0U);
+  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token, selected_offset)) ==
         AttError::None);
   CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token,
                                                    static_cast<std::uint16_t>(
@@ -496,7 +498,7 @@ TEST_CASE("catalog selector keeps a failed write from changing the selected page
 
   const auto selected = selector.read(connection);
   REQUIRE(selected.has_value());
-  CHECK(u16_at(selected->view(), 7) == 0U);
+  CHECK(u16_at(selected->view(), 7) == selected_offset);
   const auto selected_again = selector.read(connection);
   REQUIRE(selected_again.has_value());
   CHECK(page_bytes(*selected_again) == page_bytes(*selected));
@@ -551,13 +553,39 @@ TEST_CASE("catalog selector isolates the connection and resets on disconnect") {
   selector.disconnect(first_connection);
   CHECK(selector.token_for_connection(first_connection) == 0U);
   CHECK_FALSE(selector.read(first_connection).has_value());
+  selector.connect(first_connection, second_token);
+  CHECK(selector.token_for_connection(first_connection) == second_token);
   CHECK(selector.select(first_connection, selector_bytes(kSignalCatalogFormat, first_token, 0U)) ==
         AttError::InvalidState);
-  selector.connect(second_connection, second_token);
-  CHECK(selector.token_for_connection(second_connection) == second_token);
-  const auto second_page = selector.read(second_connection);
+  CHECK(selector.select(first_connection, selector_bytes(kSignalCatalogFormat, second_token, 0U)) ==
+        AttError::None);
+  const auto second_page = selector.read(first_connection);
   REQUIRE(second_page.has_value());
   CHECK(u16_at(second_page->view(), 7) == 0U);
+}
+
+TEST_CASE("catalog selector accepts a valid offset above one byte") {
+  std::array<std::string, 16> keys{};
+  std::array<SignalMetadata, 16> rows{};
+  for (std::size_t index = 0; index < rows.size(); ++index) {
+    keys[index] = "signal." + std::to_string(index);
+    rows[index] = boolean_signal(static_cast<std::uint16_t>(index + 1U), keys[index]);
+  }
+  const SignalCatalogExport catalog{SignalCatalogView{rows.data(), rows.size()}};
+  REQUIRE(catalog.available());
+  REQUIRE(catalog.document_length() > 255U);
+
+  SignalCatalogSelector selector{catalog};
+  constexpr std::uint32_t connection = 7U;
+  constexpr std::uint32_t token = 0x10203040U;
+  constexpr std::uint16_t offset = 256U;
+  REQUIRE(offset <= catalog.document_length());
+  selector.connect(connection, token);
+  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token, offset)) ==
+        AttError::None);
+  const auto page = selector.read(connection);
+  REQUIRE(page.has_value());
+  CHECK(u16_at(page->view(), 7) == offset);
 }
 
 TEST_CASE("catalog pages use a little-endian header and bounded contiguous data windows") {
