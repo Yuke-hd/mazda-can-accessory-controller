@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "companion_protocol/signal_catalog_export.hpp"
+#include "companion_protocol/signal_catalog_selector.hpp"
 
 #include <array>
 #include <cstddef>
@@ -38,6 +39,17 @@ std::uint16_t u16_at(const ByteView bytes, std::size_t offset) {
 void append_u16(std::vector<std::uint8_t> &bytes, std::uint16_t value) {
   bytes.push_back(static_cast<std::uint8_t>(value & 0xFFU));
   bytes.push_back(static_cast<std::uint8_t>(value >> 8U));
+}
+
+std::array<std::uint8_t, kSignalCatalogSelectorBytes>
+selector_bytes(std::uint8_t format, std::uint32_t token, std::uint16_t offset) {
+  return {format,
+          static_cast<std::uint8_t>(token & 0xFFU),
+          static_cast<std::uint8_t>((token >> 8U) & 0xFFU),
+          static_cast<std::uint8_t>((token >> 16U) & 0xFFU),
+          static_cast<std::uint8_t>(token >> 24U),
+          static_cast<std::uint8_t>(offset & 0xFFU),
+          static_cast<std::uint8_t>(offset >> 8U)};
 }
 
 std::uint32_t u32_at(const ByteView bytes, std::size_t offset) {
@@ -434,6 +446,99 @@ TEST_CASE("empty catalog is available and exports a valid three-byte document") 
   const auto decoded = decode_catalog(*document);
   REQUIRE(decoded.has_value());
   CHECK(decoded->empty());
+}
+
+TEST_CASE("catalog selector applies framing and token error precedence") {
+  const SignalMetadata rows[]{boolean_signal(1, "vehicle.test")};
+  const SignalCatalogExport catalog{SignalCatalogView{rows}};
+  REQUIRE(catalog.available());
+
+  SignalCatalogSelector selector{catalog};
+  constexpr std::uint32_t connection = 7U;
+  constexpr std::uint32_t token = 0x10203040U;
+  selector.connect(connection, token);
+
+  const auto valid = selector_bytes(kSignalCatalogFormat, token, catalog.document_length());
+  CHECK(selector.select(connection, valid) == AttError::None);
+  const auto selected = selector.read(connection);
+  REQUIRE(selected.has_value());
+  CHECK(u16_at(selected->view(), 7) == catalog.document_length());
+
+  const std::array<std::uint8_t, kSignalCatalogSelectorBytes - 1> short_selector{};
+  CHECK(selector.select(connection, short_selector) == AttError::InvalidAttributeValueLength);
+
+  const auto unknown_format = selector_bytes(0x7FU, token, 0xFFFFU);
+  CHECK(selector.select(connection, unknown_format) == AttError::UnsupportedOperation);
+
+  const auto wrong_token = selector_bytes(kSignalCatalogFormat, token + 1U, 0xFFFFU);
+  CHECK(selector.select(connection, wrong_token) == AttError::InvalidState);
+
+  const auto invalid_offset = selector_bytes(
+      kSignalCatalogFormat, token, static_cast<std::uint16_t>(catalog.document_length() + 1U));
+  CHECK(selector.select(connection, invalid_offset) == AttError::InvalidPdu);
+}
+
+TEST_CASE("catalog selector keeps a failed write from changing the selected page") {
+  const SignalMetadata rows[]{boolean_signal(1, "vehicle.test")};
+  const SignalCatalogExport catalog{SignalCatalogView{rows}};
+  REQUIRE(catalog.available());
+
+  SignalCatalogSelector selector{catalog};
+  constexpr std::uint32_t connection = 7U;
+  constexpr std::uint32_t token = 0x10203040U;
+  selector.connect(connection, token);
+  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token, 0U)) ==
+        AttError::None);
+  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token,
+                                                   static_cast<std::uint16_t>(
+                                                       catalog.document_length() + 1U))) ==
+        AttError::InvalidPdu);
+
+  const auto selected = selector.read(connection);
+  REQUIRE(selected.has_value());
+  CHECK(u16_at(selected->view(), 7) == 0U);
+}
+
+TEST_CASE("catalog selector isolates the connection and resets on disconnect") {
+  const SignalMetadata rows[]{boolean_signal(1, "vehicle.test")};
+  const SignalCatalogExport catalog{SignalCatalogView{rows}};
+  REQUIRE(catalog.available());
+
+  SignalCatalogSelector selector{catalog};
+  constexpr std::uint32_t first_connection = 7U;
+  constexpr std::uint32_t first_token = 0x10203040U;
+  constexpr std::uint32_t second_connection = 8U;
+  constexpr std::uint32_t second_token = 0x50607080U;
+  selector.connect(first_connection, first_token);
+  CHECK(selector.token_for_connection(first_connection) == first_token);
+  CHECK(selector.token_for_connection(second_connection) == 0U);
+  CHECK(selector.select(first_connection, selector_bytes(kSignalCatalogFormat, first_token,
+                                                         catalog.document_length())) ==
+        AttError::None);
+
+  CHECK(selector.select(second_connection, selector_bytes(kSignalCatalogFormat, first_token, 0U)) ==
+        AttError::InvalidState);
+  CHECK_FALSE(selector.read(second_connection).has_value());
+  selector.disconnect(second_connection);
+  const auto first_page = selector.read(first_connection);
+  REQUIRE(first_page.has_value());
+  CHECK(u16_at(first_page->view(), 7) == catalog.document_length());
+
+  selector.connect(second_connection, second_token);
+  const auto still_first = selector.read(first_connection);
+  REQUIRE(still_first.has_value());
+  CHECK(u16_at(still_first->view(), 7) == catalog.document_length());
+
+  selector.disconnect(first_connection);
+  CHECK(selector.token_for_connection(first_connection) == 0U);
+  CHECK_FALSE(selector.read(first_connection).has_value());
+  CHECK(selector.select(first_connection, selector_bytes(kSignalCatalogFormat, first_token, 0U)) ==
+        AttError::InvalidState);
+  selector.connect(second_connection, second_token);
+  CHECK(selector.token_for_connection(second_connection) == second_token);
+  const auto second_page = selector.read(second_connection);
+  REQUIRE(second_page.has_value());
+  CHECK(u16_at(second_page->view(), 7) == 0U);
 }
 
 TEST_CASE("catalog pages use a little-endian header and bounded contiguous data windows") {

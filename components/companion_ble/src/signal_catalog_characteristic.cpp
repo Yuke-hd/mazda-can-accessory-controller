@@ -1,6 +1,6 @@
 #include "companion_ble/signal_catalog_characteristic.hpp"
 
-#include "companion_protocol/att_error.hpp"
+#include "companion_protocol/signal_catalog_selector.hpp"
 #include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
@@ -12,12 +12,10 @@
 namespace companion_ble::internal {
 namespace {
 
-using companion_protocol::AttError;
 using companion_protocol::SignalCatalogExport;
 
 constexpr std::uint16_t kNoConnection = BLE_HS_CONN_HANDLE_NONE;
-constexpr std::uint8_t kCatalogFormat = companion_protocol::kSignalCatalogFormat;
-constexpr std::size_t kSelectorBytes = 7U;
+constexpr std::size_t kSelectorBytes = companion_protocol::kSignalCatalogSelectorBytes;
 
 // UUID 0006 is added to CompanionAttribute by the endpoint registration
 // change. Keeping the numeric value here lets this independently owned
@@ -25,11 +23,9 @@ constexpr std::size_t kSelectorBytes = 7U;
 constexpr CompanionAttribute kSignalCatalogAttribute = static_cast<CompanionAttribute>(0x0006U);
 
 struct CatalogState {
-  const SignalCatalogExport *catalog{nullptr};
+  companion_protocol::SignalCatalogSelector selector{};
   std::uint16_t connection{kNoConnection};
-  std::uint32_t token{0U};
   std::uint32_t next_token{0U};
-  std::uint16_t page_offset{0U};
   ble_gap_event_listener listener{};
 };
 
@@ -48,16 +44,14 @@ void open_connection(const std::uint16_t connection) noexcept {
   if (state.connection != kNoConnection)
     return;
   state.connection = connection;
-  state.token = next_connection_token();
-  state.page_offset = 0U;
+  state.selector.connect(connection, next_connection_token());
 }
 
 void close_connection(const std::uint16_t connection) noexcept {
   if (connection != state.connection)
     return;
+  state.selector.disconnect(connection);
   state.connection = kNoConnection;
-  state.token = 0U;
-  state.page_offset = 0U;
 }
 
 int handle_gap_event(ble_gap_event *const event, void * /*argument*/) {
@@ -80,7 +74,7 @@ int append(ble_gatt_access_ctxt &context, const companion_protocol::ByteView byt
   return rc == 0 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
 }
 
-int unavailable() noexcept { return static_cast<int>(AttError::InvalidState); }
+int unavailable() noexcept { return static_cast<int>(companion_protocol::AttError::InvalidState); }
 
 bool read_selector(const ble_gatt_access_ctxt &context,
                    std::array<std::uint8_t, kSelectorBytes> &selector) noexcept {
@@ -91,23 +85,10 @@ bool read_selector(const ble_gatt_access_ctxt &context,
          copied == kSelectorBytes;
 }
 
-std::uint32_t read_u32(const std::array<std::uint8_t, kSelectorBytes> &selector) noexcept {
-  return static_cast<std::uint32_t>(selector[1]) | (static_cast<std::uint32_t>(selector[2]) << 8U) |
-         (static_cast<std::uint32_t>(selector[3]) << 16U) |
-         (static_cast<std::uint32_t>(selector[4]) << 24U);
-}
-
-std::uint16_t read_u16(const std::array<std::uint8_t, kSelectorBytes> &selector) noexcept {
-  return static_cast<std::uint16_t>(selector[5]) | (static_cast<std::uint16_t>(selector[6]) << 8U);
-}
-
 int access_signal_catalog(const std::uint16_t connection, std::uint16_t /*attribute*/,
                           ble_gatt_access_ctxt *const context, void * /*argument*/) {
   if (context->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-    if (connection != state.connection || state.catalog == nullptr || state.token == 0U ||
-        !state.catalog->available())
-      return unavailable();
-    const auto page = state.catalog->encode_page(state.token, state.page_offset);
+    const auto page = state.selector.read(connection);
     return page.has_value() ? append(*context, page->view()) : unavailable();
   }
   if (context->op != BLE_GATT_ACCESS_OP_WRITE_CHR)
@@ -115,24 +96,9 @@ int access_signal_catalog(const std::uint16_t connection, std::uint16_t /*attrib
 
   std::array<std::uint8_t, kSelectorBytes> selector{};
   if (!read_selector(*context, selector))
-    return static_cast<int>(AttError::InvalidAttributeValueLength);
+    return static_cast<int>(companion_protocol::AttError::InvalidAttributeValueLength);
 
-  // Selector validation order is part of the catalog wire contract. Do not
-  // inspect export state or the offset before rejecting an unknown format.
-  if (selector[0] != kCatalogFormat)
-    return static_cast<int>(AttError::UnsupportedOperation);
-  if (connection != state.connection || state.catalog == nullptr || state.token == 0U ||
-      !state.catalog->available() || read_u32(selector) != state.token)
-    return unavailable();
-
-  const std::uint16_t offset = read_u16(selector);
-  if (offset > state.catalog->document_length())
-    return static_cast<int>(AttError::InvalidPdu);
-
-  // Commit only after all validation succeeds, so a failed write leaves the
-  // currently selected page unchanged.
-  state.page_offset = offset;
-  return static_cast<int>(AttError::None);
+  return static_cast<int>(state.selector.select(connection, selector));
 }
 
 } // namespace
@@ -145,11 +111,13 @@ CharacteristicDefinition signal_catalog_characteristic() noexcept {
 }
 
 int bind_signal_catalog(const SignalCatalogExport &catalog) noexcept {
-  state.catalog = &catalog;
+  state.selector.bind(catalog);
   state.connection = kNoConnection;
-  state.token = 0U;
-  state.page_offset = 0U;
   return ble_gap_event_listener_register(&state.listener, handle_gap_event, nullptr);
+}
+
+std::uint32_t signal_catalog_token_for_connection(const std::uint16_t connection) noexcept {
+  return state.selector.token_for_connection(connection);
 }
 
 } // namespace companion_ble::internal

@@ -3,6 +3,8 @@
 #include "companion_ble/gatt_service.hpp"
 #include "companion_protocol/signal_catalog_export.hpp"
 
+#include <cstdint>
+
 namespace companion_ble::internal {
 
 // The protected Read/Write-with-response signal catalog characteristic. The
@@ -16,5 +18,10 @@ namespace companion_ble::internal {
 // provider; the export has already resolved the provider catalog.
 [[nodiscard]] int
 bind_signal_catalog(const companion_protocol::SignalCatalogExport &catalog) noexcept;
+
+// Returns the discovery token for the active connection, or zero for any
+// other connection. Later catalog-backed notifications use the same token so
+// a client cannot mix a page stream with a different connection's catalog.
+[[nodiscard]] std::uint32_t signal_catalog_token_for_connection(std::uint16_t connection) noexcept;
 
 } // namespace companion_ble::internal

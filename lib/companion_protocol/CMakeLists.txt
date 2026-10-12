@@ -21,6 +21,7 @@ if(COMMAND idf_component_register)
                               "src/pairing_window.cpp"
                               "src/read_back.cpp"
                               "src/signal_catalog_export.cpp"
+                              "src/signal_catalog_selector.cpp"
                               "src/user_key_debouncer.cpp"
                          INCLUDE_DIRS "include"
                          REQUIRES vehicle_signals)
@@ -41,6 +42,7 @@ add_library(companion_protocol STATIC
   src/pairing_window.cpp
   src/read_back.cpp
   src/signal_catalog_export.cpp
+  src/signal_catalog_selector.cpp
   src/user_key_debouncer.cpp
 )
 target_include_directories(companion_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
