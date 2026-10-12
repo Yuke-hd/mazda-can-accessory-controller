@@ -35,6 +35,11 @@ std::uint16_t u16_at(const ByteView bytes, std::size_t offset) {
                                     (static_cast<std::uint16_t>(bytes[offset + 1]) << 8U));
 }
 
+void append_u16(std::vector<std::uint8_t> &bytes, std::uint16_t value) {
+  bytes.push_back(static_cast<std::uint8_t>(value & 0xFFU));
+  bytes.push_back(static_cast<std::uint8_t>(value >> 8U));
+}
+
 std::uint32_t u32_at(const ByteView bytes, std::size_t offset) {
   return static_cast<std::uint32_t>(u16_at(bytes, offset)) |
          (static_cast<std::uint32_t>(u16_at(bytes, offset + 2)) << 16U);
@@ -77,11 +82,16 @@ std::optional<std::vector<ExportedSignal>> decode_catalog(const std::vector<std:
     ExportedSignal signal{};
     signal.handle = u16_at(bytes, cursor);
     cursor += 2;
+    std::array<bool, 256> seen_tags{};
     while (cursor < body_end) {
       if (cursor + 3 > body_end) {
         return std::nullopt;
       }
       const std::uint8_t tag = bytes[cursor++];
+      if (seen_tags[tag]) {
+        return std::nullopt;
+      }
+      seen_tags[tag] = true;
       const std::size_t value_length = u16_at(bytes, cursor);
       cursor += 2;
       const std::size_t value_end = cursor + value_length;
@@ -143,12 +153,55 @@ std::optional<std::vector<ExportedSignal>> decode_catalog(const std::vector<std:
     if (cursor != body_end) {
       return std::nullopt;
     }
+    if (!seen_tags[1] || !seen_tags[2] || !seen_tags[3] || !seen_tags[4] || signal.key.empty() ||
+        signal.unit.empty() || signal.evidence.empty() || signal.type < 1 || signal.type > 3 ||
+        (signal.type == 3) != seen_tags[5]) {
+      return std::nullopt;
+    }
     signals.push_back(std::move(signal));
   }
   if (cursor != bytes.size()) {
     return std::nullopt;
   }
   return signals;
+}
+
+std::vector<std::uint8_t> single_signal_document(std::uint8_t type, std::uint8_t omitted_tag = 0,
+                                                 std::uint8_t duplicate_tag = 0,
+                                                 bool include_choices = false) {
+  std::vector<std::uint8_t> body{1, 0};
+  const auto append_tlv = [&body](std::uint8_t tag, const std::vector<std::uint8_t> &value) {
+    body.push_back(tag);
+    append_u16(body, static_cast<std::uint16_t>(value.size()));
+    body.insert(body.end(), value.begin(), value.end());
+  };
+  const auto append_text = [&append_tlv](std::uint8_t tag, std::string_view text) {
+    append_tlv(tag, std::vector<std::uint8_t>(text.begin(), text.end()));
+  };
+
+  if (omitted_tag != 1) {
+    append_text(1, "signal.test");
+  }
+  if (omitted_tag != 2) {
+    append_tlv(2, {type});
+  }
+  if (omitted_tag != 3) {
+    append_text(3, "none");
+  }
+  if (omitted_tag != 4) {
+    append_text(4, "reference");
+  }
+  if (include_choices) {
+    append_tlv(5, {1, 0, 1, 0, 1, 'a'});
+  }
+  if (duplicate_tag != 0) {
+    append_text(duplicate_tag, "duplicate");
+  }
+
+  std::vector<std::uint8_t> document{kSignalCatalogFormat, 1, 0};
+  append_u16(document, static_cast<std::uint16_t>(body.size()));
+  document.insert(document.end(), body.begin(), body.end());
+  return document;
 }
 
 std::optional<std::vector<std::uint8_t>> download_document(const SignalCatalogExport &catalog,
@@ -209,7 +262,27 @@ bool has_subsequence(const std::vector<std::uint8_t> &bytes, std::array<std::uin
   return false;
 }
 
+std::vector<std::uint8_t> page_bytes(const EncodedSignalCatalogPage &page) {
+  const ByteView view = page.view();
+  return {view.begin(), view.end()};
+}
+
 } // namespace
+
+TEST_CASE("catalog document decoder enforces mandatory tags and enum choice shape") {
+  for (std::uint8_t tag = 1; tag <= 4; ++tag) {
+    CHECK_FALSE(decode_catalog(single_signal_document(1, tag)).has_value());
+  }
+  CHECK_FALSE(decode_catalog(single_signal_document(1, 0, 1)).has_value());
+  CHECK_FALSE(decode_catalog(single_signal_document(3, 0, 0, false)).has_value());
+  CHECK_FALSE(decode_catalog(single_signal_document(1, 0, 0, true)).has_value());
+  CHECK_FALSE(decode_catalog(single_signal_document(2, 0, 0, true)).has_value());
+
+  CHECK(decode_catalog(single_signal_document(1)).has_value());
+  CHECK(decode_catalog(single_signal_document(2)).has_value());
+  CHECK(decode_catalog(single_signal_document(3, 0, 0, true)).has_value());
+  CHECK_FALSE(decode_catalog(single_signal_document(0x7F)).has_value());
+}
 
 TEST_CASE("catalog export emits explicit type, unit, evidence, and ordered choice tokens") {
   const SignalEnumChoice choices[]{{0xA55A, "park"}, {0xB66B, "drive"}};
@@ -386,23 +459,36 @@ TEST_CASE("catalog pages use a little-endian header and bounded contiguous data 
   CHECK(u16_at(first->view(), 5) == catalog.document_length());
   CHECK(u16_at(first->view(), 7) == 0);
   CHECK(u16_at(first->view(), 9) == kSignalCatalogPageDataBytes);
+  const auto first_repeat = catalog.encode_page(token, 0);
+  REQUIRE(first_repeat.has_value());
+  CHECK(page_bytes(*first_repeat) == page_bytes(*first));
 
   const auto second = catalog.encode_page(token, kSignalCatalogPageDataBytes);
   REQUIRE(second.has_value());
   CHECK((*second)[0] == kSignalCatalogFormat);
   CHECK(u16_at(second->view(), 7) == kSignalCatalogPageDataBytes);
   CHECK(u16_at(second->view(), 9) == kSignalCatalogPageDataBytes);
+  const auto second_repeat = catalog.encode_page(token, kSignalCatalogPageDataBytes);
+  REQUIRE(second_repeat.has_value());
+  CHECK(page_bytes(*second_repeat) == page_bytes(*second));
 
   const auto final =
       catalog.encode_page(token, static_cast<std::uint16_t>(catalog.document_length() - 1));
   REQUIRE(final.has_value());
   CHECK(final->size() == kSignalCatalogPageHeaderBytes + 1);
   CHECK(u16_at(final->view(), 9) == 1);
+  const auto final_repeat =
+      catalog.encode_page(token, static_cast<std::uint16_t>(catalog.document_length() - 1));
+  REQUIRE(final_repeat.has_value());
+  CHECK(page_bytes(*final_repeat) == page_bytes(*final));
 
   const auto terminal = catalog.encode_page(token, catalog.document_length());
   REQUIRE(terminal.has_value());
   CHECK(terminal->size() == kSignalCatalogPageHeaderBytes);
   CHECK(u16_at(terminal->view(), 9) == 0);
+  const auto terminal_repeat = catalog.encode_page(token, catalog.document_length());
+  REQUIRE(terminal_repeat.has_value());
+  CHECK(page_bytes(*terminal_repeat) == page_bytes(*terminal));
   CHECK_FALSE(catalog.encode_page(token, static_cast<std::uint16_t>(catalog.document_length() + 1))
                   .has_value());
 
