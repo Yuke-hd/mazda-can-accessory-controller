@@ -67,6 +67,26 @@ VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES: DependencyRules = (
 )
 
 
+# The portable companion codec may use only generic signal contracts and
+# standard C++ headers. These entries apply to its catalog export and packet
+# stream headers so they cannot silently gain BLE, SDK, CAN, vehicle or output
+# dependencies through a transitive include.
+COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES: DependencyRules = (
+    ("vehicle/Mazda dependency", ("include/mazda/", "mazda_telemetry/")),
+    (
+        "BLE stack dependency",
+        ("host/", "nimble/", "services/gap/", "services/gatt/", "ble_hs", "ble_gatt"),
+    ),
+    (
+        "ESP-IDF/RTOS dependency",
+        ("esp-idf/", "esp_idf/", "esp_timer.h", "esp_err.h", "freertos/", "sdkconfig.h"),
+    ),
+    ("CAN dependency", ("can_bus/", "can_bus.h", "driver/twai.h", "twai.h")),
+    ("lighting/output dependency", ("local_argb/", "led_strip", "wled/")),
+    ("telemetry implementation dependency", ("vehicle_telemetry/",)),
+)
+
+
 # The generic action engine knows no vehicle make and no output adapter: it
 # talks to providers only through vehicle_signals and to outputs only through
 # its own ActionSink port.
@@ -120,6 +140,17 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
         "vehicle_signals/signal_provider.hpp",
         "portable signal provider port",
         VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
+    ),
+    *(
+        PublicHeader(
+            header, "portable companion protocol", COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES
+        )
+        for header in (
+            "companion_protocol/signal_catalog_export.hpp",
+            "companion_protocol/signal_catalog_selector.hpp",
+            "companion_protocol/extensible_live_signals.hpp",
+            "companion_protocol/extensible_live_stream.hpp",
+        )
     ),
     *(
         PublicHeader(header, "generic action engine", ACTION_ENGINE_FORBIDDEN_DEPENDENCIES)
@@ -195,6 +226,7 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
         root / "lib/mazda/include",
         root / "lib/vehicle_signals/include",
+        root / "lib/companion_protocol/include",
         root / "lib/action_engine/include",
         resolved_core_root / "components/vehicle_core/include",
         root / "lib/vehicle_core/include",  # legacy isolated fixture
@@ -445,6 +477,8 @@ def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path, P
     cmake.write_text(
         "cmake_minimum_required(VERSION 3.20)\n"
         "project(public_header_consumer LANGUAGES CXX)\n"
+        "set(CMAKE_CXX_STANDARD 17)\n"
+        "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n"
         "set(CMAKE_EXPORT_COMPILE_COMMANDS ON)\n"
         "set(BUILD_TESTING OFF CACHE BOOL \"\" FORCE)\n"
         "set(MAZDA_BUILD_HOST_TESTS OFF CACHE BOOL \"\" FORCE)\n"

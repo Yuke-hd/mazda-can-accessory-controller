@@ -309,6 +309,48 @@ def write_companion_ble_fixture(root: Path) -> None:
     )
 
 
+def write_companion_ble_startup_fixture(root: Path) -> None:
+    component = root / "components/companion_ble/src"
+    component.mkdir(parents=True)
+    (component / "companion_ble.cpp").write_text(
+        "void on_host_sync() {\n"
+        "  internal::on_host_synced();\n"
+        "  ble_svc_gatt_changed(1U, std::numeric_limits<std::uint16_t>::max());\n"
+        "  internal::start_advertising();\n"
+        "}\n"
+        "bool bring_up_nimble() {\n"
+        "  internal::configure_security(pairing_inputs);\n"
+        "  ble_hs_cfg.sync_cb = on_host_sync;\n"
+        "  nimble_port_freertos_init(host_task);\n"
+        "  return true;\n"
+        "}\n"
+        "void mark_telemetry_started() {\n"
+        "  internal::mark_live_signals_telemetry_started();\n"
+        "  internal::mark_extensible_live_signals_telemetry_started();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (component / "security.cpp").write_text(
+        "void configure_security() { ble_store_config_init(); ensure_store_guard(); }\n"
+        "void on_host_synced() { ensure_store_guard(); apply_window_state(); }\n",
+        encoding="utf-8",
+    )
+    (component / "live_signals_characteristic.cpp").write_text(
+        "void refresh_link_gate() {\n"
+        "  stream.set_link_secured(link_has_accepted_bond(connection));\n"
+        "}\n"
+        "void sample_and_notify() { refresh_link_gate(); sampler->sample(); stream.offer(); }\n",
+        encoding="utf-8",
+    )
+    (component / "extensible_live_characteristic.cpp").write_text(
+        "void refresh_connection_gates() {\n"
+        "  stream->set_link_secured(link_has_accepted_bond(connection));\n"
+        "}\n"
+        "void sample_and_notify() { refresh_connection_gates(); stream->offer(); }\n",
+        encoding="utf-8",
+    )
+
+
 def write_companion_config_fixture(root: Path) -> None:
     component = root / "components/companion_config"
     (component / "include/companion_config").mkdir(parents=True)
@@ -448,6 +490,8 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 source.read_text(encoding="utf-8")
                 + "void mutate(vehicle_signals::SignalProvider &provider);\n"
                 + "void listen(const vehicle_signals::SignalProvider &p) { p.subscribe(nullptr); }\n"
+                + "void restart_provider(const vehicle_signals::SignalProvider &provider) {\n"
+                + "  provider.start();\n}\n"
                 + "auto *writable = const_cast<vehicle_signals::SignalProvider *>(live_provider);\n"
                 + "vehicle_signals::SignalKey key{};\n",
                 encoding="utf-8",
@@ -456,8 +500,54 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 check_architecture._check_companion_ble_isolation(root)
         detail = str(raised.exception)
         self.assertIn("companion_ble.cpp uses a provider write path", detail)
+        self.assertIn("companion_ble.cpp uses a provider lifecycle path", detail)
         self.assertIn("companion_ble.cpp uses forbidden name vehicle_signals", detail)
         self.assertIn("companion_ble.cpp removes constness with const_cast", detail)
+
+    def test_companion_ble_host_sync_and_stream_startup_contracts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-ble-startup-fixture-") as directory:
+            root = Path(directory)
+            write_companion_ble_startup_fixture(root)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_companion_ble_startup_invariants(root)
+            self.assertIn("OK   companion BLE host restores bond storage", output.getvalue())
+
+            source = root / "components/companion_ble/src/companion_ble.cpp"
+            source.write_text(
+                source.read_text(encoding="utf-8").replace(
+                    "std::numeric_limits<std::uint16_t>::max()", "0x00FFU"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_startup_invariants(root)
+            self.assertIn("full Service Changed range", str(raised.exception))
+
+            source.write_text(
+                source.read_text(encoding="utf-8").replace(
+                    "  internal::mark_extensible_live_signals_telemetry_started();\n", ""
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_startup_invariants(root)
+            self.assertIn(
+                "forwarded to both legacy and extensible BLE streams", str(raised.exception)
+            )
+
+            extensible = root / "components/companion_ble/src/extensible_live_characteristic.cpp"
+            extensible.write_text(
+                extensible.read_text(encoding="utf-8").replace(
+                    "refresh_connection_gates(); stream->offer();", "stream->offer();"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_companion_ble_startup_invariants(root)
+            self.assertIn(
+                "refresh the accepted-bond gate before provider sampling", str(raised.exception)
+            )
 
     def test_companion_ble_const_removal_is_rejected_through_aliases(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-ble-fixture-") as directory:
