@@ -497,6 +497,25 @@ TEST_CASE("catalog selector keeps a failed write from changing the selected page
   const auto selected = selector.read(connection);
   REQUIRE(selected.has_value());
   CHECK(u16_at(selected->view(), 7) == 0U);
+  const auto selected_again = selector.read(connection);
+  REQUIRE(selected_again.has_value());
+  CHECK(page_bytes(*selected_again) == page_bytes(*selected));
+}
+
+TEST_CASE("catalog selector rejects an unavailable export") {
+  const std::string oversized_key = fixed_key("signal", kMaxSignalCatalogKeyBytes + 1U);
+  const SignalMetadata rows[]{boolean_signal(1, oversized_key)};
+  const SignalCatalogExport catalog{SignalCatalogView{rows}};
+  REQUIRE_FALSE(catalog.available());
+
+  SignalCatalogSelector selector{catalog};
+  constexpr std::uint32_t connection = 7U;
+  constexpr std::uint32_t token = 0x10203040U;
+  selector.connect(connection, token);
+  CHECK(selector.token_for_connection(connection) == 0U);
+  CHECK(selector.select(connection, selector_bytes(kSignalCatalogFormat, token, 0U)) ==
+        AttError::InvalidState);
+  CHECK_FALSE(selector.read(connection).has_value());
 }
 
 TEST_CASE("catalog selector isolates the connection and resets on disconnect") {

@@ -67,7 +67,7 @@ SignalCatalogSelector::read(const std::uint32_t connection) const noexcept {
 
 std::uint32_t
 SignalCatalogSelector::token_for_connection(const std::uint32_t connection) const noexcept {
-  return active(connection) ? token_ : 0U;
+  return active(connection) && catalog_ != nullptr && catalog_->available() ? token_ : 0U;
 }
 
 bool SignalCatalogSelector::active(const std::uint32_t connection) const noexcept {
