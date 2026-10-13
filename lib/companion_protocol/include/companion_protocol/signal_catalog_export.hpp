@@ -29,6 +29,9 @@ using EncodedSignalCatalogPage = BoundedBytes<kMaxSignalCatalogPageBytes>;
 // choices must outlive this object and remain immutable, as required by the
 // provider catalog contract. Invalid metadata or any exceeded wire bound
 // makes the entire export unavailable; no partial catalog is exposed.
+// Keep one export for the service lifetime: its handles and document are
+// stable across reconnects. Clients rediscover every page on each reconnect,
+// including when the connection token repeats; paging never renegotiates handles.
 class SignalCatalogExport final {
 public:
   explicit SignalCatalogExport(vehicle_signals::SignalCatalogView catalog) noexcept;
