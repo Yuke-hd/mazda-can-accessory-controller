@@ -435,11 +435,18 @@ path: its static worst-path estimate is about 5.1 KiB, as detailed in
 fixed-size local objects; this source/compiler review is not a stack
 high-water measurement.
 
-**Deferred to #167 (not run):** phone Service Changed/cache refresh, bonded
-security and CCCD restoration, notification throughput and packet-loss
-behavior, NimBLE host stack high-water, and simultaneous CAN receive plus LED
-rendering under BLE traffic. The image, linker map and host tests are software
-evidence only; no board was flashed or exercised for these measurements.
+**Physical validation remains unrecorded:** phone Service Changed/cache
+refresh, bonded security and CCCD restoration, notification throughput and
+packet-loss behavior, NimBLE host stack high-water, and simultaneous CAN
+receive plus LED rendering under BLE traffic. These checks were deferred to
+[#167](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/167),
+which the owner closed as completed on 2026-10-12. At the 2026-10-13 status
+review, its acceptance checklist remained unchecked, it had no comments or
+recorded pass/fail results, and the closure event had no associated commit.
+The closed status supplies no bench or phone validation evidence. The image,
+linker map and host tests are software evidence only; no board was flashed or
+exercised for these measurements. The physical checks still require a scoped
+session and recorded results; iOS app testing was outside #167's scope.
 
 ## Live signals cost (#166)
 
