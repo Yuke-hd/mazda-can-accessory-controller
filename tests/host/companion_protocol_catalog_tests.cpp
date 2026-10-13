@@ -498,6 +498,85 @@ TEST_CASE("catalog pages use a little-endian header and bounded contiguous data 
   CHECK(decode_catalog(*document).has_value());
 }
 
+TEST_CASE("same-token reconnect can rediscover every page from the stable service export") {
+  std::array<std::string, 64> keys{};
+  std::array<SignalMetadata, 64> rows{};
+  for (std::size_t index = 0; index < rows.size(); ++index) {
+    keys[index] = "signal." + std::to_string(index);
+    rows[index] = boolean_signal(static_cast<std::uint16_t>(index + 1), keys[index]);
+  }
+  const SignalCatalogExport service_export{SignalCatalogView{rows.data(), rows.size()}};
+  REQUIRE(service_export.available());
+  REQUIRE(service_export.document_length() > kSignalCatalogPageDataBytes * 2);
+  constexpr std::uint32_t token = 0x12345678U;
+
+  // A reconnect starts a fresh complete download even when its token repeats.
+  const auto first_connection = download_document(service_export, token);
+  const auto second_connection = download_document(service_export, token);
+  REQUIRE(first_connection.has_value());
+  REQUIRE(second_connection.has_value());
+  CHECK(*second_connection == *first_connection);
+  const auto rediscovered = decode_catalog(*second_connection);
+  REQUIRE(rediscovered.has_value());
+  REQUIRE(rediscovered->size() == rows.size());
+  for (std::size_t index = 0; index < rows.size(); ++index) {
+    CHECK((*rediscovered)[index].key == keys[index]);
+    CHECK((*rediscovered)[index].handle == index + 1);
+    CHECK(service_export.provider_id_for_handle((*rediscovered)[index].handle) == rows[index].id);
+  }
+  for (std::uint16_t offset = 0; offset < service_export.document_length();
+       offset = static_cast<std::uint16_t>(offset + kSignalCatalogPageDataBytes)) {
+    const auto first_page = service_export.encode_page(token, offset);
+    const auto second_page = service_export.encode_page(token, offset);
+    REQUIRE(first_page.has_value());
+    REQUIRE(second_page.has_value());
+    CHECK(page_bytes(*second_page) == page_bytes(*first_page));
+  }
+}
+
+TEST_CASE("reordered signals and choices preserve discovered semantics after runtime renumbering") {
+  const SignalEnumChoice original_choices[]{{100, "park"}, {200, "drive"}};
+  const SignalEnumChoice reordered_choices[]{{42, "drive"}, {7, "park"}};
+  const SignalMetadata original_rows[]{
+      boolean_signal(10, "vehicle.door_open"),
+      {SignalId{20}, "vehicle.gear", SignalType::Enum, SignalUnit::None,
+       ValidationStatus::Confirmed, SignalCapability::Read, original_choices, 2},
+  };
+  const SignalMetadata reordered_rows[]{
+      {SignalId{90}, "vehicle.gear", SignalType::Enum, SignalUnit::None,
+       ValidationStatus::Confirmed, SignalCapability::Read, reordered_choices, 2},
+      boolean_signal(80, "vehicle.door_open"),
+  };
+  const SignalCatalogExport original{SignalCatalogView{original_rows}};
+  const SignalCatalogExport reordered{SignalCatalogView{reordered_rows}};
+  const auto original_document = download_document(original, 1);
+  const auto reordered_document = download_document(reordered, 1);
+  REQUIRE(original_document.has_value());
+  REQUIRE(reordered_document.has_value());
+  CHECK((*original_document)[0] == (*reordered_document)[0]);
+  const auto original_map = decode_catalog(*original_document);
+  const auto reordered_map = decode_catalog(*reordered_document);
+  REQUIRE(original_map.has_value());
+  REQUIRE(reordered_map.has_value());
+  REQUIRE(original_map->size() == 2);
+  REQUIRE(reordered_map->size() == 2);
+  CHECK((*reordered_map)[0].key == (*original_map)[1].key);
+  CHECK((*reordered_map)[0].type == (*original_map)[1].type);
+  CHECK((*reordered_map)[0].unit == (*original_map)[1].unit);
+  CHECK((*reordered_map)[0].evidence == (*original_map)[1].evidence);
+  CHECK((*reordered_map)[1].key == (*original_map)[0].key);
+  CHECK(reordered.provider_id_for_handle((*reordered_map)[0].handle) == SignalId{90});
+  CHECK(reordered.provider_id_for_handle((*reordered_map)[1].handle) == SignalId{80});
+  REQUIRE((*original_map)[1].choices.size() == 2);
+  REQUIRE((*reordered_map)[0].choices.size() == 2);
+  CHECK((*reordered_map)[0].choices[0].key == (*original_map)[1].choices[1].key);
+  CHECK((*reordered_map)[0].choices[1].key == (*original_map)[1].choices[0].key);
+  CHECK(reordered.wire_choice_handle((*reordered_map)[0].handle, 42) ==
+        (*reordered_map)[0].choices[0].handle);
+  CHECK(reordered.wire_choice_handle((*reordered_map)[0].handle, 7) ==
+        (*reordered_map)[0].choices[1].handle);
+}
+
 TEST_CASE("catalog accepts 64 exported signals and rejects a 65th") {
   std::array<std::string, 65> keys{};
   std::array<SignalMetadata, 65> rows{};
