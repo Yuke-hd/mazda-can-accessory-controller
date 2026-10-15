@@ -41,6 +41,7 @@ bool same_signal(const vehicle_core::Signal<T> &left,
 bool same_state(const mazda::VehicleState &left, const mazda::VehicleState &right) noexcept {
   if (left.timestamp_us != right.timestamp_us || !same_signal(left.speed_kph, right.speed_kph) ||
       !same_signal(left.engine_rpm, right.engine_rpm) ||
+      !same_signal(left.accelerator_pedal_position, right.accelerator_pedal_position) ||
       !same_signal(left.longitudinal_acceleration_mps2, right.longitudinal_acceleration_mps2) ||
       !same_signal(left.lateral_acceleration_mps2, right.lateral_acceleration_mps2) ||
       !same_signal(left.selector_position, right.selector_position) ||
@@ -135,6 +136,18 @@ TEST_CASE("confirmed definitions retain DBC provenance and exact metadata") {
   CHECK(kEngineSpeedDefinition.unit == vehicle_core::SignalUnit::KilometresPerHour);
   CHECK(kEngineRpmDefinition.dbc_start_bit == 7);
   CHECK(kEngineRpmDefinition.start_bit == 0);
+  CHECK(kAcceleratorPedalPositionDefinition.name == std::string{"AcceleratorPedal_Reference"});
+  CHECK(kAcceleratorPedalPositionDefinition.identifier == kEngineDataId);
+  CHECK(kAcceleratorPedalPositionDefinition.start_bit == 32);
+  CHECK(kAcceleratorPedalPositionDefinition.dbc_start_bit == 39);
+  CHECK(kAcceleratorPedalPositionDefinition.bit_length == 16);
+  CHECK(kAcceleratorPedalPositionDefinition.scale == doctest::Approx(0.0015625F));
+  CHECK(kAcceleratorPedalPositionDefinition.offset == doctest::Approx(0.0F));
+  CHECK(kAcceleratorPedalPositionDefinition.unit == vehicle_core::SignalUnit::None);
+  CHECK(kAcceleratorPedalPositionDefinition.physical_min == doctest::Approx(0.0F));
+  CHECK(kAcceleratorPedalPositionDefinition.physical_max == doctest::Approx(100.0F));
+  CHECK(kAcceleratorPedalPositionDefinition.confidence ==
+        vehicle_core::ValidationStatus::Reference);
   CHECK(kSelectorDefinition.dbc_start_bit == 2);
   CHECK(kSelectorDefinition.start_bit == 0);
   CHECK(kSelectorDefinition.physical_min == doctest::Approx(0.0F));
@@ -154,7 +167,7 @@ TEST_CASE("confirmed definitions retain DBC provenance and exact metadata") {
 TEST_CASE("ENGINE_DATA decodes the confirmed big-endian RPM vector") {
   // EngineRPM is 7|16@0+ (0.25,0) in the capture-derived DBC. SPEED remains
   // an out-of-scope candidate retained for existing consumers.
-  const auto input = frame(0x202, 1000, {0x09, 0x5b, 0x00, 0x00, 0, 0, 0, 0});
+  const auto input = frame(0x202, 1000, {0x09, 0x5b, 0x00, 0x00, 0x7d, 0x00, 0, 0});
   mazda::VehicleState state{};
   vehicle_core::DecoderObservation observation{};
 
@@ -169,16 +182,19 @@ TEST_CASE("ENGINE_DATA decodes the confirmed big-endian RPM vector") {
   CHECK(state.engine_rpm.value == doctest::Approx(598.75F));
   CHECK(state.speed_kph.is_valid());
   CHECK(state.speed_kph.value == doctest::Approx(0.0F));
+  CHECK(state.accelerator_pedal_position.is_valid());
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
   CHECK(state.timestamp_us == 1000);
 }
 
 TEST_CASE("ENGINE_DATA accepts representable boundaries and rejects invalid RPM") {
   mazda::VehicleState state{};
-  const auto boundary = frame(0x202, 10, {0x84, 0xd0, 0xff, 0xff, 0, 0, 0, 0});
+  const auto boundary = frame(0x202, 10, {0x84, 0xd0, 0xff, 0xff, 0xfa, 0x00, 0, 0});
   CHECK(mazda::candidate::decode_engine_data(boundary, state) ==
         mazda::candidate::DecodeStatus::Decoded);
   CHECK(state.engine_rpm.value == doctest::Approx(8500.0F));
   CHECK(state.speed_kph.value == doctest::Approx(655.35F));
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(1.0F));
 
   const auto invalid = frame(0x202, 11, {0x84, 0xd1, 0, 0, 0, 0, 0, 0});
   vehicle_core::DecoderObservation observation{};
@@ -189,6 +205,40 @@ TEST_CASE("ENGINE_DATA accepts representable boundaries and rejects invalid RPM"
   CHECK(observation.identifier == mazda::candidate::kEngineDataId);
   CHECK(state.engine_rpm.value == doctest::Approx(8500.0F));
   CHECK(state.engine_rpm.last_update_us == 10);
+}
+
+TEST_CASE("ENGINE_DATA invalidates only out-of-range accelerator values") {
+  using namespace mazda::candidate;
+
+  mazda::VehicleState state{};
+  const auto initial = frame(kEngineDataId, 10, {0x09, 0x5b, 0x12, 0x34, 0x7d, 0x00, 0, 0});
+  REQUIRE(decode_engine_data(initial, state) == DecodeStatus::Decoded);
+  REQUIRE(state.accelerator_pedal_position.is_valid());
+  REQUIRE(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+
+  // 64001 / 640 = 100.0015625%, above the source-declared maximum. The
+  // shared message remains healthy so RPM and SPEED can still advance.
+  const auto invalid = frame(kEngineDataId, 20, {0x00, 0x01, 0x56, 0x78, 0xfa, 0x01, 0, 0});
+  vehicle_core::HealthObservation health{};
+  REQUIRE(decode_engine_data(invalid, state, nullptr, &health) == DecodeStatus::Decoded);
+  CHECK(health.message == vehicle_core::MessageHealth::Healthy);
+  CHECK(health.signal == vehicle_core::SignalHealth::Available);
+  CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
+  CHECK(state.speed_kph.value == doctest::Approx(221.36F));
+  CHECK(state.accelerator_pedal_position.has_value);
+  CHECK_FALSE(state.accelerator_pedal_position.is_valid());
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 10);
+  CHECK(state.reading_at(state.accelerator_pedal_position, kEngineDataId, 20).availability ==
+        mazda::Availability::Unavailable);
+
+  // Recovery requires a strictly newer valid observation and can return to a
+  // valid zero without relying on a made-up freshness timeout.
+  const auto recovered = frame(kEngineDataId, 30, {0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0, 0});
+  REQUIRE(decode_engine_data(recovered, state) == DecodeStatus::Decoded);
+  CHECK(state.accelerator_pedal_position.is_valid());
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.0F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 30);
 }
 
 TEST_CASE("candidate decoders reject wrong DLC, extended, remote, and other IDs") {

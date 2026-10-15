@@ -67,6 +67,7 @@ VehicleState::update_turn(const TurnState state,
 void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept {
   speed_kph.refresh(now);
   engine_rpm.refresh(now);
+  accelerator_pedal_position.refresh(now);
   longitudinal_acceleration_mps2.refresh(now);
   lateral_acceleration_mps2.refresh(now);
   selector_position.refresh(now);
@@ -91,6 +92,7 @@ void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept 
 void VehicleState::apply_freshness_policy(const VehicleFreshnessPolicy &policy) noexcept {
   speed_kph.set_freshness_timeout(policy.speed_kph_timeout_us);
   engine_rpm.set_freshness_timeout(policy.engine_rpm_timeout_us);
+  accelerator_pedal_position.set_freshness_timeout(policy.accelerator_pedal_position_timeout_us);
   longitudinal_acceleration_mps2.set_freshness_timeout(
       policy.longitudinal_acceleration_mps2_timeout_us);
   lateral_acceleration_mps2.set_freshness_timeout(policy.lateral_acceleration_mps2_timeout_us);

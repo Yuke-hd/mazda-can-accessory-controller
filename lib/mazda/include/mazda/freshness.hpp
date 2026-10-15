@@ -17,6 +17,7 @@ constexpr vehicle_core::Microseconds kAccelerationFreshnessTimeoutUs = 250'000;
 struct VehicleFreshnessPolicy {
   std::optional<vehicle_core::Microseconds> speed_kph_timeout_us{};
   std::optional<vehicle_core::Microseconds> engine_rpm_timeout_us{};
+  std::optional<vehicle_core::Microseconds> accelerator_pedal_position_timeout_us{};
   std::optional<vehicle_core::Microseconds> longitudinal_acceleration_mps2_timeout_us{
       kAccelerationFreshnessTimeoutUs};
   std::optional<vehicle_core::Microseconds> lateral_acceleration_mps2_timeout_us{

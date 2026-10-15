@@ -69,6 +69,8 @@ inline constexpr const char *kCaptureConfirmedProvenance =
 
 inline constexpr const char *kEngineRpmEvidenceProvenance =
     "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L95";
+inline constexpr const char *kAcceleratorPedalPositionEvidenceProvenance =
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L96";
 inline constexpr const char *kSelectorEvidenceProvenance =
     "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L98";
 inline constexpr const char *kActualGearEvidenceProvenance =
@@ -218,6 +220,22 @@ inline constexpr CandidateSignalDefinition kEngineSpeedDefinition{
     nullptr,
     kSpeedCandidateEvidenceProvenance,
     vehicle_core::ValidationStatus::Reference};
+inline constexpr CandidateSignalDefinition kAcceleratorPedalPositionDefinition{
+    "AcceleratorPedal_Reference",
+    kEngineDataId,
+    32,
+    16,
+    0.0015625F,
+    0.0F,
+    vehicle_core::SignalUnit::None,
+    0.0F,
+    100.0F,
+    "raw values above 64000 (100%)",
+    39,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    nullptr,
+    kAcceleratorPedalPositionEvidenceProvenance,
+    vehicle_core::ValidationStatus::Reference};
 inline constexpr CandidateSignalDefinition kSelectorDefinition{
     "Selector",
     kGearId,
@@ -338,6 +356,8 @@ struct SupportedSignalDefinition {
 
 inline constexpr std::array kSupportedSignalDefinitions{
     SupportedSignalDefinition{"ENGINE_DATA", "EngineRPM", "engine_rpm", &kEngineRpmDefinition},
+    SupportedSignalDefinition{"ENGINE_DATA", "AcceleratorPedal_Reference",
+                              "accelerator_pedal_position", &kAcceleratorPedalPositionDefinition},
     SupportedSignalDefinition{"TRANSMISSION", "Selector", "selector_position",
                               &kSelectorDefinition},
     SupportedSignalDefinition{"TRANSMISSION", "ActualGear", "actual_gear", &kActualGearDefinition},
