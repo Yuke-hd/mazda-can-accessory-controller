@@ -42,6 +42,7 @@ inline constexpr vehicle_signals::SignalId kBrakePressed{19};
 inline constexpr vehicle_signals::SignalId kAccelerationLongitudinal{20};
 inline constexpr vehicle_signals::SignalId kAccelerationLateral{21};
 inline constexpr vehicle_signals::SignalId kAcceleratorPedalPosition{22};
+inline constexpr vehicle_signals::SignalId kBrakePressure{23};
 } // namespace signal_ids
 
 // Enum choice values are the raw Mazda enumerator values; keys are the
@@ -193,9 +194,12 @@ inline constexpr vehicle_signals::SignalMetadata kSignalCatalog[] = {
                                   "vehicle.accelerator_pedal_position",
                                   vehicle_signals::SignalUnit::None,
                                   candidate::kAcceleratorPedalPositionDefinition.confidence),
+    catalog_detail::polled_number(signal_ids::kBrakePressure, "vehicle.brake_pressure",
+                                  vehicle_signals::SignalUnit::None,
+                                  candidate::kBrakePressureDefinition.confidence),
 };
 
-inline constexpr std::size_t kSignalCatalogSize = 22;
+inline constexpr std::size_t kSignalCatalogSize = 23;
 
 static_assert(std::size(kSignalCatalog) == kSignalCatalogSize);
 static_assert(vehicle_signals::SignalCatalogView{kSignalCatalog}.well_formed());

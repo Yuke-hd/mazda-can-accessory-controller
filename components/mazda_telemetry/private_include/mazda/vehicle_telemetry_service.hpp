@@ -128,7 +128,7 @@ template <typename T> struct PollingDescriptor final {
 #if defined(ESP_PLATFORM)
 using PollingDescriptorTuple =
     std::tuple<PollingDescriptor<float>, PollingDescriptor<float>, PollingDescriptor<float>,
-               PollingDescriptor<float>, PollingDescriptor<float>>;
+               PollingDescriptor<float>, PollingDescriptor<float>, PollingDescriptor<float>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
@@ -144,12 +144,15 @@ inline constexpr PollingDescriptorTuple kPollingDescriptors{
                              candidate::kLateralAccelerationDefinition.confidence},
     PollingDescriptor<float>{signal_ids::kAcceleratorPedalPosition, "accelerator_pedal_position",
                              &VehicleState::accelerator_pedal_position, candidate::kEngineDataId,
-                             candidate::kAcceleratorPedalPositionDefinition.confidence}};
+                             candidate::kAcceleratorPedalPositionDefinition.confidence},
+    PollingDescriptor<float>{signal_ids::kBrakePressure, "brake_pressure_bar",
+                             &VehicleState::brake_pressure_bar, candidate::kAccelerationId,
+                             candidate::kBrakePressureDefinition.confidence}};
 #else
 using PollingDescriptorTuple =
     std::tuple<PollingDescriptor<float>, PollingDescriptor<float>,
                PollingDescriptor<FrontWiperPosition>, PollingDescriptor<float>,
-               PollingDescriptor<float>, PollingDescriptor<float>>;
+               PollingDescriptor<float>, PollingDescriptor<float>, PollingDescriptor<float>>;
 
 inline constexpr PollingDescriptorTuple kPollingDescriptors{
     PollingDescriptor<float>{signal_ids::kSpeedKph, "speed_kph", &VehicleState::speed_kph,
@@ -168,7 +171,10 @@ inline constexpr PollingDescriptorTuple kPollingDescriptors{
                              candidate::kLateralAccelerationDefinition.confidence},
     PollingDescriptor<float>{signal_ids::kAcceleratorPedalPosition, "accelerator_pedal_position",
                              &VehicleState::accelerator_pedal_position, candidate::kEngineDataId,
-                             candidate::kAcceleratorPedalPositionDefinition.confidence}};
+                             candidate::kAcceleratorPedalPositionDefinition.confidence},
+    PollingDescriptor<float>{signal_ids::kBrakePressure, "brake_pressure_bar",
+                             &VehicleState::brake_pressure_bar, candidate::kAccelerationId,
+                             candidate::kBrakePressureDefinition.confidence}};
 #endif
 
 template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor final {

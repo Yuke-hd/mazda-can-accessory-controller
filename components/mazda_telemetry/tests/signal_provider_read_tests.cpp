@@ -247,6 +247,7 @@ constexpr SignalId kAllIds[] = {
     ids::kAccelerationLongitudinal,
     ids::kAccelerationLateral,
     ids::kAcceleratorPedalPosition,
+    ids::kBrakePressure,
 };
 static_assert(std::size(kAllIds) == internal::kSignalCatalogSize);
 
@@ -405,7 +406,7 @@ void test_invalid_and_unknown_ids_are_request_failures() {
   const auto unknown = harness.provider.read(SignalId{99});
   EXPECT(unknown.status == SignalStatus::InvalidSignal);
   EXPECT(!unknown.value.has_value());
-  const auto beyond = harness.provider.read(SignalId{23});
+  const auto beyond = harness.provider.read(SignalId{24});
   EXPECT(beyond.status == SignalStatus::InvalidSignal);
 }
 
@@ -486,7 +487,8 @@ void test_all_ids_read_no_data_then_typed_values() {
   harness.inject(blink_frame(1'000));
   harness.inject(doors_frame(1'000));
   harness.inject(frame(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0}));
-  harness.inject(frame(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0, 0, 0, 0}));
+  harness.inject(
+      frame(candidate::kAccelerationId, 1'000, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
   EXPECT(wait_for([&harness] {
     for (const auto id : kAllIds) {
       const auto result = harness.provider.read(id);
@@ -718,6 +720,67 @@ void test_accelerator_position_preserves_availability_and_engine_health() {
   }));
   EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
   EXPECT(harness.provider.read(metadata->id).value->value == SignalValue::number(0.5F));
+  EXPECT(harness.telemetry.stop().status == mazda::ResultCode::Faulted);
+}
+
+void test_brake_pressure_preserves_acceleration_health_and_unverified_freshness() {
+  Harness harness{};
+  EXPECT(harness.telemetry.start().ok());
+
+  const auto metadata = harness.provider.catalog().find("vehicle.brake_pressure");
+  EXPECT(metadata != nullptr);
+  if (metadata == nullptr)
+    return;
+  EXPECT(metadata->id == ids::kBrakePressure);
+  EXPECT(metadata->type == vehicle_signals::SignalType::Number);
+  EXPECT(metadata->unit == vehicle_signals::SignalUnit::None);
+  EXPECT(metadata->validation == ValidationStatus::Confirmed);
+
+  const auto initial = harness.provider.read(metadata->id);
+  EXPECT(initial.ok());
+  EXPECT(!initial.value->value.has_value());
+  EXPECT(initial.value->availability == Availability::NoData);
+
+  harness.clock.set(100);
+  harness.inject(frame(candidate::kAccelerationId, 100,
+                       {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
+  EXPECT(wait_for_value(harness.provider, metadata->id));
+  const auto valid = harness.provider.read(metadata->id);
+  EXPECT(valid.value->value.has_value());
+  EXPECT(std::fabs(*valid.value->value->as_number() - 10.0F) < 0.0001F);
+  EXPECT(valid.value->availability == Availability::FreshnessUnverified);
+  const auto acceleration = harness.provider.read(ids::kAccelerationLongitudinal);
+  EXPECT(acceleration.value->availability == Availability::Fresh);
+
+  // No pressure freshness timeout is inferred. Time alone cannot turn this
+  // owner-verified reading into Stale.
+  harness.clock.set(10'000'000);
+  EXPECT(harness.provider.read(metadata->id).value->availability ==
+         Availability::FreshnessUnverified);
+  EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
+         Availability::Stale);
+
+  // raw=39999 is negative after the verified offset. Pressure fails off while
+  // the shared acceleration fields and message health remain usable.
+  harness.clock.set(200);
+  harness.inject(frame(candidate::kAccelerationId, 200,
+                       {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00}));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
+  EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
+         Availability::Fresh);
+
+  harness.clock.set(201);
+  harness.inject(frame(candidate::kAccelerationId, 201,
+                       {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::FreshnessUnverified));
+  EXPECT(std::fabs(*harness.provider.read(metadata->id).value->value->as_number() - 10.0F) <
+         0.0001F);
+
+  harness.source.fail();
+  EXPECT(wait_for([&harness] {
+    return harness.telemetry.diagnostics().lifecycle == mazda::LifecycleState::Faulted;
+  }));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
   EXPECT(harness.telemetry.stop().status == mazda::ResultCode::Faulted);
 }
 
@@ -981,6 +1044,7 @@ int main() {
   test_discrete_reads_match_typed_notification_current();
   test_clock_advance_past_freshness_timeout_is_stale();
   test_accelerator_position_preserves_availability_and_engine_health();
+  test_brake_pressure_preserves_acceleration_health_and_unverified_freshness();
   test_malformed_message_is_unavailable();
   test_transport_fault_is_unavailable_and_restart_clears_samples();
   test_stop_and_restart_clear_old_samples();

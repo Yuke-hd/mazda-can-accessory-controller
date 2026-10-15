@@ -75,13 +75,14 @@ constexpr std::string_view kLockedKeys[] = {
     "vehicle.acceleration.longitudinal",
     "vehicle.acceleration.lateral",
     "vehicle.accelerator_pedal_position",
+    "vehicle.brake_pressure",
 };
 
 constexpr SignalCatalogView kCatalog{kSignalCatalog};
 
 static_assert(kCatalog.well_formed());
-static_assert(kCatalog.size() == 22);
-static_assert(kSignalCatalogSize == 22);
+static_assert(kCatalog.size() == 23);
+static_assert(kSignalCatalogSize == 23);
 static_assert(std::size(kLockedKeys) == kSignalCatalogSize);
 
 constexpr bool ids_nonzero_unique_and_sequential() noexcept {
@@ -142,6 +143,7 @@ static_assert(kCatalog.find(ids::kWiperLow)->key == "vehicle.wiper.low");
 static_assert(kCatalog.find(ids::kWiperFrontPosition)->key == "vehicle.wiper.front_position");
 static_assert(kCatalog.find(ids::kAcceleratorPedalPosition)->key ==
               "vehicle.accelerator_pedal_position");
+static_assert(kCatalog.find(ids::kBrakePressure)->key == "vehicle.brake_pressure");
 
 // Existing ids retain their assignments; acceleration is appended in SI units.
 constexpr bool acceleration_numbers_are_read_only() noexcept {
@@ -167,6 +169,16 @@ constexpr bool accelerator_number_is_read_only() noexcept {
          ids::kAcceleratorPedalPosition.value() == 22;
 }
 static_assert(accelerator_number_is_read_only());
+
+constexpr bool brake_pressure_number_is_read_only() noexcept {
+  const auto *entry = kCatalog.find(ids::kBrakePressure);
+  return entry != nullptr && entry->type == SignalType::Number && entry->unit == SignalUnit::None &&
+         entry->validation == ValidationStatus::Confirmed &&
+         entry->capabilities == SignalCapabilities{SignalCapability::Read} &&
+         entry->choices == nullptr && entry->choice_count == 0 &&
+         ids::kBrakePressure.value() == 23;
+}
+static_assert(brake_pressure_number_is_read_only());
 
 // RPM and speed are Number/Read only with their engineering units.
 constexpr bool polled_numbers_are_read_only() noexcept {
@@ -404,6 +416,7 @@ constexpr ExpectedBinding kExpectedBindings[] = {
     {ids::kBrakePressed, candidate::kBrakePedalId, internal::kBrakeNotificationChannel},
     {ids::kAccelerationLongitudinal, candidate::kAccelerationId, kPolling},
     {ids::kAccelerationLateral, candidate::kAccelerationId, kPolling},
+    {ids::kBrakePressure, candidate::kAccelerationId, kPolling},
 };
 static_assert(std::size(kExpectedBindings) == kSignalCatalogSize);
 
@@ -418,6 +431,7 @@ constexpr ExpectedMember<float> kFloatMembers[] = {
     {ids::kAcceleratorPedalPosition, &VehicleState::accelerator_pedal_position},
     {ids::kAccelerationLongitudinal, &VehicleState::longitudinal_acceleration_mps2},
     {ids::kAccelerationLateral, &VehicleState::lateral_acceleration_mps2},
+    {ids::kBrakePressure, &VehicleState::brake_pressure_bar},
 };
 constexpr ExpectedMember<bool> kBoolMembers[] = {
     {ids::kHazardRequest, &VehicleState::hazard_request},
@@ -562,7 +576,7 @@ void check_descriptor_bindings() {
     check(tally.matches[index] == 1, "catalog row matches exactly one production descriptor",
           kCatalog.at(index)->key);
   }
-  check(tally.polling_rows == 5, "five catalog rows are bound to polling descriptors");
+  check(tally.polling_rows == 6, "six catalog rows are bound to polling descriptors");
   check(tally.notification_rows == 17, "seventeen catalog rows are bound to notification channels");
 
   // The host build carries one test polling descriptor and test channel 18.
