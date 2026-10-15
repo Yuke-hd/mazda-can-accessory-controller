@@ -344,6 +344,8 @@ endif()
 # signal_consumer_tests, to sample the production Mazda provider policy.
 add_executable(companion_protocol_codec_tests companion_protocol_codec_tests.cpp)
 target_link_libraries(companion_protocol_codec_tests PRIVATE companion_protocol doctest::doctest)
+add_executable(companion_protocol_catalog_tests companion_protocol_catalog_tests.cpp)
+target_link_libraries(companion_protocol_catalog_tests PRIVATE companion_protocol doctest::doctest)
 add_executable(companion_protocol_transfer_tests companion_protocol_transfer_tests.cpp)
 target_link_libraries(companion_protocol_transfer_tests PRIVATE companion_protocol
                                                                 doctest::doctest)
@@ -365,7 +367,8 @@ target_link_libraries(companion_protocol_provider_tests PRIVATE companion_protoc
 # Pairing window, user-key debounce and link security policy (#164).
 add_executable(companion_protocol_pairing_tests companion_protocol_pairing_tests.cpp)
 target_link_libraries(companion_protocol_pairing_tests PRIVATE companion_protocol doctest::doctest)
-foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protocol_transfer_tests
+foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protocol_catalog_tests
+                                companion_protocol_transfer_tests
                                 companion_protocol_live_signals_tests
                                 companion_protocol_live_stream_tests
                                 companion_protocol_provider_tests
