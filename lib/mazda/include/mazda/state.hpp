@@ -47,6 +47,9 @@ struct VehicleState {
   vehicle_core::Signal<float> speed_kph{vehicle_core::SignalUnit::KilometresPerHour};
   vehicle_core::Signal<float> engine_rpm{vehicle_core::SignalUnit::RevolutionsPerMinute};
   vehicle_core::Signal<float> accelerator_pedal_position{};
+  // Pressure is interpreted as bar by the client contract. The generic core
+  // unit remains None and no freshness timeout is established.
+  vehicle_core::Signal<float> brake_pressure_bar{};
   // SI m/s^2; source X/Y axis and sign assignments remain Reference. The
   // pinned core has no acceleration unit enum, so internal metadata is None.
   vehicle_core::Signal<float> longitudinal_acceleration_mps2{};

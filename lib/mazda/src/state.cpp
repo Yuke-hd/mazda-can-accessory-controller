@@ -68,6 +68,7 @@ void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept 
   speed_kph.refresh(now);
   engine_rpm.refresh(now);
   accelerator_pedal_position.refresh(now);
+  brake_pressure_bar.refresh(now);
   longitudinal_acceleration_mps2.refresh(now);
   lateral_acceleration_mps2.refresh(now);
   selector_position.refresh(now);

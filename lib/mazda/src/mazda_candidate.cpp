@@ -473,12 +473,19 @@ DecodeStatus decode_acceleration(const vehicle_core::RawCanFrame &frame, Vehicle
       static_cast<std::uint16_t>(((frame.data[0] & 0x3fU) << 7U) | (frame.data[1] >> 1U));
   const auto raw_y = static_cast<std::uint16_t>(((frame.data[1] & 0x01U) << 12U) |
                                                 (frame.data[2] << 4U) | (frame.data[3] >> 4U));
+  const auto pressure_raw = (static_cast<std::uint32_t>(frame.data[3] & 0x01U) << 16U) |
+                            (static_cast<std::uint32_t>(frame.data[4]) << 8U) | frame.data[5];
+  const auto pressure_bar = static_cast<float>(pressure_raw) * 0.001F - 40.0F;
   // Centre the exact signed raw code before one float division. Applying
   // float scale/offset separately introduces cancellation noise near zero.
   const auto longitudinal = (static_cast<std::int32_t>(raw_x) - 4000) / 100.0F;
   const auto lateral = (static_cast<std::int32_t>(raw_y) - 4096) / 1000.0F;
   bool updated = state.longitudinal_acceleration_mps2.update(longitudinal, frame.timestamp_us);
   updated = state.lateral_acceleration_mps2.update(lateral, frame.timestamp_us) || updated;
+  const bool pressure_updated =
+      pressure_bar < 0.0F ? invalidate_signal(state.brake_pressure_bar, frame.timestamp_us)
+                          : state.brake_pressure_bar.update(pressure_bar, frame.timestamp_us);
+  updated = pressure_updated || updated;
   if (updated && frame.timestamp_us > state.timestamp_us)
     state.timestamp_us = frame.timestamp_us;
   finish_health(state, kAccelerationId, vehicle_core::SignalHealth::Available, health);
