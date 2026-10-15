@@ -547,7 +547,8 @@ TEST_CASE("every catalog row works end to end through the public provider") {
   harness.inject(candidate::kBlinkInfoId, 1'000, kBlinkRightLampWiperLow);
   harness.inject(candidate::kDoorsId, 1'000, kDoorsAllOpen);
   harness.inject(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0});
-  harness.inject(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0, 0, 0, 0});
+  harness.inject(candidate::kAccelerationId, 1'000,
+                 {0x27, 0x11, 0x38, 0x80, 0xc3, 0x50, 0, 0});
 
   // Each row reads a typed value its metadata accepts, and each Notify row's
   // latest notice carries exactly that reading.
