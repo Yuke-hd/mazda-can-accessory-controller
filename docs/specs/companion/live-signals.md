@@ -9,8 +9,9 @@ document builds on. Device info reports the layout as
 
 The firmware side is implemented by `companion_protocol::LiveSignalSampler`,
 `companion_protocol::LiveSignalStream` and the `companion_ble` Live signals
-characteristic (issues #162, #166 and #189); no app implementation exists yet.
-Nothing here has been validated on hardware, on a phone, or in a vehicle.
+characteristic (issues #162, #166 and #189). The app supports layouts 1 and 2;
+the extensible stream is specified separately. Nothing here has been validated
+on hardware, on a phone, or in a vehicle.
 
 ## Invariants
 
@@ -19,19 +20,21 @@ These apply in addition to the
 
 1. **Availability is copied, never derived.** Each signal's availability code
    is the provider's `Availability` for that reading, unchanged, with the one
-   brake exception in invariant 2. The encoder never promotes a reading, never computes its own freshness and never sends
-   `Fresh` for a reading the provider did not report as `Fresh`. A failed
-   read and an unsupported signal are never `Fresh`. A value the frame cannot
-   encode is dropped, not the availability: the code stays the provider's,
-   and the app shows no value for that signal.
+   brake exception in invariant 2. The encoder never promotes a reading, never
+   computes its own freshness and never sends `Fresh` for a reading the
+   provider did not report as `Fresh`. A failed read and an unsupported signal
+   are never `Fresh`. A value the frame cannot encode is dropped, not the
+   availability: the code stays the provider's, and the app shows no value for
+   that signal.
 2. **Brake freshness stays unset.** `vehicle.brake_pressed` has no freshness
    timeout, so the provider never reports it as `Fresh`, and the frame never
    does either. As defence in depth, the encoder sends a `Fresh` brake reading
-   as `FreshnessUnverified` (code 3): such a reading is a provider defect, and
-   demoting it can only lower confidence. This is the only availability the
-   encoder changes. It applies only to signals whose freshness is
-   intentionally unset by policy, which is brake alone; a signal that merely
-   has no default timeout today, such as `vehicle.engine_rpm`, is copied
+   as `FreshnessUnverified` (code 3; code 2 remains `Stale`): such a reading is
+   a provider defect, and demoting it can only lower confidence. This is the
+   only availability the encoder changes. It applies only to signals
+   whose freshness policy intentionally remains unset; brake alone meets
+   this condition. A signal that merely has no default timeout today, such as
+   `vehicle.engine_rpm`, is copied
    through, so a later reviewed timeout needs no protocol change. The
    owner-approved `fresh_or_unverified` brake rule opt-in affects only
    lighting rules; it does not change the reported availability.
@@ -160,7 +163,9 @@ A layout 1 client must not subscribe to a device reporting layout 2, and must
 reject a received layout 2 frame. Apps supporting both versions select an
 explicit decoder from Device info, require the matching frame version and exact
 length (23 or 28 bytes), and never reinterpret a newer frame as the old layout.
-The protocol version remains `1.0`; live-layout compatibility is independent.
+Protocol 1.0 firmware continues to report its fixed layout independently.
+Protocol 1.1 adds the extensible stream without changing these fixed-layout
+bytes or the reported `live_signal_layout_version`.
 
 ### Number encoding
 

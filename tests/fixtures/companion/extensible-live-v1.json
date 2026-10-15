@@ -1,0 +1,270 @@
+{
+  "fixture_id": "extensible-live-v1",
+  "fixture_version": 1,
+  "wire_contract": {
+    "protocol_major": 1,
+    "protocol_minor": 1,
+    "catalog_format": 1,
+    "notification_format": 1,
+    "catalog_token": "0x12345678",
+    "catalog_token_wire_hex": "78563412",
+    "catalog_token_scope": "connection",
+    "previous_connection_catalog_token": "0x87654321",
+    "previous_connection_catalog_token_wire_hex": "21436587"
+  },
+  "provenance": {
+    "kind": "synthetic",
+    "statement": "Not applicable — vectors are synthetic and contain no vehicle or third-party data."
+  },
+  "catalog": {
+    "document_length": 369,
+    "document_hex": "0107002b000100010f006578616d706c652e656e61626c6564020100010304006e6f6e650409007265666572656e6365300002000114006578616d706c652e616363656c65726174696f6e020100020305006d2f735e320408006f627365727665643d000300010c006578616d706c652e6d6f6465020100030304006e6f6e65040900636f6e6669726d656405120002000100036f6666020007726576657273652d0004000112006578616d706c652e656e67696e655f72706d0201000203030072706d0409007265666572656e63652c0005000111006578616d706c652e73706565645f6b7068020100020304006b6d2f680408006f627365727665643f0006000114006578616d706c652e6675747572655f76616c756502010002030b006675747572652d756e69740411006669656c642d636f7272656c6174696f6e300007000113006578616d706c652e6675747572655f747970650201007f030700756e6b6e6f776e040700756e6b6e6f776e",
+    "signal_count": 7,
+    "descriptors": [
+      {
+        "handle": 1,
+        "key": "example.enabled",
+        "type": "Boolean",
+        "unit": "none",
+        "evidence": "reference"
+      },
+      {
+        "handle": 2,
+        "key": "example.acceleration",
+        "type": "Number",
+        "unit": "m/s^2",
+        "evidence": "observed"
+      },
+      {
+        "handle": 3,
+        "key": "example.mode",
+        "type": "Enum",
+        "unit": "none",
+        "evidence": "confirmed",
+        "choices": [
+          {
+            "handle": 1,
+            "key": "off"
+          },
+          {
+            "handle": 2,
+            "key": "reverse"
+          }
+        ]
+      },
+      {
+        "handle": 4,
+        "key": "example.engine_rpm",
+        "type": "Number",
+        "unit": "rpm",
+        "evidence": "reference"
+      },
+      {
+        "handle": 5,
+        "key": "example.speed_kph",
+        "type": "Number",
+        "unit": "km/h",
+        "evidence": "observed"
+      },
+      {
+        "handle": 6,
+        "key": "example.future_value",
+        "type": "Number",
+        "unit": "future-unit",
+        "evidence": "field-correlation"
+      },
+      {
+        "handle": 7,
+        "key": "example.future_type",
+        "type": "Unknown",
+        "type_code": 127,
+        "unit": "unknown",
+        "evidence": "unknown"
+      }
+    ],
+    "pages": [
+      {
+        "name": "first_page",
+        "selector_write_hex": null,
+        "offset": 0,
+        "data_length": 200,
+        "response_length": 211,
+        "response_hex": "017856341271010000c8000107002b000100010f006578616d706c652e656e61626c6564020100010304006e6f6e650409007265666572656e6365300002000114006578616d706c652e616363656c65726174696f6e020100020305006d2f735e320408006f627365727665643d000300010c006578616d706c652e6d6f6465020100030304006e6f6e65040900636f6e6669726d656405120002000100036f6666020007726576657273652d0004000112006578616d706c652e656e67696e655f72706d0201000203030072706d04090072"
+      },
+      {
+        "name": "second_page",
+        "selector_write_hex": "0178563412c800",
+        "offset": 200,
+        "data_length": 169,
+        "response_length": 180,
+        "response_hex": "01785634127101c800a90065666572656e63652c0005000111006578616d706c652e73706565645f6b7068020100020304006b6d2f680408006f627365727665643f0006000114006578616d706c652e6675747572655f76616c756502010002030b006675747572652d756e69740411006669656c642d636f7272656c6174696f6e300007000113006578616d706c652e6675747572655f747970650201007f030700756e6b6e6f776e040700756e6b6e6f776e"
+      },
+      {
+        "name": "empty_terminal_page",
+        "selector_write_hex": "01785634127101",
+        "offset": 369,
+        "data_length": 0,
+        "response_length": 11,
+        "response_hex": "0178563412710171010000"
+      }
+    ],
+    "selector_error_cases": [
+      {
+        "name": "wrong_length_precedes_format",
+        "request_hex": "02",
+        "expected_att_error": "Invalid Attribute Value Length",
+        "expected_att_code": "0x0D"
+      },
+      {
+        "name": "format_precedes_token_and_offset",
+        "request_hex": "0200000000ffff",
+        "expected_att_error": "UnsupportedOperation",
+        "expected_att_code": "0x81"
+      },
+      {
+        "name": "token_precedes_offset",
+        "request_hex": "0100000000ffff",
+        "expected_att_error": "InvalidState",
+        "expected_att_code": "0x83"
+      },
+      {
+        "name": "offset_after_token",
+        "request_hex": "01785634127201",
+        "expected_att_error": "InvalidPdu",
+        "expected_att_code": "0x80"
+      }
+    ]
+  },
+  "notifications": [
+    {
+      "name": "typed_values",
+      "packet_length": 30,
+      "packet_hex": "01000001785634120501000109010802000209000048c106030003090200",
+      "expected": [
+        {
+          "handle": 1,
+          "key": "example.enabled",
+          "availability_code": 1,
+          "value": true
+        },
+        {
+          "handle": 2,
+          "key": "example.acceleration",
+          "availability_code": 1,
+          "value": -12.5,
+          "unit": "m/s^2"
+        },
+        {
+          "handle": 3,
+          "key": "example.mode",
+          "availability_code": 1,
+          "value": "reverse"
+        }
+      ]
+    },
+    {
+      "name": "read_failure_without_value",
+      "packet_length": 13,
+      "packet_hex": "01010001785634120401000105",
+      "expected": {
+        "handle": 1,
+        "availability_code": 5,
+        "value": null
+      }
+    },
+    {
+      "name": "nonfinite_number_clears_value",
+      "packet_length": 17,
+      "packet_hex": "010200017856341208020002090000807f",
+      "expected": {
+        "handle": 2,
+        "display": "unknown",
+        "clear_previous_value": true,
+        "refresh_liveness": true
+      }
+    },
+    {
+      "name": "unknown_enum_choice_clears_value",
+      "packet_length": 15,
+      "packet_hex": "010300017856341206030003096300",
+      "expected": {
+        "handle": 3,
+        "display": "unknown",
+        "clear_previous_value": true,
+        "refresh_liveness": true
+      }
+    },
+    {
+      "name": "unknown_status_clears_value",
+      "packet_length": 13,
+      "packet_hex": "01040001785634120402000207",
+      "expected": {
+        "handle": 2,
+        "display": "unknown",
+        "clear_previous_value": true,
+        "refresh_liveness": true
+      }
+    },
+    {
+      "name": "mismatched_type_clears_without_liveness_refresh",
+      "packet_length": 14,
+      "packet_hex": "01050001785634120502007f0901",
+      "expected": {
+        "handle": 2,
+        "display": "unknown",
+        "clear_previous_value": true,
+        "refresh_liveness": false
+      }
+    },
+    {
+      "name": "unknown_handle_and_type_are_skipped",
+      "packet_length": 13,
+      "packet_hex": "010600017856341204ff7ffe00",
+      "expected": {
+        "skip_record": true,
+        "update_signal_values": false
+      }
+    },
+    {
+      "name": "duplicate_handle_rejects_entire_packet",
+      "packet_length": 20,
+      "packet_hex": "0107000178563412050100010901050100010900",
+      "expected": {
+        "reject_packet": true,
+        "apply_any_records": false,
+        "refresh_any_liveness": false
+      }
+    },
+    {
+      "name": "wrong_token_invalidates_mapping",
+      "packet_length": 14,
+      "packet_hex": "0108000121436587050100010901",
+      "expected": {
+        "invalidate_catalog": true,
+        "clear_all_values": true,
+        "rediscover_before_apply": true
+      }
+    },
+    {
+      "name": "truncated_record_rejects_entire_packet",
+      "packet_length": 13,
+      "packet_hex": "01090001785634120801000109",
+      "expected": {
+        "reject_packet": true,
+        "apply_any_records": false,
+        "refresh_any_liveness": false
+      }
+    },
+    {
+      "name": "opaque_unknown_type_exact_match_refreshes_liveness",
+      "packet_length": 15,
+      "packet_hex": "010a0001785634120607007f09beef",
+      "expected": {
+        "handle": 7,
+        "display": "unknown",
+        "clear_previous_value": true,
+        "refresh_liveness": true
+      }
+    }
+  ]
+}
