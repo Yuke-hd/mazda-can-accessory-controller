@@ -3,9 +3,11 @@
 #include "companion_ble/advertising.hpp"
 #include "companion_ble/config_characteristics.hpp"
 #include "companion_ble/device_info_characteristic.hpp"
+#include "companion_ble/extensible_live_characteristic.hpp"
 #include "companion_ble/gatt_service.hpp"
 #include "companion_ble/live_signals_characteristic.hpp"
 #include "companion_ble/security.hpp"
+#include "companion_ble/signal_catalog_characteristic.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -14,8 +16,12 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "services/gap/ble_svc_gap.h"
+#include "services/gatt/ble_svc_gatt.h"
 
 #include <atomic>
+#include <cstdint>
+#include <limits>
+#include <optional>
 
 namespace companion_ble {
 namespace {
@@ -40,6 +46,9 @@ internal::DeviceInfoValues served_device_info{};
 PairingInputs pairing_inputs{};
 ConfigInputs config_inputs{};
 const vehicle_signals::SignalProvider *live_signal_provider{nullptr};
+// The export points into the provider's immutable catalog and must outlive
+// every NimBLE callback that serves discovery or samples the live stream.
+std::optional<companion_protocol::SignalCatalogExport> signal_catalog{};
 bool config_transfer{false};
 
 void host_task(void * /*argument*/) {
@@ -54,26 +63,40 @@ void on_host_sync() {
     ESP_LOGW(kTag, "no usable BLE identity address (rc=%d)", rc);
     return;
   }
+  // UUIDs 0x0006 and 0x0007 changed the static attribute table. NimBLE keeps
+  // this range for bonded peers and indicates it when they next connect.
+  ble_svc_gatt_changed(1U, std::numeric_limits<std::uint16_t>::max());
   internal::start_advertising();
 }
 
 void on_host_reset(const int reason) { ESP_LOGW(kTag, "NimBLE host reset (reason=%d)", reason); }
 
 int register_services() noexcept {
-  int rc = config_transfer
-               ? internal::register_companion_service(
-                     {internal::device_info_characteristic(served_device_info),
-                      internal::config_characteristic(), internal::config_status_characteristic(),
-                      internal::command_characteristic(), internal::live_signals_characteristic()})
-               : internal::register_companion_service(
-                     {internal::device_info_characteristic(served_device_info),
-                      internal::live_signals_characteristic()});
+  signal_catalog.emplace(live_signal_provider->catalog());
+  int rc =
+      config_transfer
+          ? internal::register_companion_service(
+                {internal::device_info_characteristic(served_device_info),
+                 internal::config_characteristic(), internal::config_status_characteristic(),
+                 internal::command_characteristic(), internal::live_signals_characteristic(),
+                 internal::signal_catalog_characteristic(),
+                 internal::extensible_live_signals_characteristic()})
+          : internal::register_companion_service(
+                {internal::device_info_characteristic(served_device_info),
+                 internal::live_signals_characteristic(), internal::signal_catalog_characteristic(),
+                 internal::extensible_live_signals_characteristic()});
   if (rc != 0)
     return rc;
   rc = ble_svc_gap_device_name_set(kDeviceName);
   if (rc != 0)
     return rc;
-  return internal::bind_live_signals(*live_signal_provider);
+  rc = internal::bind_signal_catalog(*signal_catalog);
+  if (rc != 0)
+    return rc;
+  rc = internal::bind_live_signals(*live_signal_provider);
+  if (rc != 0)
+    return rc;
+  return internal::bind_extensible_live_signals(*signal_catalog, *live_signal_provider);
 }
 
 bool bring_up_nimble() noexcept {
@@ -140,6 +163,9 @@ bool start(const companion_protocol::DeviceInfo &device_info,
   return created == pdPASS;
 }
 
-void mark_telemetry_started() noexcept { internal::mark_live_signals_telemetry_started(); }
+void mark_telemetry_started() noexcept {
+  internal::mark_live_signals_telemetry_started();
+  internal::mark_extensible_live_signals_telemetry_started();
+}
 
 } // namespace companion_ble

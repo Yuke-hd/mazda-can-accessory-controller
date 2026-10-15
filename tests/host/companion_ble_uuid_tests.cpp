@@ -1,7 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
-// Companion BLE UUIDs (#163) defined by docs/specs/companion/ble-protocol.md.
+// Companion BLE UUIDs defined by docs/specs/companion/ble-protocol.md.
 // The Device info value itself is encoded by lib/companion_protocol (#162) and
 // tested there; the NimBLE binding only copies these bytes into the GATT table.
 #include "companion_ble/uuids.hpp"
@@ -14,6 +14,7 @@
 
 namespace {
 
+using companion_ble::CharacteristicProfile;
 using companion_ble::CompanionAttribute;
 using companion_ble::Uuid128;
 
@@ -23,13 +24,15 @@ struct ExpectedUuid {
 };
 
 // The UUID table in ble-protocol.md#uuids, written as the spec prints it.
-constexpr std::array<ExpectedUuid, 6> kSpecUuids{{
+constexpr std::array<ExpectedUuid, 8> kSpecUuids{{
     {CompanionAttribute::Service, "ab490000-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::DeviceInfo, "ab490001-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::Config, "ab490002-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::ConfigStatus, "ab490003-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::LiveSignals, "ab490004-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::Command, "ab490005-09b6-4509-bf8e-2790253baf98"},
+    {CompanionAttribute::SignalCatalog, "ab490006-09b6-4509-bf8e-2790253baf98"},
+    {CompanionAttribute::ExtensibleLiveSignals, "ab490007-09b6-4509-bf8e-2790253baf98"},
 }};
 
 std::uint8_t hex_digit(const char digit) {
@@ -61,9 +64,32 @@ Uuid128 wire_order(const std::string_view text) {
 } // namespace
 
 TEST_CASE("every companion UUID matches the ble-protocol.md table in wire order") {
+  CHECK(companion_ble::kCompanionCharacteristicCount == 7U);
   for (const auto &expected : kSpecUuids) {
     CAPTURE(expected.text);
     CHECK(companion_ble::companion_uuid(expected.attribute) == wire_order(expected.text));
+  }
+}
+
+TEST_CASE("the companion GATT table matches the frozen properties and security profile") {
+  constexpr std::array<CharacteristicProfile, 7> expected{{
+      {CompanionAttribute::DeviceInfo, true, false, false, true},
+      {CompanionAttribute::Config, true, true, false, false},
+      {CompanionAttribute::ConfigStatus, true, false, true, false},
+      {CompanionAttribute::LiveSignals, false, false, true, false},
+      {CompanionAttribute::Command, false, true, false, false},
+      {CompanionAttribute::SignalCatalog, true, true, false, false},
+      {CompanionAttribute::ExtensibleLiveSignals, false, false, true, false},
+  }};
+
+  REQUIRE(companion_ble::kCompanionCharacteristicProfiles.size() == expected.size());
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    const auto &actual = companion_ble::kCompanionCharacteristicProfiles[index];
+    CHECK(actual.attribute == expected[index].attribute);
+    CHECK(actual.readable == expected[index].readable);
+    CHECK(actual.writable == expected[index].writable);
+    CHECK(actual.notifiable == expected[index].notifiable);
+    CHECK(actual.open_access == expected[index].open_access);
   }
 }
 
