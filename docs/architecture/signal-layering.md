@@ -32,7 +32,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 
 ## Brake signal contract
 
-The Mazda generic catalog contains twenty-one signals. `vehicle.brake_pressed`
+The Mazda generic catalog contains twenty-two signals. `vehicle.brake_pressed`
 is a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
@@ -80,6 +80,14 @@ signals use `None` with SI member names; the Mazda-owned generic catalog
 supplies the engineering unit without modifying that dependency or rescaling
 values. The controller compiler's catalog manifest includes both Read-only
 numeric keys for sampled conditions and numeric range rules.
+
+`vehicle.accelerator_pedal_position` is a Number/Read-only signal with
+`SignalUnit::None` because the shared core has no percentage unit. The Mazda
+decoder validates the source percentage range `[0, 100]` before converting it
+to the normalized public range `[0, 1]`; runtime id 22 appends after the
+existing entries. Its DBC mapping remains Reference confidence, has no default
+freshness timeout, and is available to sampled and normalized range rules
+through the controller catalog manifest.
 
 ## Boundary contracts
 

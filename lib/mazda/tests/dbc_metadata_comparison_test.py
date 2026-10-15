@@ -38,7 +38,7 @@ class DbcMetadataComparisonTests(unittest.TestCase):
     def test_reviewed_dbc_matches_compiled_supported_metadata(self) -> None:
         failures = compare_mazda_dbc.compare(self.dbc, self.metadata)
         self.assertEqual(failures, [])
-        self.assertEqual(len(self.metadata), 17)
+        self.assertEqual(len(self.metadata), 18)
         self.assertNotIn(("ENGINE_DATA", "SPEED"), self.metadata)
 
     def test_source_dbc_bytes_are_unchanged_reviewed_artifact(self) -> None:
@@ -72,6 +72,21 @@ class DbcMetadataComparisonTests(unittest.TestCase):
         drifted_metadata = compare_mazda_dbc.parse_metadata(drifted)
         failures = compare_mazda_dbc.compare(self.dbc, drifted_metadata)
         self.assertTrue(any("EngineRPM scale mismatch" in failure for failure in failures), failures)
+
+    def test_accelerator_float_round_trip_drift_fails_with_numeric_diagnostic(self) -> None:
+        drifted = self.metadata_text.replace(
+            "ENGINE_DATA\tAcceleratorPedal_Reference\taccelerator_pedal_position\t"
+            "AcceleratorPedal_Reference\t514\t32\t39\t16\t0.00156250002\t",
+            "ENGINE_DATA\tAcceleratorPedal_Reference\taccelerator_pedal_position\t"
+            "AcceleratorPedal_Reference\t514\t32\t39\t16\t0.00156260002\t",
+            1,
+        )
+        drifted_metadata = compare_mazda_dbc.parse_metadata(drifted)
+        failures = compare_mazda_dbc.compare(self.dbc, drifted_metadata)
+        self.assertTrue(
+            any("AcceleratorPedal_Reference scale mismatch" in failure for failure in failures),
+            failures,
+        )
 
     def test_intentional_decoder_bit_coordinate_drift_fails_with_diagnostic(self) -> None:
         drifted = self.metadata_text.replace(

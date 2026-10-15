@@ -16,6 +16,7 @@ locations show the corresponding fixed payload byte and LSB masks.
 | `0x078` | `VEHICLE_ACC_X` | `5\|13@0+ (0.01,-40) [-40\|40]` | `((data[0] & 0x3f) << 7) \| (data[1] >> 1)` | `0.01 - 40` | m/s²; longitudinal candidate, Reference |
 | `0x078` | `VEHICLE_ACC_Y` | `8\|13@0+ (0.001,-4.096) [-4.096\|4.096]` | `((data[1] & 1) << 12) \| (data[2] << 4) \| (data[3] >> 4)` | `0.001 - 4.096` | m/s²; lateral candidate, Reference |
 | `0x202` | `EngineRPM` | `7\|16@0+ (0.25,0) [0\|8500]` | `data[0..1]`, big-endian | `0.25 + 0` | rpm |
+| `0x202` | `AcceleratorPedal_Reference` | `39\|16@0+ (0.0015625,0) [0\|100]` | `data[4..5]`, big-endian | source `%`: `raw/640`; normalized state: `raw/64000` | source `%`; public normalized range `[0,1]`, Reference |
 | `0x202` | `SPEED` | existing out-of-scope candidate | `data[2..3]`, big-endian | `0.01 + 0` | km/h; retained unchanged |
 | `0x228` | `Selector` | `2\|3@0+ (1,0) [0\|7]` | `data[0] & 0x07` | `1 + 0` | `0=Shifting`, `1=P`, `2=R`, `3=N`, `4=D`; `5..7` unknown |
 | `0x228` | `ActualGear` | `36\|4@0+ (1,0) [0\|15]` | `(data[4] >> 1) & 0x0f` | `1 + 0` | `0=P_or_N`, `1..6=1st..6th`, `14=R`, `15=Shifting`; `7..13` unknown |
@@ -36,6 +37,24 @@ locations show the corresponding fixed payload byte and LSB masks.
 Selector and actual gear are separate source fields. Their software handling,
 including undefined values, frame acceptance, and freshness, is specified in
 [telemetry decoder behaviour](../specs/telemetry/decoder-behaviour.md).
+
+## Accelerator pedal position contract
+
+`ENGINE_DATA` bytes 4 and 5 carry the unsigned Motorola
+`AcceleratorPedal_Reference` source field. The decoder accepts raw values from
+0 through 64,000 inclusive, representing 0 through 100 percent, and publishes
+`vehicle.accelerator_pedal_position` as raw/64,000 in the normalized range
+0 through 1. The generic catalog uses `SignalUnit::None` and Reference
+confidence because the shared unit enum has no percentage member. The default
+freshness timeout is unset, so valid readings remain `FreshnessUnverified`.
+
+An out-of-range accelerator value invalidates only that signal while the same
+valid frame still updates RPM and speed and leaves the `ENGINE_DATA` message
+healthy. The invalid signal retains its prior value for diagnostics but reads
+as `Unavailable`; a strictly newer in-range observation restores validity.
+Wrong DLC, malformed frames, transport faults, and NoData/Unavailable states
+follow the existing engine-data publication contract without CAN polling or
+transmit behavior.
 
 ## Acceleration contract
 

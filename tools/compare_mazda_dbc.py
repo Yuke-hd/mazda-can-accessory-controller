@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -54,6 +55,7 @@ _METADATA_FIELDS = (
 # no other source field is silently renamed or dropped from this subset.
 _EXPECTED_CONFIDENCE = {
     ("ENGINE_DATA", "EngineRPM"): "Confirmed",
+    ("ENGINE_DATA", "AcceleratorPedal_Reference"): "Reference",
     ("TRANSMISSION", "Selector"): "Confirmed",
     ("TRANSMISSION", "ActualGear"): "Observed",
     ("DOORS", "Liftgate_Open_Reference"): "Reference",
@@ -79,6 +81,7 @@ _EXPECTED_CONFIDENCE = {
 # interpretation exception.
 _EXPECTED_CHANNEL = {
     ("ENGINE_DATA", "EngineRPM"): "engine_rpm",
+    ("ENGINE_DATA", "AcceleratorPedal_Reference"): "accelerator_pedal_position",
     ("TRANSMISSION", "Selector"): "selector_position",
     ("TRANSMISSION", "ActualGear"): "actual_gear",
     ("DOORS", "Liftgate_Open_Reference"): "liftgate_open",
@@ -99,6 +102,7 @@ _EXPECTED_CHANNEL = {
 
 _EXPECTED_UNIT = {
     ("ENGINE_DATA", "EngineRPM"): "RevolutionsPerMinute",
+    ("ENGINE_DATA", "AcceleratorPedal_Reference"): "None",
     ("TRANSMISSION", "Selector"): "None",
     ("TRANSMISSION", "ActualGear"): "None",
     ("TURN_SWITCH", "FrontWiper"): "None",
@@ -166,6 +170,14 @@ def _decimal(text: str, label: str) -> Decimal:
         return Decimal(text.strip())
     except InvalidOperation as error:
         raise ValueError(f"invalid {label} value {text!r}") from error
+
+
+def _serialized_float32(value: Decimal) -> Decimal:
+    """Return the nine-significant-digit text emitted for a C++ float."""
+
+    packed = struct.pack("<f", float(value))
+    rounded = struct.unpack("<f", packed)[0]
+    return Decimal(format(rounded, ".9g"))
 
 
 def parse_dbc(text: str) -> dict[tuple[str, str], DbcSignal]:
@@ -327,12 +339,28 @@ def compare(dbc: Mapping[tuple[str, str], DbcSignal],
             ("physical maximum", source.maximum, definition.physical_max),
             ("unit", _EXPECTED_UNIT[key], definition.unit),
         )
-        expected_dbc_unit = "rpm" if key == ("ENGINE_DATA", "EngineRPM") else ""
+        expected_dbc_unit = (
+            "rpm"
+            if key == ("ENGINE_DATA", "EngineRPM")
+            else "%"
+            if key == ("ENGINE_DATA", "AcceleratorPedal_Reference")
+            else ""
+        )
         checks = (*checks, ("DBC unit", expected_dbc_unit, source.unit))
         if source.sign != "+":
             failures.append(f"{label} is signed in the DBC; supported metadata requires unsigned '+'")
+        numeric_fields = {
+            "scale",
+            "offset",
+            "physical minimum",
+            "physical maximum",
+        }
         for field, expected, actual in checks:
-            if expected != actual:
+            # Metadata is serialized from C++ float constants. Accept only the
+            # exact nine-digit decimal representation of the source value
+            # after one IEEE-754 binary32 round trip.
+            numeric_match = field in numeric_fields and actual == _serialized_float32(expected)
+            if expected != actual and not numeric_match:
                 failures.append(f"{label} {field} mismatch: DBC {expected} != metadata {actual}")
 
         expected_confidence = _EXPECTED_CONFIDENCE[key]

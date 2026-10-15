@@ -403,7 +403,8 @@ void test_request_failures_are_distinct() {
   Harness harness{};
   auto &provider = harness.provider;
 
-  // RPM and speed are Read-only catalog rows backed by polling descriptors.
+  // RPM, speed, and accelerator position are Read-only catalog rows backed by
+  // polling descriptors.
   EXPECT(provider.subscribe(ids::kEngineRpm, &record_notice, &context).status ==
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(ids::kSpeedKph, &record_notice, &context).status ==
@@ -412,7 +413,7 @@ void test_request_failures_are_distinct() {
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(SignalId{}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
-  EXPECT(provider.subscribe(SignalId{22}, &record_notice, &context).status ==
+  EXPECT(provider.subscribe(SignalId{23}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
   EXPECT(provider.subscribe(SignalId{0xffffU}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
