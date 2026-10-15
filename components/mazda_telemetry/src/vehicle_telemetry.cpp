@@ -851,7 +851,10 @@ StatusResult VehicleTelemetryService::stop() noexcept {
     const auto current = lifecycle_state_.load(std::memory_order_acquire);
     if (current == LifecycleState::Stopped)
       return {ResultCode::NotRunning};
-    was_faulted = current == LifecycleState::Faulted;
+    // Runtime publishes a receive fault before its observer updates the adapter
+    // lifecycle. Preserve that already-visible fault through successful cleanup.
+    was_faulted = current == LifecycleState::Faulted ||
+                  runtime_.diagnostics().lifecycle == vehicle_telemetry::LifecycleState::Faulted;
     lifecycle_state_.store(LifecycleState::Stopping, std::memory_order_release);
     run_requested_.store(false, std::memory_order_release);
   }
