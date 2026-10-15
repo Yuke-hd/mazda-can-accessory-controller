@@ -212,8 +212,8 @@ DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleS
   const bool accelerator_updated =
       accelerator_raw > 64000U
           ? invalidate_signal(state.accelerator_pedal_position, frame.timestamp_us)
-          : state.accelerator_pedal_position.update(
-                static_cast<float>(accelerator_raw) / 64000.0F, frame.timestamp_us);
+          : state.accelerator_pedal_position.update(static_cast<float>(accelerator_raw) / 64000.0F,
+                                                    frame.timestamp_us);
   if (rpm_updated || speed_updated || accelerator_updated) {
     if (frame.timestamp_us > state.timestamp_us)
       state.timestamp_us = frame.timestamp_us;
