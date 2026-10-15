@@ -484,10 +484,15 @@ TEST_CASE("replay observer receives the production catalog once before any readi
   REQUIRE(result.ok());
   CHECK(observer.catalog_calls() == 1);
   CHECK(observer.catalog_before_readings());
-  CHECK(observer.catalog().size() == 22);
+  CHECK(observer.catalog().size() == 23);
   CHECK(observer.catalog().find("vehicle.engine_rpm") != nullptr);
   CHECK(observer.catalog().find("vehicle.turn_state") != nullptr);
   CHECK(observer.catalog().find("vehicle.accelerator_pedal_position") != nullptr);
+  const auto pressure = observer.catalog().find("vehicle.brake_pressure");
+  REQUIRE(pressure != nullptr);
+  CHECK(pressure->type == vehicle_signals::SignalType::Number);
+  CHECK(pressure->unit == vehicle_signals::SignalUnit::None);
+  CHECK(pressure->capabilities.has(vehicle_signals::SignalCapability::Read));
 }
 
 TEST_CASE("replay observer receives a notified turn at its CAN frame time") {

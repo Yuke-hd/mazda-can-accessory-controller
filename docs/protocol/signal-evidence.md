@@ -25,7 +25,7 @@ without changing those historical records or the frozen decoder metadata.
 
 ## Public channel inventory
 
-The public facade declares two polling channels and seventeen notify channels in
+The typed public facade declares two polling channels and seventeen notify channels in
 [`mazda/vehicle_telemetry.hpp`](../../components/mazda_telemetry/include/mazda/vehicle_telemetry.hpp).
 The corresponding state members are listed in
 [`VehicleState`](../../lib/mazda/include/mazda/state.hpp#L11-L34).
@@ -34,8 +34,9 @@ current portable implementation and metadata. A status qualified by a value
 set applies only to that set, not to unobserved values in the same field.
 The brake-pedal state is available through the public notification facade and
 the generic provider as `vehicle.brake_pressed` (Boolean, Read and Notify).
-The generic catalog contains twenty-two entries. Brake freshness remains unset
-in the default policy: a valid observation is `FreshnessUnverified`, not
+The generic catalog contains twenty-three entries. Brake-pedal and brake-pressure
+freshness remain unset in the default policy: valid observations are
+`FreshnessUnverified`, not
 `Fresh`. Confirmed field interpretation does not establish timing evidence.
 The factory controller profile binds a brake lighting action only through the
 owner-approved `fresh_or_unverified` opt-in described in
@@ -62,6 +63,7 @@ owner-approved `fresh_or_unverified` opt-in described in
 | `right_indicator_lamp` | Notify | `BLINK_INFO.RightIndicatorLamp_Reference`, ID `0x09a`, `19\|1@0+`, `0=Off`, `1=On`. | Metadata [`kRightIndicatorLampDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L179-L180); byte 2 bit 3 in [`decode_blink_info`](../../lib/mazda/src/mazda_candidate.cpp#L171-L195). | **Reference** — source mapping only; synthetic lamp tests do not promote it ([DBC](mazda_custom.dbc#L53-L56)). |
 | `wiper_low` | Notify | `BLINK_INFO.WiperLow_Reference`, ID `0x09a`, `33\|1@0+`, `0=Off`, `1=On`. | Metadata [`kWiperLowDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L181-L182); byte 4 bit 1 in [`decode_blink_info`](../../lib/mazda/src/mazda_candidate.cpp#L171-L195). | **Observed** — the reviewed DBC records correlation with wiper activity but explicitly describes the interpretation as “appears” to be operation rather than a stalk request ([DBC comment](mazda_custom.dbc#L107-L108)). |
 | `front_wiper` | Notify | `TURN_SWITCH.FrontWiper`, ID `0x091`, `21\|2@0+`, scale `1`, value table `0=Off`, `1=On`, `2=High`, `3=Intermittent`. | Metadata [`kFrontWiperDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L192-L206); `(data[2] >> 4) & 0x03` in [`decode_turn_switch`](../../lib/mazda/src/mazda_candidate.cpp#L197-L225). | **Observed** — the reviewed DBC records the field/bit correlation and observed `0=Off`, `1=On`; values `2=High`, `3=Intermittent` remain reference mappings ([DBC comment](mazda_custom.dbc#L109-L110)). |
+| `brake_pressure` | Polling; generic Read | `BRAKE_PRESSURE.BrakePressureRaw`, ID `0x078`, `24\|17@0+`, scale `0.001`, offset `-40`, source unit `bar`, accepted output range `[0,91.071]`. | Metadata [`kBrakePressureDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L193-L210); `((data[3] & 1) << 16) | (data[4] << 8) | data[5]`, then `raw * 0.001 - 40` in [`decode_acceleration`](../../lib/mazda/src/mazda_candidate.cpp#L451-L493). The client interprets the value as bar while the generic catalog unit is `None`. | **Confirmed** only for this owner-reported target mapping ([DBC comment](mazda_custom.dbc#L114)); no timing, vehicle-limit, or broader compatibility claim is made. |
 | `brake_pressed` | Notify; generic Read + Notify | `BRAKE_PEDAL.BrakePressed`, ID `0x165`, `4\|1@0+`, `0=Released`, `1=Pressed`. | Metadata [`kBrakePressedDefinition`](../../lib/mazda/include/mazda/definitions.hpp#L246-L248); `data[0] & 0x10` in [`decode_brake_pedal`](../../lib/mazda/src/mazda_candidate.cpp#L347-L371). | **Confirmed** for the reviewed field/bit/value interpretation ([DBC comment](mazda_custom.dbc#L111-L112)); freshness timing remains unverified and the default profile has no brake-pedal action. |
 
 The metadata line links above are intentionally descriptive only. When metadata layout
@@ -89,9 +91,12 @@ wrt. NED frame.” and “Vehicle acceleration of Y-axis wrt. NED frame.”
 ([`VEHICLE_ACC_X`](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L778),
 [`VEHICLE_ACC_Y`](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L779)). NED wording does not establish how either source axis maps to the vehicle's longitudinal or lateral direction, nor does it establish the sign convention for the target vehicle.
 
-The existing CX-5 capture contains `0x078`, but the reviewed evidence only
-supports the pressure-correlated `BrakePressureRaw` extraction already recorded
-in [`mazda_custom.dbc`](mazda_custom.dbc#L113-L114). It does not establish either acceleration axis, its sign convention, or the upstream scaling against an annotated vehicle event. At-rest values around 0 m/s² therefore cannot be checked from the repository evidence. The source offsets imply neutral raw codes of 4000 for X and 4096 for Y; those are expected-code calculations, not observations.
+The existing CX-5 capture contains `0x078`; the reviewed evidence establishes
+the owner-reported `BrakePressureRaw` mapping above. It does not establish either acceleration axis, its sign
+convention, or the upstream scaling against an annotated vehicle event. At-rest
+values around 0 m/s² therefore cannot be checked from the repository evidence.
+The source offsets imply neutral raw codes of 4000 for X and 4096 for Y; those
+are expected-code calculations, not observations.
 
 Both candidate fields remain **Reference**. Synthetic vectors do not promote
 these candidates. #187 adds passive decoding under this confidence boundary;
@@ -116,6 +121,29 @@ stationary values for plausibility around 0 m/s², establish which source axis i
 longitudinal versus lateral, and record the sign convention. Until those checks
 are available, the axis and sign semantics remain Reference and no dashboard or
 vehicle-compatibility claim may be made.
+
+## Brake pressure mapping: `BRAKE_PRESSURE` (`0x078`)
+
+The owner-reported target mapping is the exact 17-bit payload formula below:
+
+```text
+raw = ((data[3] & 1) << 16) | (data[4] << 8) | data[5]
+candidate_bar = raw * 0.001 - 40
+```
+
+The mapping is recorded as **Confirmed** for this target field only, with
+owner-reported attribution dated 2026-10-15. Raw values that decode below
+0 bar invalidate pressure without clamping and do not invalidate the shared
+acceleration axes from the same valid frame. Raw 40,000 is the valid zero-bar
+boundary; the 17-bit encoding ceiling is 91.071 bar and is not a vehicle
+operating limit. The generic catalog unit is `None`, replay emits JSON `null`
+for that unit, and the client contract interprets the number as bar.
+
+No pressure message period or freshness timeout is established. A valid
+pressure observation therefore remains `FreshnessUnverified` by default; an
+integration may supply an explicit policy timeout for bounded testing. Wrong
+DLC, transport failure, and shared message faults make pressure unavailable,
+and only a newer valid frame recovers it. No raw capture is reproduced here.
 
 ## Source names and semantic differences
 

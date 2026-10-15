@@ -475,7 +475,10 @@ DecodeStatus decode_acceleration(const vehicle_core::RawCanFrame &frame, Vehicle
                                                 (frame.data[2] << 4U) | (frame.data[3] >> 4U));
   const auto pressure_raw = (static_cast<std::uint32_t>(frame.data[3] & 0x01U) << 16U) |
                             (static_cast<std::uint32_t>(frame.data[4]) << 8U) | frame.data[5];
-  const auto pressure_bar = static_cast<float>(pressure_raw) * 0.001F - 40.0F;
+  // Center before the float division so the exact raw=40000 boundary remains
+  // exactly 0 bar instead of inheriting subtraction cancellation noise.
+  const auto pressure_bar =
+      static_cast<float>(static_cast<std::int32_t>(pressure_raw) - 40000) / 1000.0F;
   // Centre the exact signed raw code before one float division. Applying
   // float scale/offset separately introduces cancellation noise near zero.
   const auto longitudinal = (static_cast<std::int32_t>(raw_x) - 4000) / 100.0F;

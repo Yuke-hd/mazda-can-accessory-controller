@@ -791,6 +791,32 @@ TEST_CASE("0x078 pressure uses the owner-verified 17-bit formula independently")
   CHECK(state.lateral_acceleration_mps2.value == doctest::Approx(0.0F));
   CHECK(state.message_health_for(kAccelerationId)->health == vehicle_core::MessageHealth::Healthy);
 
+  // raw=40000 is the exact zero-bar boundary and must remain valid.
+  const auto zero = frame(kAccelerationId, 110,
+                          {0x1f, 0x41, 0x00, 0x00, 0x9c, 0x40, 0x00, 0x00});
+  REQUIRE(decode(zero, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.is_valid());
+  CHECK(state.brake_pressure_bar.value == 0.0F);
+
+  // The top raw bit is data[3].bit0; exercise it independently from the
+  // lower two bytes so a truncated 16-bit extractor cannot pass this test.
+  const auto high_bit = frame(kAccelerationId, 120,
+                              {0x1f, 0x41, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00});
+  REQUIRE(decode(high_bit, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(25.536F));
+
+  const auto maximum = frame(kAccelerationId, 130,
+                             {0x1f, 0x41, 0x00, 0x01, 0xff, 0xff, 0x00, 0x00});
+  REQUIRE(decode(maximum, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(91.071F));
+
+  // Restore a normal retained value before checking negative-candidate
+  // invalidation, so retention is explicit and independent of the ceiling.
+  auto retained = valid;
+  retained.timestamp_us = 140;
+  REQUIRE(decode(retained, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
+
   // raw=39999 produces -0.001 bar. It invalidates only pressure and does not
   // clamp or corrupt the acceleration values from the same newer frame.
   const auto negative = frame(kAccelerationId, 200,
@@ -897,8 +923,10 @@ TEST_CASE("0x078 snapshots copy availability evidence and independent optional f
   mazda::VehicleState state{};
   CHECK(state.status_at(state.longitudinal_acceleration_mps2, kAccelerationId, 0) ==
         mazda::Availability::NoData);
-  REQUIRE(decode(frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80}), state) ==
+  REQUIRE(decode(frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80, 0x9c, 0x40, 0, 0}), state) ==
           DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(0.0F));
+  CHECK_FALSE(state.brake_pressure_bar.freshness_timeout_us.has_value());
   const auto copy = state.snapshot(1000);
   const auto reading = copy.reading_at(copy.longitudinal_acceleration_mps2, kAccelerationId, 1000,
                                        kLongitudinalAccelerationDefinition.confidence);
@@ -910,16 +938,21 @@ TEST_CASE("0x078 snapshots copy availability evidence and independent optional f
   CHECK(copy.longitudinal_acceleration_mps2.is_stale());
   CHECK(state.longitudinal_acceleration_mps2.is_valid());
   mazda::VehicleFreshnessPolicy policy{};
+  policy.brake_pressure_timeout_us = 10;
   policy.longitudinal_acceleration_mps2_timeout_us = 10;
   policy.lateral_acceleration_mps2_timeout_us = 20;
   const auto boundary = state.snapshot(110, policy);
   CHECK(boundary.status_at(boundary.longitudinal_acceleration_mps2, kAccelerationId, 110) ==
+        mazda::Availability::Fresh);
+  CHECK(boundary.status_at(boundary.brake_pressure_bar, kAccelerationId, 110) ==
         mazda::Availability::Fresh);
   const auto aged = state.snapshot(111, policy);
   CHECK(aged.status_at(aged.longitudinal_acceleration_mps2, kAccelerationId, 111) ==
         mazda::Availability::Stale);
   CHECK(aged.status_at(aged.lateral_acceleration_mps2, kAccelerationId, 111) ==
         mazda::Availability::Fresh);
+  CHECK(aged.status_at(aged.brake_pressure_bar, kAccelerationId, 111) ==
+        mazda::Availability::Stale);
   CHECK(aged.status_at(aged.lateral_acceleration_mps2, kAccelerationId, 111,
                        vehicle_core::TransportHealth::Stopped) == mazda::Availability::Unavailable);
 }

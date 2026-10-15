@@ -32,7 +32,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 
 ## Brake signal contract
 
-The Mazda generic catalog contains twenty-two signals. `vehicle.brake_pressed`
+The Mazda generic catalog contains twenty-three signals. `vehicle.brake_pressed`
 is a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
@@ -88,6 +88,14 @@ to the normalized public range `[0, 1]`; runtime id 22 appends after the
 existing entries. Its DBC mapping remains Reference confidence, has no default
 freshness timeout, and is available to sampled and normalized range rules
 through the controller catalog manifest.
+
+`vehicle.brake_pressure` is a Number/Read-only signal with generic
+`SignalUnit::None`; consumers interpret its value as bar. It uses runtime id
+23 and the owner-reported Confirmed 17-bit `0x078` mapping. Values below zero
+are unavailable without clamping, while the 91.071 value is only the encoding
+ceiling. Its default freshness timeout remains unset, so valid readings are
+`FreshnessUnverified`; replay writes JSON `null` for the generic unit and BLE
+exports the `none` token.
 
 ## Boundary contracts
 

@@ -56,6 +56,7 @@ _METADATA_FIELDS = (
 _EXPECTED_CONFIDENCE = {
     ("ENGINE_DATA", "EngineRPM"): "Confirmed",
     ("ENGINE_DATA", "AcceleratorPedal_Reference"): "Reference",
+    ("BRAKE_PRESSURE", "BrakePressureRaw"): "Confirmed",
     ("TRANSMISSION", "Selector"): "Confirmed",
     ("TRANSMISSION", "ActualGear"): "Observed",
     ("DOORS", "Liftgate_Open_Reference"): "Reference",
@@ -82,6 +83,7 @@ _EXPECTED_CONFIDENCE = {
 _EXPECTED_CHANNEL = {
     ("ENGINE_DATA", "EngineRPM"): "engine_rpm",
     ("ENGINE_DATA", "AcceleratorPedal_Reference"): "accelerator_pedal_position",
+    ("BRAKE_PRESSURE", "BrakePressureRaw"): "brake_pressure",
     ("TRANSMISSION", "Selector"): "selector_position",
     ("TRANSMISSION", "ActualGear"): "actual_gear",
     ("DOORS", "Liftgate_Open_Reference"): "liftgate_open",
@@ -103,6 +105,7 @@ _EXPECTED_CHANNEL = {
 _EXPECTED_UNIT = {
     ("ENGINE_DATA", "EngineRPM"): "RevolutionsPerMinute",
     ("ENGINE_DATA", "AcceleratorPedal_Reference"): "None",
+    ("BRAKE_PRESSURE", "BrakePressureRaw"): "None",
     ("TRANSMISSION", "Selector"): "None",
     ("TRANSMISSION", "ActualGear"): "None",
     ("TURN_SWITCH", "FrontWiper"): "None",
@@ -344,6 +347,8 @@ def compare(dbc: Mapping[tuple[str, str], DbcSignal],
             if key == ("ENGINE_DATA", "EngineRPM")
             else "%"
             if key == ("ENGINE_DATA", "AcceleratorPedal_Reference")
+            else "bar"
+            if key == ("BRAKE_PRESSURE", "BrakePressureRaw")
             else ""
         )
         checks = (*checks, ("DBC unit", expected_dbc_unit, source.unit))

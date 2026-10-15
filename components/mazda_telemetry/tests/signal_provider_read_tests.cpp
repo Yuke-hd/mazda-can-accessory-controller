@@ -754,7 +754,7 @@ void test_brake_pressure_preserves_acceleration_health_and_unverified_freshness(
 
   // No pressure freshness timeout is inferred. Time alone cannot turn this
   // owner-verified reading into Stale.
-  harness.clock.set(10'000'000);
+  harness.clock.set(500'000);
   EXPECT(harness.provider.read(metadata->id).value->availability ==
          Availability::FreshnessUnverified);
   EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
@@ -762,15 +762,15 @@ void test_brake_pressure_preserves_acceleration_health_and_unverified_freshness(
 
   // raw=39999 is negative after the verified offset. Pressure fails off while
   // the shared acceleration fields and message health remain usable.
-  harness.clock.set(200);
-  harness.inject(frame(candidate::kAccelerationId, 200,
+  harness.clock.set(600'000);
+  harness.inject(frame(candidate::kAccelerationId, 600'000,
                        {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00}));
   EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
   EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
          Availability::Fresh);
 
-  harness.clock.set(201);
-  harness.inject(frame(candidate::kAccelerationId, 201,
+  harness.clock.set(600'001);
+  harness.inject(frame(candidate::kAccelerationId, 600'001,
                        {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
   EXPECT(wait_for_read(harness.provider, metadata->id, Availability::FreshnessUnverified));
   EXPECT(std::fabs(*harness.provider.read(metadata->id).value->value->as_number() - 10.0F) <

@@ -362,24 +362,36 @@ TEST_CASE("catalog export emits explicit type, unit, evidence, and ordered choic
 }
 
 TEST_CASE("catalog emits none for normalized numeric signals") {
-  const SignalMetadata row{SignalId{22},
-                           "vehicle.accelerator_pedal_position",
-                           SignalType::Number,
-                           SignalUnit::None,
-                           ValidationStatus::Reference,
-                           SignalCapability::Read,
-                           nullptr,
-                           0};
-  const SignalCatalogExport catalog{SignalCatalogView{&row, 1}};
+  const SignalMetadata rows[]{
+      {SignalId{22},
+       "vehicle.accelerator_pedal_position",
+       SignalType::Number,
+       SignalUnit::None,
+       ValidationStatus::Reference,
+       SignalCapability::Read,
+       nullptr,
+       0},
+      {SignalId{23},
+       "vehicle.brake_pressure",
+       SignalType::Number,
+       SignalUnit::None,
+       ValidationStatus::Confirmed,
+       SignalCapability::Read,
+       nullptr,
+       0}};
+  const SignalCatalogExport catalog{SignalCatalogView{rows, 2}};
   const auto document = download_document(catalog, 0x12345678U);
   REQUIRE(document.has_value());
   const auto decoded = decode_catalog(*document);
   REQUIRE(decoded.has_value());
-  REQUIRE(decoded->size() == 1);
+  REQUIRE(decoded->size() == 2);
   CHECK((*decoded)[0].key == "vehicle.accelerator_pedal_position");
   CHECK((*decoded)[0].type == 2);
   CHECK((*decoded)[0].unit == "none");
   CHECK((*decoded)[0].evidence == "reference");
+  CHECK((*decoded)[1].key == "vehicle.brake_pressure");
+  CHECK((*decoded)[1].unit == "none");
+  CHECK((*decoded)[1].evidence == "confirmed");
 }
 
 TEST_CASE("catalog handles follow provider order while runtime ids and enum values stay local") {

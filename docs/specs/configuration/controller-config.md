@@ -280,6 +280,11 @@ thresholds and range inputs in that normalized form. Its `SignalUnit::None`
 metadata is exported as the BLE `none` unit token; replay JSONL renders the
 same unit as JSON `null`.
 
+`vehicle.brake_pressure` is also a Number/Read signal. Its generic unit is
+`None`, while the client interprets the value as bar. Negative decoded
+candidates are unavailable without clamping; its default freshness timeout is
+unset, so a valid reading remains `FreshnessUnverified`.
+
 `vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
 with Boolean equality or inequality conditions in `state`, `event` and
 `sampled_state` rules; numeric ranges and enum choices are invalid. Compiling

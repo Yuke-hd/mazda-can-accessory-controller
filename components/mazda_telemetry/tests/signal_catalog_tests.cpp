@@ -88,7 +88,7 @@ static_assert(std::size(kLockedKeys) == kSignalCatalogSize);
 constexpr bool ids_nonzero_unique_and_sequential() noexcept {
   for (std::size_t index = 0; index < kCatalog.size(); ++index) {
     const SignalId id = kCatalog.at(index)->id;
-    // Ids are assigned 1..22 in locked-key order.
+    // Ids are assigned 1..23 in locked-key order.
     if (!id.valid() || id.value() != index + 1)
       return false;
     for (std::size_t other = index + 1; other < kCatalog.size(); ++other) {
