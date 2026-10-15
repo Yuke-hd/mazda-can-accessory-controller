@@ -742,8 +742,8 @@ void test_brake_pressure_preserves_acceleration_health_and_unverified_freshness(
   EXPECT(initial.value->availability == Availability::NoData);
 
   harness.clock.set(100);
-  harness.inject(frame(candidate::kAccelerationId, 100,
-                       {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
+  harness.inject(
+      frame(candidate::kAccelerationId, 100, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
   EXPECT(wait_for_value(harness.provider, metadata->id));
   const auto valid = harness.provider.read(metadata->id);
   EXPECT(valid.value->value.has_value());
@@ -763,15 +763,15 @@ void test_brake_pressure_preserves_acceleration_health_and_unverified_freshness(
   // raw=39999 is negative after the verified offset. Pressure fails off while
   // the shared acceleration fields and message health remain usable.
   harness.clock.set(600'000);
-  harness.inject(frame(candidate::kAccelerationId, 600'000,
-                       {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00}));
+  harness.inject(
+      frame(candidate::kAccelerationId, 600'000, {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00}));
   EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
   EXPECT(harness.provider.read(ids::kAccelerationLongitudinal).value->availability ==
          Availability::Fresh);
 
   harness.clock.set(600'001);
-  harness.inject(frame(candidate::kAccelerationId, 600'001,
-                       {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
+  harness.inject(
+      frame(candidate::kAccelerationId, 600'001, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
   EXPECT(wait_for_read(harness.provider, metadata->id, Availability::FreshnessUnverified));
   EXPECT(std::fabs(*harness.provider.read(metadata->id).value->value->as_number() - 10.0F) <
          0.0001F);

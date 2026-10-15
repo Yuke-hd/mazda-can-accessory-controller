@@ -363,22 +363,10 @@ TEST_CASE("catalog export emits explicit type, unit, evidence, and ordered choic
 
 TEST_CASE("catalog emits none for normalized numeric signals") {
   const SignalMetadata rows[]{
-      {SignalId{22},
-       "vehicle.accelerator_pedal_position",
-       SignalType::Number,
-       SignalUnit::None,
-       ValidationStatus::Reference,
-       SignalCapability::Read,
-       nullptr,
-       0},
-      {SignalId{23},
-       "vehicle.brake_pressure",
-       SignalType::Number,
-       SignalUnit::None,
-       ValidationStatus::Confirmed,
-       SignalCapability::Read,
-       nullptr,
-       0}};
+      {SignalId{22}, "vehicle.accelerator_pedal_position", SignalType::Number, SignalUnit::None,
+       ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
+      {SignalId{23}, "vehicle.brake_pressure", SignalType::Number, SignalUnit::None,
+       ValidationStatus::Confirmed, SignalCapability::Read, nullptr, 0}};
   const SignalCatalogExport catalog{SignalCatalogView{rows, 2}};
   const auto document = download_document(catalog, 0x12345678U);
   REQUIRE(document.has_value());

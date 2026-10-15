@@ -782,8 +782,7 @@ TEST_CASE("0x078 pressure uses the owner-verified 17-bit formula independently")
 
   // raw=0x00c350=50000; raw*0.001-40 = 10 bar. The first two fields are
   // the existing neutral acceleration vector.
-  const auto valid = frame(kAccelerationId, 100,
-                           {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00});
+  const auto valid = frame(kAccelerationId, 100, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00});
   REQUIRE(decode(valid, state) == DecodeStatus::Decoded);
   CHECK(state.brake_pressure_bar.is_valid());
   CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
@@ -792,21 +791,20 @@ TEST_CASE("0x078 pressure uses the owner-verified 17-bit formula independently")
   CHECK(state.message_health_for(kAccelerationId)->health == vehicle_core::MessageHealth::Healthy);
 
   // raw=40000 is the exact zero-bar boundary and must remain valid.
-  const auto zero = frame(kAccelerationId, 110,
-                          {0x1f, 0x41, 0x00, 0x00, 0x9c, 0x40, 0x00, 0x00});
+  const auto zero = frame(kAccelerationId, 110, {0x1f, 0x41, 0x00, 0x00, 0x9c, 0x40, 0x00, 0x00});
   REQUIRE(decode(zero, state) == DecodeStatus::Decoded);
   CHECK(state.brake_pressure_bar.is_valid());
   CHECK(state.brake_pressure_bar.value == 0.0F);
 
   // The top raw bit is data[3].bit0; exercise it independently from the
   // lower two bytes so a truncated 16-bit extractor cannot pass this test.
-  const auto high_bit = frame(kAccelerationId, 120,
-                              {0x1f, 0x41, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00});
+  const auto high_bit =
+      frame(kAccelerationId, 120, {0x1f, 0x41, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00});
   REQUIRE(decode(high_bit, state) == DecodeStatus::Decoded);
   CHECK(state.brake_pressure_bar.value == doctest::Approx(25.536F));
 
-  const auto maximum = frame(kAccelerationId, 130,
-                             {0x1f, 0x41, 0x00, 0x01, 0xff, 0xff, 0x00, 0x00});
+  const auto maximum =
+      frame(kAccelerationId, 130, {0x1f, 0x41, 0x00, 0x01, 0xff, 0xff, 0x00, 0x00});
   REQUIRE(decode(maximum, state) == DecodeStatus::Decoded);
   CHECK(state.brake_pressure_bar.value == doctest::Approx(91.071F));
 
@@ -819,8 +817,8 @@ TEST_CASE("0x078 pressure uses the owner-verified 17-bit formula independently")
 
   // raw=39999 produces -0.001 bar. It invalidates only pressure and does not
   // clamp or corrupt the acceleration values from the same newer frame.
-  const auto negative = frame(kAccelerationId, 200,
-                              {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00});
+  const auto negative =
+      frame(kAccelerationId, 200, {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00});
   REQUIRE(decode(negative, state) == DecodeStatus::Decoded);
   CHECK_FALSE(state.brake_pressure_bar.is_valid());
   CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));

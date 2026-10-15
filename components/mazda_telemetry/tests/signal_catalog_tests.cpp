@@ -175,8 +175,7 @@ constexpr bool brake_pressure_number_is_read_only() noexcept {
   return entry != nullptr && entry->type == SignalType::Number && entry->unit == SignalUnit::None &&
          entry->validation == ValidationStatus::Confirmed &&
          entry->capabilities == SignalCapabilities{SignalCapability::Read} &&
-         entry->choices == nullptr && entry->choice_count == 0 &&
-         ids::kBrakePressure.value() == 23;
+         entry->choices == nullptr && entry->choice_count == 0 && ids::kBrakePressure.value() == 23;
 }
 static_assert(brake_pressure_number_is_read_only());
 
