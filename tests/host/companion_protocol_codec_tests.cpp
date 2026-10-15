@@ -55,6 +55,53 @@ TEST_CASE("device info encodes the version 1 layout little-endian") {
   CHECK(std::string(bytes.begin() + 15, bytes.end()) == "weact-can485-v1.1");
 }
 
+TEST_CASE("device info with an absent extension keeps the exact legacy prefix") {
+  const auto encoded = encode_device_info(DeviceInfo{0x0102, true, "1.2.3", "weact-can485-v1.1"},
+                                          DeviceInfoExtensionStatus::Absent);
+  REQUIRE(encoded.has_value());
+  const auto bytes = to_vector(*encoded);
+  CHECK(bytes.size() == 9 + 5 + 1 + 17);
+  CHECK(bytes[0] == kProtocolMajor);
+  CHECK(bytes[1] == kProtocolMinor);
+  CHECK(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + 9) ==
+        std::vector<std::uint8_t>{1, 0, 0x02, 0x01, 2, 0x01, 0x00, 0x10, 5});
+}
+
+TEST_CASE("device info reports an unusable extension with its capability bit clear") {
+  const DeviceInfo info{0x0102, true, "1.2.3", "weact-can485-v1.1"};
+  const auto absent = encode_device_info(info, DeviceInfoExtensionStatus::Absent);
+  const auto unusable = encode_device_info(info, DeviceInfoExtensionStatus::Unusable);
+  REQUIRE(absent.has_value());
+  REQUIRE(unusable.has_value());
+  const auto legacy_bytes = to_vector(*absent);
+  const auto bytes = to_vector(*unusable);
+  REQUIRE(bytes.size() == legacy_bytes.size() + 2);
+  CHECK(bytes[0] == kProtocolMajor);
+  CHECK(bytes[1] == kExtensibleProtocolMinor);
+  CHECK(std::vector<std::uint8_t>(bytes.begin() + 2, bytes.end() - 2) ==
+        std::vector<std::uint8_t>(legacy_bytes.begin() + 2, legacy_bytes.end()));
+  CHECK(bytes[bytes.size() - 2] == kDeviceInfoExtensionVersion);
+  CHECK(bytes.back() == 0);
+}
+
+TEST_CASE("usable extensible signals append version and capability after legacy strings") {
+  const DeviceInfo info{0x0102, true, "1.2.3", "weact-can485-v1.1"};
+  const auto legacy = encode_device_info(info, DeviceInfoExtensionStatus::Absent);
+  const auto encoded = encode_device_info(info, DeviceInfoExtensionStatus::Usable);
+  REQUIRE(legacy.has_value());
+  REQUIRE(encoded.has_value());
+  const auto bytes = to_vector(*encoded);
+  REQUIRE(bytes.size() == legacy->size() + 2);
+  CHECK(bytes[0] == kProtocolMajor);
+  CHECK(bytes[1] == kExtensibleProtocolMinor);
+  CHECK(std::vector<std::uint8_t>(bytes.begin() + 2, bytes.begin() + 9) ==
+        std::vector<std::uint8_t>{0x02, 0x01, 2, 0x01, 0x00, 0x10, 5});
+  CHECK(std::vector<std::uint8_t>(bytes.begin() + 9, bytes.end() - 2) ==
+        std::vector<std::uint8_t>(legacy->view().begin() + 9, legacy->view().end()));
+  CHECK(bytes[bytes.size() - 2] == kDeviceInfoExtensionVersion);
+  CHECK(bytes.back() == kDeviceInfoExtensionUsableFlag);
+}
+
 TEST_CASE("device info flags bit 0 is clear when the pairing window is closed") {
   const auto encoded = encode_device_info(DeviceInfo{1, false, "", ""});
   REQUIRE(encoded.has_value());
@@ -65,13 +112,41 @@ TEST_CASE("device info with two 31-byte strings is the 72-byte maximum") {
   const std::string text(31, 'x');
   const auto encoded = encode_device_info(DeviceInfo{1, false, text, text});
   REQUIRE(encoded.has_value());
+  CHECK(encoded->size() == kLegacyMaxDeviceInfoBytes);
+}
+
+TEST_CASE("usable device info with maximum strings is the 74-byte extension maximum") {
+  const std::string text(31, 'x');
+  const auto encoded =
+      encode_device_info(DeviceInfo{1, false, text, text}, DeviceInfoExtensionStatus::Usable);
+  REQUIRE(encoded.has_value());
   CHECK(encoded->size() == kMaxDeviceInfoBytes);
+  CHECK(encoded->size() == 74);
+  CHECK(encoded->size() > 23); // Exceeds the default ATT MTU and requires Read Blob.
+  CHECK(encoded->view()[72] == kDeviceInfoExtensionVersion);
+  CHECK(encoded->view()[73] == kDeviceInfoExtensionUsableFlag);
+
+  const auto unusable =
+      encode_device_info(DeviceInfo{1, false, text, text}, DeviceInfoExtensionStatus::Unusable);
+  REQUIRE(unusable.has_value());
+  CHECK(unusable->size() == kMaxDeviceInfoBytes);
+  CHECK(unusable->view()[72] == kDeviceInfoExtensionVersion);
+  CHECK(unusable->view()[73] == 0);
 }
 
 TEST_CASE("device info rejects a 32-byte string instead of truncating it") {
   const std::string text(32, 'x');
   CHECK_FALSE(encode_device_info(DeviceInfo{1, false, text, "id"}).has_value());
   CHECK_FALSE(encode_device_info(DeviceInfo{1, false, "1.0", text}).has_value());
+  CHECK_FALSE(
+      encode_device_info(DeviceInfo{1, false, text, "id"}, DeviceInfoExtensionStatus::Usable)
+          .has_value());
+  CHECK_FALSE(
+      encode_device_info(DeviceInfo{1, false, "1.0", text}, DeviceInfoExtensionStatus::Usable)
+          .has_value());
+  CHECK_FALSE(
+      encode_device_info(DeviceInfo{1, false, text, "id"}, DeviceInfoExtensionStatus::Unusable)
+          .has_value());
 }
 
 TEST_CASE("command accepts each opcode with its check byte when idle") {
