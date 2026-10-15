@@ -465,6 +465,8 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/config_transfer.hpp",
     "companion_protocol/crc32.hpp",
     "companion_protocol/device_info.hpp",
+    "companion_protocol/extensible_live_signals.hpp",
+    "companion_protocol/extensible_live_stream.hpp",
     "companion_protocol/hook_guard.hpp",
     "companion_protocol/link_security.hpp",
     "companion_protocol/live_signal_layout.hpp",
@@ -472,6 +474,8 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/live_signals.hpp",
     "companion_protocol/pairing_window.hpp",
     "companion_protocol/read_back.hpp",
+    "companion_protocol/signal_catalog_export.hpp",
+    "companion_protocol/signal_catalog_selector.hpp",
     "companion_protocol/user_key_debouncer.hpp",
 )
 
@@ -481,9 +485,39 @@ COMPANION_PROTOCOL_HEADERS = (
 _COMPANION_PROTOCOL_PROBE_BODY = (
     "#include <array>\n"
     "#include <cstdint>\n"
+    "#include <chrono>\n"
     "namespace {\n"
     "using namespace companion_protocol;\n"
     "using namespace vehicle_signals;\n"
+    "constexpr SignalMetadata kProbeCatalog[] = {\n"
+    "    {SignalId{1}, \"probe.number\", SignalType::Number, SignalUnit::None,\n"
+    "     ValidationStatus::Reference, SignalCapability::Read},\n"
+    "};\n"
+    "class ProbeProvider final : public SignalProvider {\n"
+    "public:\n"
+    "  SignalCatalogView catalog() const noexcept override { return kProbeCatalog; }\n"
+    "  SignalResult<SignalReading> read(SignalId id) const noexcept override {\n"
+    "    if (id != SignalId{1})\n"
+    "      return SignalResult<SignalReading>::failure(SignalStatus::InvalidSignal);\n"
+    "    return SignalResult<SignalReading>::success(\n"
+    "        SignalReading{SignalValue::number(12.5F), Availability::Fresh,\n"
+    "                      ValidationStatus::Reference});\n"
+    "  }\n"
+    "  SignalResult<SignalSubscription> subscribe(SignalId, SignalCallback,\n"
+    "                                             void *) noexcept override {\n"
+    "    return SignalResult<SignalSubscription>::failure(SignalStatus::InvalidState);\n"
+    "  }\n"
+    "  SignalStatusResult unsubscribe(SignalSubscription) noexcept override {\n"
+    "    return SignalStatusResult::failure(SignalStatus::InvalidState);\n"
+    "  }\n"
+    "};\n"
+    "class ProbeSink final : public ExtensibleLiveFrameSink {\n"
+    "public:\n"
+    "  bool try_queue(const ExtensibleLiveSignalPacket &value) noexcept override {\n"
+    "    size = value.size(); return true;\n"
+    "  }\n"
+    "  std::size_t size{0};\n"
+    "};\n"
     "class ProbeCommitter final : public ConfigCommitter {\n"
     "public:\n"
     "  CommitOutcome commit(ByteView document) noexcept override {\n"
@@ -527,7 +561,23 @@ _COMPANION_PROTOCOL_PROBE_BODY = (
     "  const LiveSignalSampler sampler{provider};\n"
     "  const auto frame = sampler.sample(true).frame(7);\n"
     "  const bool sampled = frame[0] == kLiveSignalLayoutVersion && frame[1] == 7;\n"
-    "  return uploaded && described && sampled ? 0 : 1;\n"
+    "  ProbeProvider read_provider{};\n"
+    "  const SignalCatalogExport exported{read_provider.catalog()};\n"
+    "  SignalCatalogSelector selector{exported};\n"
+    "  selector.connect(9, 7);\n"
+    "  const std::array<std::uint8_t, kSignalCatalogSelectorBytes> request{1, 7, 0, 0, 0, 0, 0};\n"
+    "  const bool selected = selector.select(9, request) == AttError::None &&\n"
+    "                       selector.read(9).has_value() &&\n"
+    "                       exported.provider_id_for_handle(1) == SignalId{1};\n"
+    "  ExtensibleLiveSignalPacketBuilder builder{exported, read_provider, 7, 3, true, 64};\n"
+    "  const bool recorded = builder.valid() && builder.append(1) &&\n"
+    "                        builder.packet().size() > kExtensibleLiveSignalHeaderBytes;\n"
+    "  ExtensibleLiveSignalStream stream{exported, read_provider};\n"
+    "  stream.set_notifications_enabled(true); stream.set_link_secured(true);\n"
+    "  stream.set_att_mtu(64); stream.set_catalog_token(7);\n"
+    "  ProbeSink sink{};\n"
+    "  const bool scheduled = stream.offer(LiveStreamClock{0}, true, sink) && sink.size > 0;\n"
+    "  return uploaded && described && sampled && selected && recorded && scheduled ? 0 : 1;\n"
     "}\n"
 )
 
@@ -1114,6 +1164,14 @@ _COMPANION_BLE_READ_ONLY_PROVIDER = re.compile(
 # Provider subscription calls would give the service a write path into
 # telemetry.
 _COMPANION_BLE_PROVIDER_WRITES = re.compile(r"\b(?:subscribe|unsubscribe)\s*\(")
+# The generic provider is a borrowed, read-only port. Subscription methods are
+# rejected above; catch lifecycle calls on provider-like receivers as well,
+# without confusing BLE/GATT start and stop functions with provider lifecycle.
+_COMPANION_BLE_PROVIDER_LIFECYCLE = re.compile(
+    r"\b(?:provider|[A-Za-z_]\w*(?:_provider|_signals))"
+    r"\s*(?:->|\.)\s*(?:start|stop)\s*\(",
+    re.IGNORECASE,
+)
 # Casts and type traits that strip const or reinterpret a type are rejected
 # anywhere in the component, not only next to the provider name. This is a
 # textual, defence-in-depth check that catches honest mistakes; it is not a
@@ -1178,6 +1236,141 @@ def _companion_ble_cmake_violations(cmake: Path) -> List[str]:
     return violations
 
 
+def _cpp_function_body(code: str, name: str) -> Optional[str]:
+    """Return one named function definition body, balancing nested braces."""
+
+    match = re.search(rf"\b{re.escape(name)}\s*\([^{{}};]*\)\s*(?:noexcept\s*)?\{{", code)
+    if match is None:
+        return None
+    opening = code.find("{", match.start(), match.end())
+    depth = 0
+    for index in range(opening, len(code)):
+        if code[index] == "{":
+            depth += 1
+        elif code[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return code[opening + 1 : index]
+    return None
+
+
+def _check_companion_ble_stream_gates(root: Path) -> List[str]:
+    """Keep both live stream samplers behind a fresh accepted-bond decision."""
+
+    checks = (
+        (
+            "components/companion_ble/src/live_signals_characteristic.cpp",
+            "refresh_link_gate",
+            "stream.offer",
+            "sampler->sample",
+        ),
+        (
+            "components/companion_ble/src/extensible_live_characteristic.cpp",
+            "refresh_connection_gates",
+            "stream->offer",
+            "stream->offer",
+        ),
+    )
+    violations: List[str] = []
+    for relative, gate_name, offer_token, sample_token in checks:
+        path = root / relative
+        if not path.is_file():
+            violations.append(f"{relative} is missing the accepted-bond stream gate")
+            continue
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        gate = _cpp_function_body(code, gate_name)
+        sampler = _cpp_function_body(code, "sample_and_notify")
+        if gate is None or not _COMPANION_BLE_BOND_GATE.search(gate):
+            violations.append(f"{relative} {gate_name} must check link_has_accepted_bond()")
+        elif not re.search(r"set_link_secured\s*\([^;]*link_has_accepted_bond", gate):
+            violations.append(
+                f"{relative} {gate_name} must set stream security from link_has_accepted_bond()"
+            )
+        if sampler is None:
+            violations.append(f"{relative} is missing sample_and_notify()")
+            continue
+        gate_call = sampler.find(f"{gate_name}(")
+        sample_call = sampler.find(sample_token)
+        offer_call = sampler.find(offer_token)
+        if (
+            gate_call < 0
+            or sample_call < 0
+            or offer_call < 0
+            or gate_call >= sample_call
+            or gate_call >= offer_call
+        ):
+            violations.append(
+                f"{relative} must refresh the accepted-bond gate before provider sampling "
+                "and stream offer"
+            )
+    return violations
+
+
+def _check_companion_ble_startup_invariants(root: Path) -> None:
+    """Guard bond-store, Service Changed, advertising, and stream startup order."""
+
+    component = root / COMPANION_BLE_COMPONENT / "src"
+    main_code, _ = _strip_cpp_comments(
+        (component / "companion_ble.cpp").read_text(encoding="utf-8")
+    )
+    security_code, _ = _strip_cpp_comments((component / "security.cpp").read_text(encoding="utf-8"))
+    violations: List[str] = []
+
+    configure = _cpp_function_body(security_code, "configure_security")
+    host_synced = _cpp_function_body(security_code, "on_host_synced")
+    if configure is None or "ble_store_config_init(" not in configure:
+        violations.append("companion BLE security setup must initialize the NimBLE bond store")
+    if host_synced is None or not re.search(
+        r"ensure_store_guard\s*\(\s*\).*?apply_window_state\s*\(", host_synced, re.S
+    ):
+        violations.append("host sync must restore the bond-store guard before pairing policy")
+
+    bring_up = _cpp_function_body(main_code, "bring_up_nimble")
+    if bring_up is None or not re.search(
+        r"configure_security\s*\(.*?ble_hs_cfg\.sync_cb\s*=\s*on_host_sync"
+        r".*?nimble_port_freertos_init\s*\(\s*host_task\s*\)",
+        bring_up,
+        re.S,
+    ):
+        violations.append(
+            "NimBLE host must start after security/store setup and host-sync callback registration"
+        )
+
+    host_sync = _cpp_function_body(main_code, "on_host_sync")
+    required_order = (
+        "internal::on_host_synced()",
+        "ble_svc_gatt_changed(1U, std::numeric_limits<std::uint16_t>::max())",
+        "internal::start_advertising()",
+    )
+    positions = [host_sync.find(token) if host_sync is not None else -1 for token in required_order]
+    if min(positions) < 0 or positions != sorted(positions):
+        violations.append(
+            "host sync must restore the bond store, indicate the full Service Changed range, "
+            "then advertise"
+        )
+
+    telemetry_started = _cpp_function_body(main_code, "mark_telemetry_started")
+    forwards = (
+        "internal::mark_live_signals_telemetry_started()",
+        "internal::mark_extensible_live_signals_telemetry_started()",
+    )
+    forward_positions = [
+        telemetry_started.find(token) if telemetry_started is not None else -1 for token in forwards
+    ]
+    if min(forward_positions) < 0 or forward_positions != sorted(forward_positions):
+        violations.append(
+            "telemetry start must be forwarded to both legacy and extensible BLE streams"
+        )
+
+    violations.extend(_check_companion_ble_stream_gates(root))
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   companion BLE host restores bond storage before full-range Service Changed and "
+        "advertising, and gates both live streams on an accepted bond"
+    )
+
+
 def _check_companion_ble_isolation(root: Path) -> None:
     """Keep the companion BLE service off CAN, telemetry, lighting and NVS."""
 
@@ -1199,6 +1392,8 @@ def _check_companion_ble_isolation(root: Path) -> None:
         body = _STRING_LITERAL.sub('""', re.sub(r"^\s*#\s*include[^\n]*", "", code, flags=re.M))
         if _COMPANION_BLE_PROVIDER_WRITES.search(body):
             violations.append(f"{relative} uses a provider write path")
+        if _COMPANION_BLE_PROVIDER_LIFECYCLE.search(body):
+            violations.append(f"{relative} uses a provider lifecycle path")
         allowed_cast = _COMPANION_BLE_ALLOWED_CASTS.get(relative)
         unexempted = allowed_cast.sub("", body) if allowed_cast else body
         for name in sorted(set(_COMPANION_BLE_CONST_REMOVAL.findall(unexempted))):
@@ -1488,6 +1683,7 @@ def check(
             _check_generic_consumer(root)
             _check_led_action_adapter(root)
             _check_companion_ble_isolation(root)
+            _check_companion_ble_startup_invariants(root)
             _check_companion_config_isolation(root)
             _check_adapter(
                 root,

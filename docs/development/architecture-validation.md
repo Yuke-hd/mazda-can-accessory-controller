@@ -26,7 +26,11 @@ layers are each built and run in their own probe project against the core
 alone. `companion_protocol` may link only `vehicle_signals`; its sources must
 not name Mazda types, the BLE stack, CAN drivers, RTOS, or LED outputs outside
 comments, and vehicle catalog key literals are allowed only in
-`lib/companion_protocol/src/live_signal_layout.cpp`.
+`lib/companion_protocol/src/live_signal_layout.cpp`. Its isolated consumer
+exercises the catalog export and token-bound page selector, packet record
+builder, and extensible pacing stream against only the pinned generic provider
+contracts. This catches dependency and link-interface leaks in both the new
+public APIs and their compiled implementations.
 
 A source scan keeps `components/companion_ble` isolated: its includes are
 limited to NimBLE, logging, the RTOS, `esp_timer`, the `companion_protocol`
@@ -51,8 +55,12 @@ slot as the access argument, so it needs no cast. Only `security.cpp` may read
 NimBLE's `sec_state`; every other source that sends a notification or
 indication must also call `link_has_accepted_bond()`, the notification gate in
 [`ble-protocol.md`](../specs/companion/ble-protocol.md). Like the cast rule,
-this is a textual check that a gate is present, not proof that every send is
-gated.
+the accepted-bond call is structurally checked before both stream samplers.
+Host sync must first restore the NimBLE bond-store guard, then indicate the
+full Service Changed range before advertising. The public telemetry-start
+forwarder must update both legacy and extensible stream state. Startup-order
+checks are textual source contracts; they complement the isolated build and
+review rather than replacing device-side validation.
 
 A second source scan keeps `components/companion_config` isolated: its
 includes are limited to its own headers, `companion_protocol`, controller-config
@@ -84,7 +92,10 @@ python3 tests/tools/check_architecture_test.py -v
 isolated translation units, inspects compiler dependency output for forbidden
 transitive headers, checks the exported `mazda_telemetry_contracts`
 consumer interface, and probes denied ordinary access and explicitly
-authorized access to `mazda/internal_contracts.hpp`. The detailed ownership
+authorized access to `mazda/internal_contracts.hpp`. It also compiles the
+catalog export, selector, extensible record and scheduler headers against the
+generic provider contracts, and rejects transitive BLE-stack, SDK, CAN, Mazda,
+telemetry implementation and lighting dependencies. The detailed ownership
 map and supported include boundaries are maintained in
 [Module boundaries](../architecture/module-boundaries.md).
 

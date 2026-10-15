@@ -21,7 +21,9 @@ CHECKER_CMAKE = "cmake"
 
 sys.path.insert(0, str(ROOT))
 from tools.check_public_headers import (
+    COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES,
     _compile_database_command,
+    _dependency_violation,
     _include_directory_arguments,
     check_public_headers,
 )
@@ -45,6 +47,29 @@ class PublicHeaderCheckerTests(unittest.TestCase):
     def copy_fixture(self, temporary: Path) -> Path:
         destination = temporary / "fixture"
         shutil.copytree(FIXTURE, destination)
+        (destination / "lib/companion_protocol/include").mkdir(parents=True)
+        shutil.copytree(
+            ROOT / "lib/companion_protocol/include/companion_protocol",
+            destination / "lib/companion_protocol/include/companion_protocol",
+        )
+        shutil.copytree(
+            ROOT / "lib/vehicle_signals/include/vehicle_signals",
+            destination / "lib/vehicle_signals/include/vehicle_signals",
+            dirs_exist_ok=True,
+        )
+        telemetry_contracts = (
+            destination / "lib/vehicle_core/include/vehicle_core/telemetry_contracts.hpp"
+        )
+        telemetry_contracts.write_text(
+            telemetry_contracts.read_text(encoding="utf-8").replace(
+                "namespace vehicle_core {",
+                "#include <cstdint>\nnamespace vehicle_core {\n"
+                "enum class Availability : std::uint8_t { NoData, Fresh, Stale, "
+                "FreshnessUnverified, Unavailable };\n"
+                "enum class ValidationStatus : std::uint8_t { Reference, Observed, Confirmed };",
+            ),
+            encoding="utf-8",
+        )
         return destination
 
     def test_clean_fixture_and_access_probes_pass(self) -> None:
@@ -58,9 +83,60 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("OK   vehicle_signals/signal_contracts.hpp", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_catalog.hpp", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_provider.hpp", result.stdout)
+        self.assertIn(
+            "OK   companion_protocol/extensible_live_stream.hpp (portable companion protocol)",
+            result.stdout,
+        )
         self.assertIn("OK   action_engine/engine.hpp (generic action engine)", result.stdout)
         self.assertIn("OK   action_engine/action.hpp (generic action engine)", result.stdout)
         self.assertIn("OK   action_engine/range_rule.hpp (generic action engine)", result.stdout)
+
+    def test_portable_companion_codec_reaching_ble_stack_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            codec = (
+                root
+                / "lib/companion_protocol/include/companion_protocol/extensible_live_stream.hpp"
+            )
+            fake_ble = root / "lib/companion_protocol/include/host/ble_hs.h"
+            fake_ble.parent.mkdir(parents=True)
+            fake_ble.write_text("#pragma once\n", encoding="utf-8")
+            codec.write_text(
+                '#include "host/ble_hs.h"\n' + codec.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn(
+            "FAIL companion_protocol/extensible_live_stream.hpp (portable companion protocol)",
+            output,
+        )
+        self.assertIn("BLE stack dependency", output)
+
+    def test_pinned_generic_contract_under_host_build_root_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = Path(directory) / "repository"
+            dependency = (
+                root
+                / "build/host/_deps/vehicle_can_core-src/components/vehicle_core/include/"
+                "vehicle_core/telemetry_contracts.hpp"
+            )
+            dependency.parent.mkdir(parents=True)
+            dependency.write_text(
+                "#pragma once\n#include <cstdint>\n"
+                "namespace vehicle_core {\n"
+                "enum class Availability : std::uint8_t { NoData, Fresh };\n"
+                "enum class ValidationStatus : std::uint8_t { Reference };\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            violation = _dependency_violation(
+                dependency, root, COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES
+            )
+
+        self.assertIsNone(violation)
 
     def test_provider_reaching_telemetry_service_is_detected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
