@@ -501,7 +501,7 @@ TEST_CASE("turn request and lamp stay distinct with enum and malformed-frame par
 }
 
 TEST_CASE("every catalog row works end to end through the public provider") {
-  constexpr std::size_t kRows = 22;
+  constexpr std::size_t kRows = 23;
   Harness harness{};
   auto &provider = harness.provider;
   const auto catalog = provider.catalog();
@@ -525,7 +525,8 @@ TEST_CASE("every catalog row works end to end through the public provider") {
       CHECK((row.key == "vehicle.engine_rpm" || row.key == "vehicle.speed_kph" ||
              row.key == "vehicle.acceleration.longitudinal" ||
              row.key == "vehicle.acceleration.lateral" ||
-             row.key == "vehicle.accelerator_pedal_position"));
+             row.key == "vehicle.accelerator_pedal_position" ||
+             row.key == "vehicle.brake_pressure"));
     }
   }
   CHECK(notify_rows == 17);
@@ -546,7 +547,7 @@ TEST_CASE("every catalog row works end to end through the public provider") {
   harness.inject(candidate::kBlinkInfoId, 1'000, kBlinkRightLampWiperLow);
   harness.inject(candidate::kDoorsId, 1'000, kDoorsAllOpen);
   harness.inject(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0});
-  harness.inject(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0, 0, 0, 0});
+  harness.inject(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0xc3, 0x50, 0, 0});
 
   // Each row reads a typed value its metadata accepts, and each Notify row's
   // latest notice carries exactly that reading.

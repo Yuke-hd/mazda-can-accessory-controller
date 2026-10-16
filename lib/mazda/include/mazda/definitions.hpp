@@ -144,6 +144,10 @@ inline constexpr CandidateMessageDefinition kBrakePedalDefinition{"BRAKE_PEDAL",
 inline constexpr const char *kAccelerationEvidenceProvenance =
     "docs/protocol/signal-evidence.md; docs/protocol/opendbc-provenance.md; "
     "opendbc mazda_2017.dbc at 95f3d52f474b677c28fc8f10fef3f2f0386aff92; MIT";
+inline constexpr const char *kBrakePressureEvidenceProvenance =
+    "docs/protocol/signal-evidence.md; docs/protocol/mazda_custom.dbc#L114; "
+    "owner-reported 2026-10-15; exact target-compatible mapping only; no timing or broader "
+    "compatibility claim";
 inline constexpr CandidateMessageDefinition kAccelerationDefinition{
     "BRAKE",
     kAccelerationId,
@@ -186,6 +190,22 @@ inline constexpr CandidateSignalDefinition kLateralAccelerationDefinition{
     nullptr,
     kAccelerationEvidenceProvenance,
     EvidenceConfidence::Reference};
+inline constexpr CandidateSignalDefinition kBrakePressureDefinition{
+    "BrakePressureRaw",
+    kAccelerationId,
+    24,
+    17,
+    0.001F,
+    -40.0F,
+    vehicle_core::SignalUnit::None,
+    0.0F,
+    91.071F,
+    "decoded candidate values below 0 bar are invalid; no clamping",
+    24,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    nullptr,
+    kBrakePressureEvidenceProvenance,
+    vehicle_core::ValidationStatus::Confirmed};
 
 inline constexpr CandidateSignalDefinition kEngineRpmDefinition{
     "EngineRPM",
@@ -388,6 +408,8 @@ inline constexpr std::array kSupportedSignalDefinitions{
     SupportedSignalDefinition{"TURN_SWITCH", "FrontWiper", "front_wiper", &kFrontWiperDefinition},
     SupportedSignalDefinition{"BRAKE_PEDAL", "BrakePressed", "brake_pressed",
                               &kBrakePressedDefinition},
+    SupportedSignalDefinition{"BRAKE_PRESSURE", "BrakePressureRaw", "brake_pressure",
+                              &kBrakePressureDefinition},
 };
 
 } // namespace mazda::candidate

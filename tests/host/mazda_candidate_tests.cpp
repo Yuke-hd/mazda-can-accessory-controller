@@ -42,6 +42,7 @@ bool same_state(const mazda::VehicleState &left, const mazda::VehicleState &righ
   if (left.timestamp_us != right.timestamp_us || !same_signal(left.speed_kph, right.speed_kph) ||
       !same_signal(left.engine_rpm, right.engine_rpm) ||
       !same_signal(left.accelerator_pedal_position, right.accelerator_pedal_position) ||
+      !same_signal(left.brake_pressure_bar, right.brake_pressure_bar) ||
       !same_signal(left.longitudinal_acceleration_mps2, right.longitudinal_acceleration_mps2) ||
       !same_signal(left.lateral_acceleration_mps2, right.lateral_acceleration_mps2) ||
       !same_signal(left.selector_position, right.selector_position) ||
@@ -148,6 +149,20 @@ TEST_CASE("confirmed definitions retain DBC provenance and exact metadata") {
   CHECK(kAcceleratorPedalPositionDefinition.physical_max == doctest::Approx(100.0F));
   CHECK(kAcceleratorPedalPositionDefinition.confidence ==
         vehicle_core::ValidationStatus::Reference);
+  CHECK(kBrakePressureDefinition.name == std::string{"BrakePressureRaw"});
+  CHECK(kBrakePressureDefinition.identifier == kAccelerationId);
+  CHECK(kBrakePressureDefinition.start_bit == 24);
+  CHECK(kBrakePressureDefinition.dbc_start_bit == 24);
+  CHECK(kBrakePressureDefinition.bit_length == 17);
+  CHECK(kBrakePressureDefinition.scale == doctest::Approx(0.001F));
+  CHECK(kBrakePressureDefinition.offset == doctest::Approx(-40.0F));
+  CHECK(kBrakePressureDefinition.unit == vehicle_core::SignalUnit::None);
+  CHECK(kBrakePressureDefinition.physical_min == doctest::Approx(0.0F));
+  CHECK(kBrakePressureDefinition.physical_max == doctest::Approx(91.071F));
+  CHECK(kBrakePressureDefinition.confidence == vehicle_core::ValidationStatus::Confirmed);
+  CHECK(std::string{kBrakePressureDefinition.provenance}.find("owner-reported") !=
+        std::string::npos);
+  CHECK(std::string{kBrakePressureDefinition.provenance}.find("2026-10-15") != std::string::npos);
   CHECK(kSelectorDefinition.dbc_start_bit == 2);
   CHECK(kSelectorDefinition.start_bit == 0);
   CHECK(kSelectorDefinition.physical_min == doctest::Approx(0.0F));
@@ -761,6 +776,81 @@ TEST_CASE("0x078 Motorola acceleration vectors retain SI scale offsets and Refer
   }
 }
 
+TEST_CASE("0x078 pressure uses the owner-verified 17-bit formula independently") {
+  using namespace mazda::candidate;
+  mazda::VehicleState state{};
+
+  // raw=0x00c350=50000; raw*0.001-40 = 10 bar. The first two fields are
+  // the existing neutral acceleration vector.
+  const auto valid = frame(kAccelerationId, 100, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00});
+  REQUIRE(decode(valid, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.is_valid());
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
+  CHECK(state.longitudinal_acceleration_mps2.value == doctest::Approx(0.0F));
+  CHECK(state.lateral_acceleration_mps2.value == doctest::Approx(0.0F));
+  CHECK(state.message_health_for(kAccelerationId)->health == vehicle_core::MessageHealth::Healthy);
+
+  // raw=40000 is the exact zero-bar boundary and must remain valid.
+  const auto zero = frame(kAccelerationId, 110, {0x1f, 0x41, 0x00, 0x00, 0x9c, 0x40, 0x00, 0x00});
+  REQUIRE(decode(zero, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.is_valid());
+  CHECK(state.brake_pressure_bar.value == 0.0F);
+
+  // The top raw bit is data[3].bit0; exercise it independently from the
+  // lower two bytes so a truncated 16-bit extractor cannot pass this test.
+  const auto high_bit =
+      frame(kAccelerationId, 120, {0x1f, 0x41, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00});
+  REQUIRE(decode(high_bit, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(25.536F));
+
+  const auto maximum =
+      frame(kAccelerationId, 130, {0x1f, 0x41, 0x00, 0x01, 0xff, 0xff, 0x00, 0x00});
+  REQUIRE(decode(maximum, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(91.071F));
+
+  // Restore a normal retained value before checking negative-candidate
+  // invalidation, so retention is explicit and independent of the ceiling.
+  auto retained = valid;
+  retained.timestamp_us = 140;
+  REQUIRE(decode(retained, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
+
+  // raw=39999 produces -0.001 bar. It invalidates only pressure and does not
+  // clamp or corrupt the acceleration values from the same newer frame.
+  const auto negative =
+      frame(kAccelerationId, 200, {0x27, 0x11, 0x38, 0x80, 0x9c, 0x3f, 0x00, 0x00});
+  REQUIRE(decode(negative, state) == DecodeStatus::Decoded);
+  CHECK_FALSE(state.brake_pressure_bar.is_valid());
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
+  CHECK(state.longitudinal_acceleration_mps2.value == doctest::Approx(10.0F));
+  CHECK(state.lateral_acceleration_mps2.value == doctest::Approx(0.904F));
+  CHECK(state.message_health_for(kAccelerationId)->health == vehicle_core::MessageHealth::Healthy);
+  CHECK(state.status_at(state.brake_pressure_bar, kAccelerationId, 200) ==
+        mazda::Availability::Unavailable);
+  CHECK(state.status_at(state.longitudinal_acceleration_mps2, kAccelerationId, 200) ==
+        mazda::Availability::FreshnessUnverified);
+
+  // A malformed observation makes the shared message unavailable; a strictly
+  // newer valid frame recovers both acceleration and pressure.
+  auto malformed = valid;
+  malformed.timestamp_us = 300;
+  malformed.dlc = 7;
+  REQUIRE(decode(malformed, state) == DecodeStatus::Malformed);
+  CHECK(state.status_at(state.brake_pressure_bar, kAccelerationId, 300) ==
+        mazda::Availability::Unavailable);
+  CHECK(state.status_at(state.longitudinal_acceleration_mps2, kAccelerationId, 300) ==
+        mazda::Availability::Unavailable);
+
+  auto recovered = valid;
+  recovered.timestamp_us = 301;
+  REQUIRE(decode(recovered, state) == DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.is_valid());
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(10.0F));
+  CHECK(state.longitudinal_acceleration_mps2.is_valid());
+  CHECK(state.lateral_acceleration_mps2.is_valid());
+  CHECK(state.message_health_for(kAccelerationId)->health == vehicle_core::MessageHealth::Healthy);
+}
+
 TEST_CASE("0x078 malformed observations fault only acceleration and recover strictly newer") {
   using namespace mazda::candidate;
   mazda::VehicleState state{};
@@ -831,8 +921,10 @@ TEST_CASE("0x078 snapshots copy availability evidence and independent optional f
   mazda::VehicleState state{};
   CHECK(state.status_at(state.longitudinal_acceleration_mps2, kAccelerationId, 0) ==
         mazda::Availability::NoData);
-  REQUIRE(decode(frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80}), state) ==
+  REQUIRE(decode(frame(kAccelerationId, 100, {0x27, 0x11, 0x38, 0x80, 0x9c, 0x40, 0, 0}), state) ==
           DecodeStatus::Decoded);
+  CHECK(state.brake_pressure_bar.value == doctest::Approx(0.0F));
+  CHECK_FALSE(state.brake_pressure_bar.freshness_timeout_us.has_value());
   const auto copy = state.snapshot(1000);
   const auto reading = copy.reading_at(copy.longitudinal_acceleration_mps2, kAccelerationId, 1000,
                                        kLongitudinalAccelerationDefinition.confidence);
@@ -844,16 +936,21 @@ TEST_CASE("0x078 snapshots copy availability evidence and independent optional f
   CHECK(copy.longitudinal_acceleration_mps2.is_stale());
   CHECK(state.longitudinal_acceleration_mps2.is_valid());
   mazda::VehicleFreshnessPolicy policy{};
+  policy.brake_pressure_timeout_us = 10;
   policy.longitudinal_acceleration_mps2_timeout_us = 10;
   policy.lateral_acceleration_mps2_timeout_us = 20;
   const auto boundary = state.snapshot(110, policy);
   CHECK(boundary.status_at(boundary.longitudinal_acceleration_mps2, kAccelerationId, 110) ==
+        mazda::Availability::Fresh);
+  CHECK(boundary.status_at(boundary.brake_pressure_bar, kAccelerationId, 110) ==
         mazda::Availability::Fresh);
   const auto aged = state.snapshot(111, policy);
   CHECK(aged.status_at(aged.longitudinal_acceleration_mps2, kAccelerationId, 111) ==
         mazda::Availability::Stale);
   CHECK(aged.status_at(aged.lateral_acceleration_mps2, kAccelerationId, 111) ==
         mazda::Availability::Fresh);
+  CHECK(aged.status_at(aged.brake_pressure_bar, kAccelerationId, 111) ==
+        mazda::Availability::Stale);
   CHECK(aged.status_at(aged.lateral_acceleration_mps2, kAccelerationId, 111,
                        vehicle_core::TransportHealth::Stopped) == mazda::Availability::Unavailable);
 }

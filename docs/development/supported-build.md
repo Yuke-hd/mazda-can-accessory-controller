@@ -66,7 +66,10 @@ Do not disable leak detection or add a blanket test exclusion when reproducing
 a failure; fix the reported test or record the specific unsupported
 platform/toolchain.
 
-The formatter checked by CI is clang-format major version `14`.
+The formatter checked by CI is clang-format major version `14`, configured with
+the C++17 language mode from the repository `.clang-format` file. The formatter
+engine version and the C++ language mode are separate settings: use clang-format
+14 with `Standard: c++17` when reproducing CI locally.
 
 ## Host test inputs
 

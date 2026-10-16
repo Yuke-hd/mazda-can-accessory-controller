@@ -700,6 +700,35 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         )
         self.assertEqual(document["rules"][1]["input"], {"from": 0, "to": 1})
 
+    def test_brake_pressure_compiles_as_bar_numeric_rules(self) -> None:
+        source = """
+        version: 1
+        actions: [{name: pressure_state}, {name: pressure_level}]
+        rules:
+          - type: sampled_state
+            action: pressure_state
+            signal_key: vehicle.brake_pressure
+            comparison: greater
+            operand: {number: 1}
+            release_threshold: 0.5
+          - type: range
+            action: pressure_level
+            signal_key: vehicle.brake_pressure
+            input: {from: 0, to: 91.071}
+            output: {from: 0, to: 255}
+        outputs: []
+        """
+        result, output = self.run_compiler(source)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(output)
+        self.assertEqual(
+            [rule["signal_key"] for rule in document["rules"]],
+            ["vehicle.brake_pressure"] * 2,
+        )
+        self.assertEqual(document["rules"][0]["operand"], {"number": 1.0})
+        self.assertEqual(document["rules"][1]["input"]["from"], 0)
+        self.assertAlmostEqual(document["rules"][1]["input"]["to"], 91.071, places=5)
+
     def test_brake_boolean_conditions_compile_for_notify_and_read_rules(self) -> None:
         cases = product(
             ("state", "event", "sampled_state"),

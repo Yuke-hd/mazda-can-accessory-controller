@@ -110,6 +110,10 @@ gvret::TimedCanFrame left_turn(const vehicle_core::MonotonicTimestamp time_us) {
 
 std::vector<gvret::TimedCanFrame> rpm_then_left_turn() { return {rpm_3250(0), left_turn(300'000)}; }
 
+std::vector<gvret::TimedCanFrame> pressure_only() {
+  return {timed_frame(0, 0x078, {0x1f, 0x41, 0, 0, 0xc3, 0x50, 0, 0})};
+}
+
 std::vector<vehicle_core::MonotonicTimestamp>
 times_of(const std::vector<ObservedReading> &readings) {
   std::vector<vehicle_core::MonotonicTimestamp> times;
@@ -484,10 +488,15 @@ TEST_CASE("replay observer receives the production catalog once before any readi
   REQUIRE(result.ok());
   CHECK(observer.catalog_calls() == 1);
   CHECK(observer.catalog_before_readings());
-  CHECK(observer.catalog().size() == 22);
+  CHECK(observer.catalog().size() == 23);
   CHECK(observer.catalog().find("vehicle.engine_rpm") != nullptr);
   CHECK(observer.catalog().find("vehicle.turn_state") != nullptr);
   CHECK(observer.catalog().find("vehicle.accelerator_pedal_position") != nullptr);
+  const auto pressure = observer.catalog().find("vehicle.brake_pressure");
+  REQUIRE(pressure != nullptr);
+  CHECK(pressure->type == vehicle_signals::SignalType::Number);
+  CHECK(pressure->unit == vehicle_signals::SignalUnit::None);
+  CHECK(pressure->capabilities.has(vehicle_signals::SignalCapability::Read));
 }
 
 TEST_CASE("replay observer receives a notified turn at its CAN frame time") {
@@ -698,6 +707,35 @@ TEST_CASE("a polled signal without frames becomes unavailable on the production 
   CHECK(std::none_of(rpm.begin(), rpm.end(), [](const ObservedReading &observed) {
     return observed.reading.availability == Availability::Stale;
   }));
+}
+
+TEST_CASE("replay emits the confirmed pressure value with generic null unit") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink ignored{clock};
+  replay::LocalArgbOutputStage stage{ignored, clock};
+  RecordingObserver observer;
+
+  const auto result = replay::run_replay(pressure_only(), clock, stage, {&observer}, {100'000});
+
+  REQUIRE(result.ok());
+  const auto pressure = observer.readings_of("vehicle.brake_pressure");
+  REQUIRE_FALSE(pressure.empty());
+  REQUIRE(pressure.front().reading.value.has_value());
+  CHECK(*pressure.front().reading.value->as_number() == doctest::Approx(10.0F));
+  CHECK(pressure.front().metadata->unit == SignalUnit::None);
+  CHECK(pressure.front().reading.availability == Availability::FreshnessUnverified);
+
+  std::ostringstream signal_stream;
+  replay::JsonlSignalRecordWriter writer{signal_stream};
+  replay::ReplayClock json_clock;
+  replay::TimestampedPixelFrameSink json_pixels{json_clock};
+  replay::LocalArgbOutputStage json_stage{json_pixels, json_clock};
+  const auto json_result =
+      replay::run_replay(pressure_only(), json_clock, json_stage, {&writer}, {100'000});
+  REQUIRE(json_result.ok());
+  CHECK(signal_stream.str().find(
+            "\"signal\":\"vehicle.brake_pressure\",\"value\":10,\"unit\":null") !=
+        std::string::npos);
 }
 
 TEST_CASE("a zero signal sample period is rejected even without observers") {

@@ -84,7 +84,7 @@ bool wait_for(Predicate predicate,
 } // namespace
 
 int main() {
-  static_assert(std::tuple_size_v<mazda::internal::PollingDescriptorTuple> == 6);
+  static_assert(std::tuple_size_v<mazda::internal::PollingDescriptorTuple> == 7);
   static_assert(std::tuple_size_v<mazda::internal::NotificationDescriptorTuple> ==
                 mazda::internal::kNotificationChannelCount);
   using TestNotificationDescriptor =

@@ -65,7 +65,7 @@ BO_ 357 BRAKE_PEDAL: 8 Mazda
  SG_ BrakePressed : 4|1@0+ (1,0) [0|1] "" Unknown
 
 BO_ 120 BRAKE_PRESSURE: 8 Mazda
- SG_ BrakePressureRaw : 24|9@0+ (1,0) [0|511] "raw" Unknown
+ SG_ BrakePressureRaw : 24|17@0+ (0.001,-40) [0|91.071] "bar" Unknown
 
 BO_ 359 HVAC_DATA: 8 Mazda
  SG_ Possible_HVAC_TempDemandRaw : 47|4@0+ (1,0) [0|15] "raw" Unknown
@@ -111,7 +111,7 @@ CM_ SG_ 145 FrontWiper "Confirmed from user capture: ((data[2] >> 4) & 0x03). Ex
 CM_ BO_ 357 "0x165. Brake-pedal switch state.";
 CM_ SG_ 357 BrakePressed "Confirmed from user capture: data[0] mask 0x10. Exactly four pressed windows were observed, with the fourth substantially longer, matching the test sequence.";
 CM_ BO_ 120 "0x078. Brake-pressure-related frame.";
-CM_ SG_ 120 BrakePressureRaw "Confirmed pressure-correlated raw signal from user capture: ((data[3] & 0x01) << 8) | data[4]. Baseline was about 152 and the four press peaks were about 359-370. Physical pressure/% scaling is not calibrated.";
+CM_ SG_ 120 BrakePressureRaw "owner-reported 2026-10-15 target mapping: raw=((data[3] & 1) << 16) | (data[4] << 8) | data[5]; candidate_bar=raw*0.001-40. This exact field interpretation is target-specific; no timing or broader compatibility claim.";
 CM_ BO_ 359 "0x167. HVAC/powertrain-related frame. Temperature interpretation is POSSIBLE, not confirmed.";
 CM_ SG_ 359 Possible_HVAC_TempDemandRaw "POSSIBLE HVAC temperature/demand field. Upper nibble of data[5] followed 9,7,5,3,1,3,5,7,9 while the climate setting was changed 20.0 -> 18.0 -> 20.0 C in 0.5 C steps. It may represent HVAC cooling demand or engine-load compensation rather than the literal setpoint.";
 CM_ BO_ 1056 "0x420. POSSIBLE coolant/outdoor temperature frame.";

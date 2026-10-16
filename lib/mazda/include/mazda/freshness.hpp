@@ -18,6 +18,9 @@ struct VehicleFreshnessPolicy {
   std::optional<vehicle_core::Microseconds> speed_kph_timeout_us{};
   std::optional<vehicle_core::Microseconds> engine_rpm_timeout_us{};
   std::optional<vehicle_core::Microseconds> accelerator_pedal_position_timeout_us{};
+  // Pressure timing remains unverified by vehicle evidence; callers may set
+  // this explicitly for a bounded integration, but the default is unset.
+  std::optional<vehicle_core::Microseconds> brake_pressure_timeout_us{};
   std::optional<vehicle_core::Microseconds> longitudinal_acceleration_mps2_timeout_us{
       kAccelerationFreshnessTimeoutUs};
   std::optional<vehicle_core::Microseconds> lateral_acceleration_mps2_timeout_us{

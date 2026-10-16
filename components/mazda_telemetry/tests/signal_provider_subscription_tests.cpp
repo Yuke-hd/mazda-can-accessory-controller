@@ -413,7 +413,7 @@ void test_request_failures_are_distinct() {
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(SignalId{}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
-  EXPECT(provider.subscribe(SignalId{23}, &record_notice, &context).status ==
+  EXPECT(provider.subscribe(SignalId{24}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
   EXPECT(provider.subscribe(SignalId{0xffffU}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);

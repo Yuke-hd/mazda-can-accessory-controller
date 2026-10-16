@@ -15,6 +15,7 @@ locations show the corresponding fixed payload byte and LSB masks.
 | --- | --- | --- | --- | --- | --- |
 | `0x078` | `VEHICLE_ACC_X` | `5\|13@0+ (0.01,-40) [-40\|40]` | `((data[0] & 0x3f) << 7) \| (data[1] >> 1)` | `0.01 - 40` | m/s²; longitudinal candidate, Reference |
 | `0x078` | `VEHICLE_ACC_Y` | `8\|13@0+ (0.001,-4.096) [-4.096\|4.096]` | `((data[1] & 1) << 12) \| (data[2] << 4) \| (data[3] >> 4)` | `0.001 - 4.096` | m/s²; lateral candidate, Reference |
+| `0x078` | `BrakePressureRaw` | `24\|17@0+ (0.001,-40) [0\|91.071]` | `((data[3] & 1) << 16) \| (data[4] << 8) \| data[5]` | `0.001 - 40` | bar client interpretation; generic unit `None`, Confirmed target mapping |
 | `0x202` | `EngineRPM` | `7\|16@0+ (0.25,0) [0\|8500]` | `data[0..1]`, big-endian | `0.25 + 0` | rpm |
 | `0x202` | `AcceleratorPedal_Reference` | `39\|16@0+ (0.0015625,0) [0\|100]` | `data[4..5]`, big-endian | source `%`: `raw/640`; normalized state: `raw/64000` | source `%`; public normalized range `[0,1]`, Reference |
 | `0x202` | `SPEED` | existing out-of-scope candidate | `data[2..3]`, big-endian | `0.01 + 0` | km/h; retained unchanged |
@@ -55,6 +56,24 @@ as `Unavailable`; a strictly newer in-range observation restores validity.
 Wrong DLC, malformed frames, transport faults, and NoData/Unavailable states
 follow the existing engine-data publication contract without CAN polling or
 transmit behavior.
+
+## Brake pressure contract
+
+`BRAKE_PRESSURE` (`0x078`, DLC 8) carries the owner-reported target mapping:
+`raw = ((data[3] & 1) << 16) | (data[4] << 8) | data[5]`, followed by
+`candidate_bar = raw * 0.001 - 40`. Values below 0 bar are invalidated without
+clamping; raw 40,000 is valid zero and raw 131,071 is the 17-bit encoding
+ceiling of 91.071 bar, which is not a vehicle operating limit. The generic
+catalog uses `SignalUnit::None`; consumers interpret the number as bar.
+
+The exact field interpretation is Confirmed only for the owner-reported target
+mapping dated 2026-10-15 ([DBC comment](mazda_custom.dbc#L114)). It carries no
+timing or broader compatibility claim. No pressure freshness timeout is
+inferred, so the default reading is `FreshnessUnverified`; an explicit policy
+timeout can be supplied by an integration. Pressure is decoded alongside the
+existing acceleration axes, but a negative pressure candidate invalidates only
+pressure. Wrong DLC, transport faults, and shared message faults follow the
+existing `0x078` health contract and require a newer valid frame to recover.
 
 ## Acceleration contract
 

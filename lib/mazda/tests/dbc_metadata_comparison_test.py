@@ -38,12 +38,12 @@ class DbcMetadataComparisonTests(unittest.TestCase):
     def test_reviewed_dbc_matches_compiled_supported_metadata(self) -> None:
         failures = compare_mazda_dbc.compare(self.dbc, self.metadata)
         self.assertEqual(failures, [])
-        self.assertEqual(len(self.metadata), 18)
+        self.assertEqual(len(self.metadata), 19)
         self.assertNotIn(("ENGINE_DATA", "SPEED"), self.metadata)
 
     def test_source_dbc_bytes_are_unchanged_reviewed_artifact(self) -> None:
         digest = hashlib.sha256(self.dbc_path.read_bytes()).hexdigest()
-        self.assertEqual(digest, "26e8adcf2791ca3da047fae9404dbcde2c8858d840f0a85c062072223d69f31f")
+        self.assertEqual(digest, "49b638287bd758c3c38660bd1156ff49f6bf2e0e614c46763066418e6bb97b9f")
 
     def test_decoder_start_bit_coordinates_follow_dbc_byte_order(self) -> None:
         # Motorola uses the DBC sawtooth coordinate for its most-significant

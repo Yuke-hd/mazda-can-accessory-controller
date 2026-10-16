@@ -47,7 +47,7 @@ Approved decisions:
   names can be added by the app without becoming protocol requirements.
 - The provider catalog is immutable for the lifetime of the BLE service.
 - At a small MTU, signals refresh across several notifications rather than all
-  22 current signals arriving in every 100 ms slot.
+  23 current signals arriving in every 100 ms slot.
 
 ## Current limitation and proposed solution
 
@@ -309,7 +309,7 @@ crosses a notification boundary.
   With successful queueing, all signals must be attempted within 1.3 s at the
   minimum MTU and maximum supported catalog. After the one-second heartbeat
   threshold, due records must be attempted within another 1.3 s.
-- At MTU 247 the current 22-signal catalog's records occupy 151 bytes plus
+- At MTU 247 the current 23-signal catalog's records occupy 160 bytes plus
   the eight-byte header and fit in one packet. At MTU 64 they require three
   packets. For 64
   Numbers, five nine-byte records fit per packet, requiring 13 packets. These
