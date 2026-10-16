@@ -173,6 +173,7 @@ DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleS
 
   const auto rpm_raw = big_endian_u16(frame.data, 0);
   const auto speed_raw = big_endian_u16(frame.data, 2);
+  const auto accelerator_raw = big_endian_u16(frame.data, 4);
   // The confirmed DBC declares EngineRPM in [0, 8500]. SPEED remains the
   // existing out-of-scope candidate; it has no invalid sentinel and its
   // 16-bit representation is already non-negative.
@@ -204,7 +205,16 @@ DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleS
       state.engine_rpm.update(static_cast<float>(rpm_raw) * 0.25F, frame.timestamp_us);
   const bool speed_updated =
       state.speed_kph.update(static_cast<float>(speed_raw) * 0.01F, frame.timestamp_us);
-  if (rpm_updated || speed_updated) {
+  // The source declares accelerator position as 0..100 percent. Preserve
+  // that source range at the decoder boundary, then publish the normalized
+  // 0..1 value. An out-of-range accelerator field invalidates only its own
+  // retained signal; RPM and SPEED share the frame but remain healthy.
+  const bool accelerator_updated =
+      accelerator_raw > 64000U
+          ? invalidate_signal(state.accelerator_pedal_position, frame.timestamp_us)
+          : state.accelerator_pedal_position.update(static_cast<float>(accelerator_raw) / 64000.0F,
+                                                    frame.timestamp_us);
+  if (rpm_updated || speed_updated || accelerator_updated) {
     if (frame.timestamp_us > state.timestamp_us)
       state.timestamp_us = frame.timestamp_us;
   }

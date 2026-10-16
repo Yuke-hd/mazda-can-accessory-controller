@@ -88,7 +88,7 @@ vehicle_core::RawCanFrame frame(const std::uint32_t identifier,
 // tests; they are generated vectors, not captures.
 // ENGINE_DATA: 0x095b is 598.75 rpm; speed bytes are zero.
 vehicle_core::RawCanFrame engine_frame(const vehicle_core::MonotonicTimestamp timestamp_us) {
-  return frame(candidate::kEngineDataId, timestamp_us, {0x09, 0x5b, 0, 0, 0, 0, 0, 0});
+  return frame(candidate::kEngineDataId, timestamp_us, {0x09, 0x5b, 0, 0, 0x7d, 0, 0, 0});
 }
 
 // TRANSMISSION: selector Drive, actual gear Second.
@@ -246,6 +246,7 @@ constexpr SignalId kAllIds[] = {
     ids::kBrakePressed,
     ids::kAccelerationLongitudinal,
     ids::kAccelerationLateral,
+    ids::kAcceleratorPedalPosition,
 };
 static_assert(std::size(kAllIds) == internal::kSignalCatalogSize);
 
@@ -404,7 +405,7 @@ void test_invalid_and_unknown_ids_are_request_failures() {
   const auto unknown = harness.provider.read(SignalId{99});
   EXPECT(unknown.status == SignalStatus::InvalidSignal);
   EXPECT(!unknown.value.has_value());
-  const auto beyond = harness.provider.read(SignalId{22});
+  const auto beyond = harness.provider.read(SignalId{23});
   EXPECT(beyond.status == SignalStatus::InvalidSignal);
 }
 
@@ -660,6 +661,64 @@ void test_clock_advance_past_freshness_timeout_is_stale() {
   EXPECT(harness.provider.read(ids::kLiftgateOpen).value->availability ==
          Availability::FreshnessUnverified);
   EXPECT(harness.telemetry.stop().ok());
+}
+
+void test_accelerator_position_preserves_availability_and_engine_health() {
+  auto configured = Harness::test_config();
+  configured.freshness.accelerator_pedal_position_timeout_us = 100;
+  Harness harness{configured};
+  EXPECT(harness.telemetry.start().ok());
+
+  const auto metadata = harness.provider.catalog().find("vehicle.accelerator_pedal_position");
+  EXPECT(metadata != nullptr);
+  if (metadata == nullptr)
+    return;
+  EXPECT(metadata->id == ids::kAcceleratorPedalPosition);
+  EXPECT(metadata->type == vehicle_signals::SignalType::Number);
+  EXPECT(metadata->unit == vehicle_signals::SignalUnit::None);
+  EXPECT(metadata->validation == ValidationStatus::Reference);
+
+  auto initial = harness.provider.read(metadata->id);
+  EXPECT(initial.ok());
+  EXPECT(!initial.value->value.has_value());
+  EXPECT(initial.value->availability == Availability::NoData);
+
+  harness.clock.set(100);
+  harness.inject(engine_frame(100));
+  EXPECT(wait_for_value(harness.provider, metadata->id));
+  auto fresh = harness.provider.read(metadata->id);
+  EXPECT(fresh.value->value == SignalValue::number(0.5F));
+  EXPECT(fresh.value->availability == Availability::Fresh);
+  EXPECT(harness.provider.read(ids::kEngineRpm).value->availability ==
+         Availability::FreshnessUnverified);
+
+  harness.clock.set(201);
+  const auto stale = harness.provider.read(metadata->id);
+  EXPECT(stale.value->availability == Availability::Stale);
+  EXPECT(stale.value->value == SignalValue::number(0.5F));
+
+  // A malformed ENGINE_DATA frame faults all of that message's readings,
+  // including accelerator, while unrelated message health is not involved.
+  harness.clock.set(202);
+  harness.inject(frame(candidate::kEngineDataId, 202, {0x09, 0x5b, 0, 0, 0x7d, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
+  EXPECT(harness.provider.read(ids::kEngineRpm).value->availability == Availability::Unavailable);
+  EXPECT(harness.provider.read(ids::kSpeedKph).value->availability == Availability::Unavailable);
+
+  // Recovery is tied to a newer valid observation and restores the configured
+  // freshness state rather than inventing a timeout in the default policy.
+  harness.clock.set(203);
+  harness.inject(engine_frame(203));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Fresh));
+  EXPECT(harness.provider.read(metadata->id).value->value == SignalValue::number(0.5F));
+
+  harness.source.fail();
+  EXPECT(wait_for([&harness] {
+    return harness.telemetry.diagnostics().lifecycle == mazda::LifecycleState::Faulted;
+  }));
+  EXPECT(wait_for_read(harness.provider, metadata->id, Availability::Unavailable));
+  EXPECT(harness.provider.read(metadata->id).value->value == SignalValue::number(0.5F));
+  EXPECT(harness.telemetry.stop().status == mazda::ResultCode::Faulted);
 }
 
 void test_malformed_message_is_unavailable() {
@@ -921,6 +980,7 @@ int main() {
   test_rpm_and_speed_match_typed_polling();
   test_discrete_reads_match_typed_notification_current();
   test_clock_advance_past_freshness_timeout_is_stale();
+  test_accelerator_position_preserves_availability_and_engine_health();
   test_malformed_message_is_unavailable();
   test_transport_fault_is_unavailable_and_restart_clears_samples();
   test_stop_and_restart_clear_old_samples();

@@ -273,6 +273,13 @@ signal catalog manifest at `tools/controller_signal_catalog.json`: signal
 existence, delivery capability, operand type, and enum choice keys must match
 the catalog exposed by the Mazda telemetry provider.
 
+The normalized `vehicle.accelerator_pedal_position` Number/Read signal is
+available to `sampled_state` and `range` rules. Its catalog value is in the
+closed normalized range 0 through 1; profiles should express percentage-based
+thresholds and range inputs in that normalized form. Its `SignalUnit::None`
+metadata is exported as the BLE `none` unit token; replay JSONL renders the
+same unit as JSON `null`.
+
 `vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
 with Boolean equality or inequality conditions in `state`, `event` and
 `sampled_state` rules; numeric ranges and enum choices are invalid. Compiling

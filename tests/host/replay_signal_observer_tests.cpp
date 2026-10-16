@@ -101,7 +101,7 @@ gvret::TimedCanFrame timed_frame(const vehicle_core::MonotonicTimestamp time_us,
 
 // 0x32c8 / 4 = 3250 rpm.
 gvret::TimedCanFrame rpm_3250(const vehicle_core::MonotonicTimestamp time_us) {
-  return timed_frame(time_us, 0x202, {0x32, 0xc8, 0, 0, 0, 0, 0, 0});
+  return timed_frame(time_us, 0x202, {0x32, 0xc8, 0, 0, 0x7d, 0, 0, 0});
 }
 
 gvret::TimedCanFrame left_turn(const vehicle_core::MonotonicTimestamp time_us) {
@@ -484,9 +484,10 @@ TEST_CASE("replay observer receives the production catalog once before any readi
   REQUIRE(result.ok());
   CHECK(observer.catalog_calls() == 1);
   CHECK(observer.catalog_before_readings());
-  CHECK(observer.catalog().size() == 21);
+  CHECK(observer.catalog().size() == 22);
   CHECK(observer.catalog().find("vehicle.engine_rpm") != nullptr);
   CHECK(observer.catalog().find("vehicle.turn_state") != nullptr);
+  CHECK(observer.catalog().find("vehicle.accelerator_pedal_position") != nullptr);
 }
 
 TEST_CASE("replay observer receives a notified turn at its CAN frame time") {
@@ -548,6 +549,13 @@ TEST_CASE("polled signals are sampled at the polled-rule cadence by default") {
   REQUIRE(rpm.front().reading.value.has_value());
   CHECK(*rpm.front().reading.value->as_number() == doctest::Approx(3250.0F));
   CHECK(rpm.front().reading.availability == Availability::FreshnessUnverified);
+
+  const auto accelerator = observer.readings_of("vehicle.accelerator_pedal_position");
+  REQUIRE_FALSE(accelerator.empty());
+  REQUIRE(accelerator.front().reading.value.has_value());
+  CHECK(*accelerator.front().reading.value->as_number() == doctest::Approx(0.5F));
+  CHECK(accelerator.front().metadata->unit == SignalUnit::None);
+  CHECK(accelerator.front().reading.availability == Availability::FreshnessUnverified);
 }
 
 TEST_CASE("the signal sample cadence is configurable") {

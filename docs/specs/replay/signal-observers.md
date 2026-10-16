@@ -34,7 +34,8 @@ Signals reach observers by their catalog capability:
   Every later notification arrives when the frame, the end of stream, or the
   availability timeout that caused it is processed.
 - **Polled signals** (readable but not notified, for example
-  `vehicle.engine_rpm` and `vehicle.speed_kph`) are read on a replay-time signal
+  `vehicle.engine_rpm`, `vehicle.speed_kph`, and
+  `vehicle.accelerator_pedal_position`) are read on a replay-time signal
   sample event, in catalog order. The cadence is
   `ReplayScheduleOptions::signal_sample_period_us` and defaults to the polled
   rule cadence (`poll_period_us`). The first sample is at time zero. A zero
@@ -72,7 +73,7 @@ observer that writes one record per reading:
 | `timestamp_us` | Replay-relative time of the reading.                                                                     |
 | `signal`       | Catalog key, JSON-escaped.                                                                               |
 | `value`        | `true`/`false`, a shortest round-trip number, the enum choice key, or the raw number for an unknown enum value. `null` without a value or for a non-finite number. |
-| `unit`         | `"rpm"`, `"km/h"`, `"m/s^2"` or `null`.                                                                             |
+| `unit`         | `"rpm"`, `"km/h"`, `"m/s^2"` or `null`; normalized accelerator position uses `null` because its catalog unit is `None`. |
 | `freshness`    | `"fresh"`, `"stale"` or `"unverified"`; `null` when the reading has no freshness (`no_data`, `unavailable`). |
 | `availability` | `no_data`, `fresh`, `stale`, `freshness_unverified` or `unavailable`.                                    |
 | `validation`   | `reference`, `observed` or `confirmed`.                                                                  |

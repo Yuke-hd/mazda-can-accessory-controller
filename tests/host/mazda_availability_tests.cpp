@@ -77,7 +77,7 @@ TEST_CASE("message watermark rejects old and conflicting data and requires newer
   vehicle_core::HealthObservation health{};
   health.transport = vehicle_core::TransportHealth::Live;
 
-  const auto first = frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x01, 0, 0, 0, 0, 0, 0});
+  const auto first = frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x01, 0, 0, 0x7d, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(first, state, nullptr, &health) ==
           mazda::candidate::DecodeStatus::Decoded);
   CHECK(health.message == vehicle_core::MessageHealth::Healthy);
@@ -87,6 +87,8 @@ TEST_CASE("message watermark rejects old and conflicting data and requires newer
   CHECK(health.last_accepted_us == 100);
   CHECK_FALSE(health.fault_timestamp_us.has_value());
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 100);
 
   const auto duplicate = first;
   vehicle_core::HealthObservation duplicate_health{};
@@ -97,20 +99,26 @@ TEST_CASE("message watermark rejects old and conflicting data and requires newer
   CHECK(duplicate_health.signal == vehicle_core::SignalHealth::Available);
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
   CHECK(state.engine_rpm.last_update_us == 100);
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 100);
 
   const auto conflicting =
-      frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x02, 0, 0, 0, 0, 0, 0});
+      frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x02, 0, 0, 0xfa, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(conflicting, state) ==
           mazda::candidate::DecodeStatus::Decoded);
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
   CHECK(state.health_observation(mazda::candidate::kEngineDataId).message ==
         vehicle_core::MessageHealth::Healthy);
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 100);
 
-  const auto old = frame(mazda::candidate::kEngineDataId, 99, {0x00, 0x03, 0, 0, 0, 0, 0, 0});
+  const auto old = frame(mazda::candidate::kEngineDataId, 99, {0x00, 0x03, 0, 0, 0x00, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(old, state) ==
           mazda::candidate::DecodeStatus::Decoded);
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
   CHECK(state.engine_rpm.last_update_us == 100);
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
+  CHECK(state.accelerator_pedal_position.last_update_us == 100);
 
   const auto malformed_equal =
       frame(mazda::candidate::kEngineDataId, 100, {0x84, 0xd1, 0, 0, 0, 0, 0, 0});
@@ -121,6 +129,7 @@ TEST_CASE("message watermark rejects old and conflicting data and requires newer
   CHECK(health.message == vehicle_core::MessageHealth::Healthy);
   CHECK_FALSE(health.fault_timestamp_us.has_value());
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
 
   const auto malformed =
       frame(mazda::candidate::kEngineDataId, 101, {0x84, 0xd1, 0, 0, 0, 0, 0, 0});
@@ -131,25 +140,28 @@ TEST_CASE("message watermark rejects old and conflicting data and requires newer
 
   // Equal-time and older valid observations cannot clear a newer fault.
   const auto equal_valid =
-      frame(mazda::candidate::kEngineDataId, 101, {0x00, 0x04, 0, 0, 0, 0, 0, 0});
+      frame(mazda::candidate::kEngineDataId, 101, {0x00, 0x04, 0, 0, 0xfa, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(equal_valid, state) ==
           mazda::candidate::DecodeStatus::Decoded);
   const auto older_valid =
-      frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x05, 0, 0, 0, 0, 0, 0});
+      frame(mazda::candidate::kEngineDataId, 100, {0x00, 0x05, 0, 0, 0x00, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(older_valid, state) ==
           mazda::candidate::DecodeStatus::Decoded);
   CHECK(state.health_observation(mazda::candidate::kEngineDataId).message ==
         vehicle_core::MessageHealth::Faulted);
   CHECK(state.engine_rpm.value == doctest::Approx(0.25F));
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.5F));
 
   const auto recovered =
-      frame(mazda::candidate::kEngineDataId, 102, {0x00, 0x04, 0, 0, 0, 0, 0, 0});
+      frame(mazda::candidate::kEngineDataId, 102, {0x00, 0x04, 0, 0, 0x00, 0, 0, 0});
   REQUIRE(mazda::candidate::decode_engine_data(recovered, state, nullptr, &health) ==
           mazda::candidate::DecodeStatus::Decoded);
   CHECK(health.message == vehicle_core::MessageHealth::Healthy);
   CHECK_FALSE(health.fault_timestamp_us.has_value());
   CHECK(health.last_accepted_us == 102);
   CHECK(state.engine_rpm.value == doctest::Approx(1.0F));
+  CHECK(state.accelerator_pedal_position.value == doctest::Approx(0.0F));
+  CHECK(state.accelerator_pedal_position.is_valid());
 }
 
 TEST_CASE("equal-time idempotent decoder frames preserve health without semantic updates") {
