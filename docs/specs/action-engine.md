@@ -248,4 +248,5 @@ notified, and share one capacity of 8 (`ActionEngine::kMaxPolledRules`).
 
 The local LED action sink is specified in
 [local-led-actions.md](lighting/local-led-actions.md). WLED transport is
-outside the action engine contract.
+outside the action engine contract; the planned WLED sink is specified in
+[wled-actions.md](lighting/wled-actions.md).
