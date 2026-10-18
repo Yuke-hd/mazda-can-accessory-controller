@@ -34,7 +34,7 @@ at commit `0865d397b931602d10bc740aa135b3a2c782340a` (upstream commit date
 | microSD SCLK | 14 | Input until a storage driver owns it |
 | microSD CS | 13 | Input until a storage driver owns it |
 | Onboard WS2812 status pixel | 4 | Output low; one pixel |
-| Vehicle WS2812B strip data | 16 | Output low; 100-pixel strip |
+| Vehicle WS2812B strip data | 16 | Output low; up to 300 pixels, 100 by default |
 | VIN sense | 36 | Input-only |
 | User key | 0 | Input |
 
@@ -47,6 +47,29 @@ The CA-IS2062A is always powered. This board has no software-controllable CAN
 power, standby, speed-select, or boost pin, and the shared vehicle components
 must not expose an API for one. `initialize_safe_defaults()` only establishes
 safe GPIO direction and levels; it does not switch transceiver power.
+
+### Vehicle LED strip length
+
+The board maximum for the GPIO16 strip is 300 pixels
+(`kVehicleLightStripPixelCount`). The user sets the attached length, from 100
+to 300, with `sinks.local_argb.pixel_count`; the default is 100. See
+[ADR-0007](../../decisions/0007-configurable-strip-length.md) and the
+[controller configuration](../../specs/configuration/controller-config.md#sink-settings).
+Startup black, fail-off black and the black written before a restart must
+cover all 300 pixels at any configured length.
+[#289](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/289)
+and [#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291)
+implement this; until they merge, the firmware drives a fixed 100-pixel
+strip.
+
+Only the 100-pixel length is the reviewed configuration. Lengths above 100 are
+**unverified** and not supported for vehicle use until a reviewed power
+measurement records, at the configured length and the renderer's brightness
+ceiling, the strip supply current, the voltage at the far end of the strip
+and the supply wiring and fuse used. The same review must record the
+full-length refresh time against the driver hang watchdog
+(`kDriverHangRestartUs`). Host tests and a firmware build establish none of
+these.
 
 ### SPI flash
 
@@ -73,9 +96,12 @@ Before connecting to a vehicle:
 4. Confirm the GPIO4 and GPIO16 data lines remain low at reset and startup. This prevents new
    command pulses but does not clear a color latched across a warm reset or
    failure. Sending an RMT-encoded black frame is required to clear the physical
-   pixel; the #16 `local_argb` owner sends it before CAN startup.
+   pixel; the #16 `local_argb` owner sends it before CAN startup. Under
+   ADR-0007 that frame must cover the full 300-pixel maximum.
 5. Build only `weact_can485_v11_vehicle_listen_only` for vehicle use and confirm
    `TWAI_MODE_LISTEN_ONLY` with a zero-length TX queue.
+6. Use a strip length above 100 pixels only after the power measurement in
+   [Vehicle LED strip length](#vehicle-led-strip-length) is reviewed.
 
 Native USB serial logs through the CH343P may be retained as auxiliary startup
 and counter evidence. Logs are not proof of electrical no-ACK behavior and

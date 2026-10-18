@@ -30,12 +30,16 @@ Owner-confirmed decisions:
 - Each firmware project passes its own board values to the generator.
 - Generated files are produced during the build, as the factory configuration
   is, and are not checked in.
+- A sink may declare settings, such as the LED strip length, which the
+  catalog publishes beside its output types
+  ([ADR-0007](../../decisions/0007-configurable-strip-length.md)).
 
 ## Scope
 
 In scope:
 
-- a per-sink YAML descriptor and the descriptor for the `local_argb` sink;
+- a per-sink YAML descriptor and the descriptor for the `local_argb` sink,
+  including its `pixel_count` setting;
 - a generator that emits the catalog document and a C++ limits header;
 - the configuration loader, validator and YAML compiler consuming the
   generated facts;
@@ -51,8 +55,8 @@ Out of scope:
   [rollout rule](#implementation-plan) applies to it as well;
 - rules, actions, signals and capacities in the catalog;
 - a relay or other non-LED sink, and builds without the LED sink;
-- moving `local_argb::kLedCount` from a global constant to a board value;
-- changing the persisted configuration schema.
+- persisted configuration changes other than the optional
+  `sinks.local_argb.pixel_count` that ADR-0007 adds.
 
 ## Rule for catalog content
 
@@ -66,7 +70,8 @@ description of what the firmware accepts, and keeps it small.
 | Field names, kinds and whether they are required. | Duplicate-target rules between bindings. |
 | Integer ranges and defaults. | Labels, descriptions, units, icons or ordering hints. |
 | Enum values, such as effect names and zone directions. | Rendering behaviour, such as priority tie-breaking. |
-| Zone pixel count and colour channel range. | Signal, rule or action definitions. |
+| Zone pixel bound, the setting that bounds it, and colour channel range. | Signal, rule or action definitions. |
+| Sink settings, with their ranges and defaults. | Board pins, timing and other compile-time settings. |
 | Rule types that may drive a binding. | Vehicle or timing evidence. |
 
 The app shows display names derived from the snake_case keys, or its own
@@ -77,11 +82,17 @@ curated names keyed by them. Curated names are not protocol requirements.
 Each sink component that contributes output types owns one descriptor,
 `output_catalog.yaml`, at the component root. The first descriptor is
 `components/local_argb_actions/output_catalog.yaml`, beside the adapter that
-installs the bindings.
+installs the bindings. The example below is the descriptor after
+[#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291);
+until then it has no `settings` or `pixels_setting`, and its board value is
+`strip_pixels`.
 
 ```yaml
 descriptor_format: 1
 sink: local_argb
+settings:
+  - {name: pixel_count, kind: integer, required: false,
+     min: 100, max: {board: strip_max_pixels}, default: 100}
 outputs:
   - type: led_effect
     fields:
@@ -94,7 +105,7 @@ outputs:
     fields:
       - *action
       - &zone {name: zone, kind: zone, required: true,
-               pixels: {board: strip_pixels},
+               pixels: {board: strip_max_pixels}, pixels_setting: pixel_count,
                directions: [start_to_end, end_to_start, center_out]}
       - &color {name: color, kind: rgb, required: true, min: 0, max: 255}
       - *priority
@@ -113,12 +124,17 @@ outputs:
 Descriptor rules:
 
 - `descriptor_format` is `1`. The generator rejects any other value.
-- `sink` and every `type`, field `name`, enum value and rule type are
+- `settings` is optional. Each entry is a field of kind `integer`, the only
+  kind with a `default`, stored in the configuration at `sinks.<sink>.<name>`. A setting must have
+  `required: false` and a `default`, so a document that omits it keeps its
+  meaning.
+- `sink` and every `type`, field and setting `name`, enum value and rule type are
   snake_case ASCII (`[a-z][a-z0-9_]*`), at most 31 bytes.
 - `rule_types` is optional. When present, only an action driven exclusively by
   those rule types may be bound. Absent means any rule type.
 - Field kinds and their attributes are listed in [Field kinds](#field-kinds).
-  Each kind's attributes are all required, except `default`.
+  Each kind's attributes are all required, except `default` and
+  `pixels_setting`.
 - An integer attribute may be a literal or `{board: <name>}`. The generator
   replaces a board reference with the value the firmware project passes. An
   unresolved reference is an error.
@@ -139,7 +155,12 @@ document; see [Compatibility](#compatibility).
 | `integer` | `min`, `max`, optional `default` | A JSON number with an integral value from `min` to `max` inclusive. The loader accepts `100.0` as `100`, except that `duration_ms` must be an integer token. |
 | `enum` | `values` (1–32 entries) | One of `values`. |
 | `rgb` | `min`, `max` | `{red, green, blue}`, each an integer from `min` to `max`. |
-| `zone` | `pixels`, `directions` (1–32 entries) | `{start, length, direction}` with `start >= 0`, `length >= 1`, `start + length <= pixels`, and `direction` one of `directions`. |
+| `zone` | `pixels`, optional `pixels_setting`, `directions` (1–32 entries) | `{start, length, direction}` with `start >= 0`, `length >= 1`, `start + length <= pixels`, and `direction` one of `directions`. With `pixels_setting`, also `start + length` at most the value of that setting in the same document, or its default when omitted. |
+
+`pixels` is the board maximum. `pixels_setting` names an `integer` setting of
+the same sink whose `max` is at most `pixels`; any other name is an error. The
+app checks a zone against the setting's value in the document it is editing,
+so a zone and a shorter strip length are never both accepted.
 
 `min <= max` for every range. Integer attributes are signed and fit in
 `int32`.
@@ -153,7 +174,7 @@ requires for the factory configuration.
 ```sh
 python3 tools/generate_output_catalog.py \
   --descriptor components/local_argb_actions/output_catalog.yaml \
-  --board strip_pixels=100 \
+  --board strip_max_pixels=300 \
   --catalog <build>/output_catalog.json \
   --limits-header <build>/generated/controller_config/generated/output_limits.hpp
 ```
@@ -181,11 +202,15 @@ the same file.
 {"outputs":[{"type":"led_solid","sink":"local_argb","rule_types":["state","sampled_state"],"fields":[{"name":"action","kind":"action","required":true}]}]}
 ```
 
-- Top level: `outputs`, an array of output entries.
+- Top level: `outputs`, an array of output entries, then `sinks` when any
+  descriptor has `settings`.
+- Sink entry: `sink`, then `settings`, an array of fields in descriptor order.
+  Sinks keep descriptor order.
 - Output entry: `type`, `sink`, `rule_types` when the descriptor has it, then
   `fields`.
 - Field: `name`, `kind`, `required`, then the kind's attributes in the order of
-  the [Field kinds](#field-kinds) table, with `default` last.
+  the [Field kinds](#field-kinds) table, with `default` last. An absent
+  `pixels_setting` is omitted.
 - Board references are resolved; the document contains only literals.
 - `{"outputs":[]}` is a valid document for a build with no output sinks.
 
@@ -203,8 +228,15 @@ namespace controller_config::generated {
 inline constexpr std::array<std::string_view, 4> kOutputTypeNames{
     "led_effect", "led_fill", "led_transient", "led_solid"};
 
+namespace local_argb_settings {
+inline constexpr std::int32_t kPixelCountMin = 100;
+inline constexpr std::int32_t kPixelCountMax = 300;
+inline constexpr std::int32_t kPixelCountDefault = 100;
+} // namespace local_argb_settings
+
 namespace led_transient {
-inline constexpr std::int32_t kZonePixels = 100;
+inline constexpr std::int32_t kZonePixels = 300;
+inline constexpr std::string_view kZonePixelsSetting = "pixel_count";
 inline constexpr std::array<std::string_view, 3> kZoneDirections{
     "start_to_end", "end_to_start", "center_out"};
 inline constexpr std::int32_t kColorMin = 0;
@@ -219,9 +251,12 @@ inline constexpr std::int32_t kPriorityDefault = 100;
 } // namespace controller_config::generated
 ```
 
-- One namespace per output type, named after the type.
+- One namespace per output type, named after the type, and one per sink with
+  settings, named `<sink>_settings`. An output type with that name is an
+  error.
 - Constants are `k` + PascalCase field name + PascalCase attribute: `Min`,
-  `Max`, `Default`, `Values`, `Pixels`, `Directions`.
+  `Max`, `Default`, `Values`, `Pixels`, `PixelsSetting`, `Directions`.
+  Setting constants use the setting name in place of the field name.
 - An output with `rule_types` gets `kRuleTypes`.
 - The header includes only `<array>`, `<cstdint>` and `<string_view>`.
 
@@ -231,7 +266,11 @@ validation logic. Compile-time checks in `controller_config` tie the generated
 values to the renderer contract, so a mismatched board value or descriptor
 fails the build:
 
-- every `kZonePixels` equals `local_argb::kLedCount`;
+- every `kZonePixels` and `local_argb_settings::kPixelCountMax` equal
+  `local_argb::kMaxLedCount`;
+- `local_argb_settings::kPixelCountDefault` equals
+  `local_argb::kDefaultLedCount`, and `kPixelCountMin` is at least the
+  factory layout's width (35 + 30 + 35);
 - `led_transient::kDurationMsMax * 1000` equals
   `local_argb::internal::kMaxTransientDurationUs`;
 - every `kPriorityDefault` equals `local_argb::internal::EffectPriority::kDefault`;
@@ -253,14 +292,14 @@ factory configuration in `firmware/weact-can485-v1.1/CMakeLists.txt`:
 
 - `firmware/weact-can485-v1.1/output_catalog.cmake` sets
   `OUTPUT_CATALOG_DESCRIPTORS` and `OUTPUT_CATALOG_BOARD` for that board
-  (`strip_pixels=100`). The firmware project and the host build both include
+  (`strip_max_pixels=300`). The firmware project and the host build both include
   it, so host tests compile the same header the firmware uses.
 - A configure-time run makes a malformed descriptor fail configuration
   immediately. The build rule regenerates when a descriptor, the board file or
   the generator changes.
 - The catalog is generated before the factory configuration is compiled.
   `tools/compile_controller_config.py` takes `--output-catalog <json>` and
-  reads the pixel count, names and ranges from it. It drops `PIXEL_COUNT` and
+  reads the pixel bound, the `pixel_count` setting, names and ranges from it. It drops `PIXEL_COUNT` and
   its regular-expression read of `lighting_sink.hpp`.
 - `controller_config` adds the generated include directory and depends on the
   generation target.
@@ -367,6 +406,7 @@ model tolerant; the rules below assume it.
 | New output type, field or enum value | Content only. No version changes. Apps with the tolerant model show what they cannot edit read-only. Apps without it fail to decode a configuration that uses the new value; see the rollout rule. |
 | New field kind | Content only. Apps with the tolerant model show the affected types read-only. |
 | New attribute on a known kind | Content only, if optional. A new required attribute needs a catalog format change. |
+| New sink setting | Content only. An optional setting with a default adds no persisted schema version. Apps with the tolerant model keep it on write-back. |
 | Changed meaning of an existing key or attribute | Catalog format change. |
 | Page header change | Catalog format change. |
 | Persisted configuration change | Configuration schema version change, as today. |
@@ -446,8 +486,8 @@ establish them.
   from a descriptor; keep the validator authoritative; fail the build on any
   descriptor error; preserve receive-only CAN and fail-off behaviour.
 - **Ask first:** put a fact in the catalog that the validator does not check;
-  change the persisted schema; raise a published limit; move `kLedCount` to a
-  board value; add a dependency; flash or interact with hardware.
+  change the persisted schema; raise a published limit, including the
+  300-pixel strip maximum; add a dependency; flash or interact with hardware.
 - **Never:** check generated files in; generate parsing, validation or
   rendering logic; let a catalog read change configuration, storage or
   lighting; serve a partial catalog.
@@ -481,12 +521,19 @@ Stacked pull requests, one per ticket. Tracked by
 | 5 ([#284](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/284)) | Static document page encoder and selector, by generalising `SignalCatalogSelector` over a page source and format or adding a sibling, with synthetic vectors and selector tests. | 1 | `lib/companion_protocol/`, `tests/host/` |
 | 6 ([#285](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/285)) | Characteristic `0008`, `ServiceInputs` field, connection token owned by `companion_ble`, Device info bit 1, protocol minor 2, firmware embed. | 2, 5 | `components/companion_ble/`, `lib/companion_protocol/` (Device info), `firmware/.../main/` |
 | 7 ([esp-can-companion#82](https://github.com/Yuke-hd/esp-can-companion/issues/82)) | iOS tolerant configuration model: keep unknown output types, effects, enum values and keys as raw JSON, and write them back unchanged. | — | `Yuke-hd/esp-can-companion` (`CompanionProtocol` configuration model) |
-| 8 ([esp-can-companion#83](https://github.com/Yuke-hd/esp-can-companion/issues/83)) | iOS output catalog client and generic form renderer: characteristic `0008` in the BLE transport, paged download reusing the signal catalog client, and catalog-driven forms. | 1 for vectors, 6 for devices, 7 | `Yuke-hd/esp-can-companion` |
+| 8 ([esp-can-companion#83](https://github.com/Yuke-hd/esp-can-companion/issues/83)) | iOS output catalog client and generic form renderer: characteristic `0008` in the BLE transport, paged download reusing the signal catalog client, and catalog-driven forms, including sink settings and setting-bounded zones. | 1 for vectors, 6 for devices, 7 | `Yuke-hd/esp-can-companion` |
+| 9 ([#288](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/288)) | Docs: ADR-0007, the sink setting in this spec and the configuration spec, hardware record. | — | `docs/` |
+| 10 ([#289](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/289)) | Renderer: 300-pixel buffer, `kDefaultLedCount`, `std::uint16_t` board pixel counts, static frames, full-length black frames, end-anchored layout. Output unchanged at 100 pixels. | — | `components/local_argb/`, board headers, `tests/host/` |
+| 11 ([#290](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/290)) | Generator: sink `settings` and `pixels_setting`, with tests. Output for today's descriptor unchanged. | 2, 9 | `tools/`, `tests/tools/` |
+| 12 ([#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291)) | Runtime strip length: loader, validator, YAML compiler, descriptor setting, `strip_max_pixels=300`, renderer length after restart; replaces the reference vector. | 3, 4, 9, 10, 11 | `components/`, `tools/`, `firmware/.../output_catalog.cmake`, `tests/` |
 
 Tickets 3, 4 and 5 can run in parallel once their dependencies merge. Their
 source files are separate, but all three are likely to edit
-`tests/host/CMakeLists.txt`, so the later ones rebase onto the earlier. Ticket 7 does not depend on the catalog and can start
-at any time.
+`tests/host/CMakeLists.txt`, so the later ones rebase onto the earlier.
+Ticket 7 does not depend on the catalog and can start at any time. Ticket 10
+can run beside them; it and ticket 3 both touch the `kZonePixels` check, and
+whichever lands second compares it with `local_argb::kDefaultLedCount` until
+ticket 12 moves it to `kMaxLedCount`.
 
 There is no generic output editor in the iOS app to replace. Setup today
 edits only the zone, colour and priority of the existing `rpm_fill`,
@@ -504,14 +551,24 @@ model. Tickets 1–6 add no new content and are safe to ship first.
 
 ## Synthetic reference vectors
 
-The WeAct CAN485 V1.1 catalog, generated from the descriptor above with
-`strip_pixels=100`, is these 1518 bytes, on one line:
+The current WeAct CAN485 V1.1 catalog, generated from the descriptor
+without its `settings` and `pixels_setting` and with `strip_pixels=100`, is
+these 1518 bytes, on one line. The generator tests read this block, the
+first after this heading:
 
 ```json
 {"outputs":[{"type":"led_effect","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"effect","kind":"enum","required":true,"values":["left_turn","right_turn","brake"]},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_fill","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_transient","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"duration_ms","kind":"integer","required":true,"min":1,"max":5000},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_solid","sink":"local_argb","rule_types":["state","sampled_state"],"fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]}]}
 ```
 
-Page vectors use token `0x01020304`:
+After ticket 12, the descriptor above with `strip_max_pixels=300` generates
+these 1747 bytes. Ticket 12 makes this the first block, removes the one
+above, and updates the page vectors to its length:
+
+```json
+{"outputs":[{"type":"led_effect","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"effect","kind":"enum","required":true,"values":["left_turn","right_turn","brake"]},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_fill","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_transient","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"duration_ms","kind":"integer","required":true,"min":1,"max":5000},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_solid","sink":"local_argb","rule_types":["state","sampled_state"],"fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]}],"sinks":[{"sink":"local_argb","settings":[{"name":"pixel_count","kind":"integer","required":false,"min":100,"max":300,"default":100}]}]}
+```
+
+Page vectors use token `0x01020304` and the current document:
 
 | Vector | Bytes (hex) |
 | --- | --- |
