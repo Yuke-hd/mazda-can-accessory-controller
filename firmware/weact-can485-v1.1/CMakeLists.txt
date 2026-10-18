@@ -30,6 +30,14 @@ if(EXISTS "${VEHICLE_CAN_CORE_SOURCE_DIR}/components/vehicle_core")
        "${VEHICLE_CAN_CORE_SOURCE_DIR}/components/vehicle_telemetry")
 endif()
 
+# Generate the output catalog and limits header from the sink descriptors
+# selected by this board's output_catalog.cmake. A malformed descriptor fails
+# configuration; the build rule regenerates when an input changes.
+include("${CMAKE_CURRENT_LIST_DIR}/../../tools/output_catalog.cmake")
+output_catalog_generate(
+  BOARD_FILE "${CMAKE_CURRENT_LIST_DIR}/output_catalog.cmake"
+  OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/output_catalog")
+
 # Compile the repository's authoring document before ESP-IDF discovers the
 # controller_config component. The configure-time invocation makes malformed
 # YAML fail the firmware configure immediately; the matching build rule keeps

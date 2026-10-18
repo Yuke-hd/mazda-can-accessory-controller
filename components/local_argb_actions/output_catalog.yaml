@@ -1,0 +1,31 @@
+# Output types the local_argb sink accepts, for the generated output catalog
+# and limits header. Format: docs/specs/companion/output-catalog.md. Every
+# fact here must be one the configuration validator enforces.
+descriptor_format: 1
+sink: local_argb
+outputs:
+  - type: led_effect
+    fields:
+      - &action {name: action, kind: action, required: true}
+      - {name: effect, kind: enum, required: true,
+         values: [left_turn, right_turn, brake]}
+      - &priority {name: priority, kind: integer, required: false,
+                   min: 0, max: 255, default: 100}
+  - type: led_fill
+    fields:
+      - *action
+      - &zone {name: zone, kind: zone, required: true,
+               pixels: {board: strip_pixels},
+               directions: [start_to_end, end_to_start, center_out]}
+      - &color {name: color, kind: rgb, required: true, min: 0, max: 255}
+      - *priority
+  - type: led_transient
+    fields:
+      - *action
+      - *zone
+      - *color
+      - {name: duration_ms, kind: integer, required: true, min: 1, max: 5000}
+      - *priority
+  - type: led_solid
+    rule_types: [state, sampled_state]
+    fields: [*action, *zone, *color, *priority]

@@ -57,6 +57,13 @@ option(MAZDA_BUILD_HOST_TESTS "Build Mazda accessory host tests" ${BUILD_TESTING
 option(MAZDA_ENABLE_DECODER_CALL_PROBING
        "Compile host-only decoder routing call-count probes" OFF)
 
+# Output catalog and limits header for the WeAct board, generated from the
+# sink descriptors. Host tests compile the same header as the firmware.
+include(tools/output_catalog.cmake)
+output_catalog_generate(
+  BOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/firmware/weact-can485-v1.1/output_catalog.cmake"
+  OUTPUT_DIR "${CMAKE_BINARY_DIR}/output_catalog")
+
 add_subdirectory(lib/mazda)
 add_subdirectory(lib/gvret)
 add_subdirectory(lib/vehicle_lighting_policy)
