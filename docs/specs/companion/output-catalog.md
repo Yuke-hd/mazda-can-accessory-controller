@@ -136,7 +136,7 @@ document; see [Compatibility](#compatibility).
 | Kind | Attributes | Accepted value in the configuration |
 | --- | --- | --- |
 | `action` | none | A string naming a declared action. |
-| `integer` | `min`, `max`, optional `default` | A JSON integer token from `min` to `max` inclusive. |
+| `integer` | `min`, `max`, optional `default` | A JSON number with an integral value from `min` to `max` inclusive. The loader accepts `100.0` as `100`, except that `duration_ms` must be an integer token. |
 | `enum` | `values` (1–32 entries) | One of `values`. |
 | `rgb` | `min`, `max` | `{red, green, blue}`, each an integer from `min` to `max`. |
 | `zone` | `pixels`, `directions` (1–32 entries) | `{start, length, direction}` with `start >= 0`, `length >= 1`, `start + length <= pixels`, and `direction` one of `directions`. |
@@ -234,10 +234,17 @@ fails the build:
 - every `kZonePixels` equals `local_argb::kLedCount`;
 - `led_transient::kDurationMsMax * 1000` equals
   `local_argb::internal::kMaxTransientDurationUs`;
-- every `kPriorityDefault` equals `local_argb::internal::EffectPriority::kDefault`.
+- every `kPriorityDefault` equals `local_argb::internal::EffectPriority::kDefault`;
+- every colour and priority `Min` and `Max` fits the renderer's
+  `std::uint8_t` storage in `local_argb/lighting_sink.hpp`.
 
-A host test checks that the persisted name tables in `names.cpp` list exactly
-the generated output type, effect and direction names, in any order.
+Host tests check that:
+
+- the persisted name tables in `names.cpp` list exactly the generated output
+  type, effect and direction names, in any order;
+- every generated `kRuleTypes` list matches the rule types that the
+  hand-written validator accepts for that output type, for example
+  `led_solid` accepting only `state` and `sampled_state`.
 
 ### Build integration
 
@@ -288,9 +295,13 @@ grammar, with its own selector state and its own format constant:
   `InvalidState` (`0x83`); offset beyond the document `InvalidPdu` (`0x80`).
   Offset equal to `total_bytes` returns an empty terminal page. A failed write
   leaves the selection unchanged.
-- The token is the connection's discovery token: the same nonzero value that
-  the signal catalog serves on that connection. It changes on every new
-  connection in a firmware run.
+- The token is the connection's discovery token. `companion_ble` issues it
+  when a connection opens, whether or not either catalog is usable. It is
+  nonzero and changes on every new connection in a firmware run. When the
+  signal catalog is usable, it serves the same value on that connection.
+  The token counter moves out of the signal catalog characteristic into
+  `companion_ble`; the signal catalog's observable behaviour does not change.
+  Bit 1 therefore does not depend on bit 0.
 - The initial Read on a connection selects offset zero. The selector resets
   on disconnect. A selected page stays byte-stable across Read Blob requests.
 - Reads and writes have no configuration, storage, CAN or lighting side
@@ -306,6 +317,11 @@ is usable. It is set when the build passed a document of 1 to 16384 bytes;
 an empty catalog document (`{"outputs":[]}`) still sets it. When the bit is
 clear, the characteristic behaves as an unusable signal catalog does.
 `extension_version` stays `1`. Bit 0 keeps its meaning.
+
+Protocol 1.2 firmware always appends `extension_version` and
+`extension_flags` and reports `protocol_minor` `2`, whichever flag bits are
+set. This replaces today's rule, in which minor `0` or `1` follows whether the
+extension bytes are present.
 
 `extension_version` must not change for this feature. Released iOS and Android
 apps enable extensible live signals only when `extension_version` equals `1`
@@ -408,15 +424,16 @@ Tests must cover:
    descriptors, unresolved and unused board values, deterministic bytes, and
    no output on error.
 2. The generated WeAct document equals the reference vector byte for byte.
-3. Compile-time parity with the renderer constants, and the `names.cpp`
-   parity test.
+3. Compile-time parity with the renderer constants, the `names.cpp` parity
+   test and the `kRuleTypes` parity test.
 4. Existing configuration loader, validator and YAML compiler tests pass
    unchanged, and the factory configuration output is byte-identical before
    and after the compiler switch.
 5. Paging at offsets 0, 200, the last page and `total_bytes`, plus every
    selector error in order, wrong tokens across reconnect, and an unusable
-   catalog.
-6. Device info bit 1 set and clear, and protocol minor 2.
+   catalog, all through the host-testable selector in `companion_protocol`.
+6. Device info bit 1 set and clear, with bit 0 set and clear, a nonzero
+   token when only bit 1 is set, and protocol minor 2 in every case.
 7. The architecture check proves `companion_ble` gained no dependency.
 
 Phone discovery, Service Changed after upgrade and on-device paging need a
@@ -459,15 +476,16 @@ Stacked pull requests, one per ticket. Tracked by
 | --- | --- | --- | --- |
 | 1 ([#280](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/280)) | Docs: ADR-0006, this spec, BLE protocol 1.2 updates. | — | `docs/` |
 | 2 ([#281](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/281)) | Generator, LED descriptor, board file, CMake generation targets for host and firmware (outputs not yet consumed), generator tests. | 1 | `tools/`, `components/local_argb_actions/`, `firmware/.../output_catalog.cmake`, CMake, `tests/tools/` |
-| 3 ([#282](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/282)) | `controller_config` uses the generated header; parity checks and `names.cpp` test. | 2 | `components/controller_config/`, `tests/host/` |
-| 4 ([#283](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/283)) | YAML compiler reads the generated catalog; factory build guard updated. | 2 | `tools/compile_controller_config.py`, firmware CMake compiler arguments, `tests/tools/` |
-| 5 ([#284](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/284)) | Static document page encoder with synthetic vectors. | 1 | `lib/companion_protocol/`, `tests/host/` |
-| 6 ([#285](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/285)) | Characteristic `0008`, `ServiceInputs` field, Device info bit 1, protocol 1.2, firmware embed. | 2, 5 | `components/companion_ble/`, `firmware/.../main/` |
+| 3 ([#282](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/282)) | `controller_config` uses the generated header; compile-time parity checks, `names.cpp` and `kRuleTypes` parity tests. | 2 | `components/controller_config/`, `tests/host/` |
+| 4 ([#283](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/283)) | YAML compiler reads the generated catalog; factory build guard updated; `lighting_sink.hpp` configure and build dependencies replaced by the catalog. | 2 | `tools/compile_controller_config.py`, `firmware/weact-can485-v1.1/CMakeLists.txt`, `tests/host/CMakeLists.txt`, `tests/tools/` |
+| 5 ([#284](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/284)) | Static document page encoder and selector, by generalising `SignalCatalogSelector` over a page source and format or adding a sibling, with synthetic vectors and selector tests. | 1 | `lib/companion_protocol/`, `tests/host/` |
+| 6 ([#285](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/285)) | Characteristic `0008`, `ServiceInputs` field, connection token owned by `companion_ble`, Device info bit 1, protocol minor 2, firmware embed. | 2, 5 | `components/companion_ble/`, `lib/companion_protocol/` (Device info), `firmware/.../main/` |
 | 7 ([esp-can-companion#82](https://github.com/Yuke-hd/esp-can-companion/issues/82)) | iOS tolerant configuration model: keep unknown output types, effects, enum values and keys as raw JSON, and write them back unchanged. | — | `Yuke-hd/esp-can-companion` (`CompanionProtocol` configuration model) |
 | 8 ([esp-can-companion#83](https://github.com/Yuke-hd/esp-can-companion/issues/83)) | iOS output catalog client and generic form renderer: characteristic `0008` in the BLE transport, paged download reusing the signal catalog client, and catalog-driven forms. | 1 for vectors, 6 for devices, 7 | `Yuke-hd/esp-can-companion` |
 
-Tickets 3, 4 and 5 can run in parallel once their dependencies merge; they
-touch separate files. Ticket 7 does not depend on the catalog and can start
+Tickets 3, 4 and 5 can run in parallel once their dependencies merge. Their
+source files are separate, but all three are likely to edit
+`tests/host/CMakeLists.txt`, so the later ones rebase onto the earlier. Ticket 7 does not depend on the catalog and can start
 at any time.
 
 There is no generic output editor in the iOS app to replace. Setup today

@@ -60,7 +60,9 @@ configuration. A second generator adds no new tool dependency.
   check generated files into the repository.
 - The composition root embeds the merged document and passes it to
   `companion_ble` as opaque bytes. `companion_ble` serves the bytes through a
-  new protected characteristic that reuses the signal catalog's page selector.
+  new protected characteristic that reuses the signal catalog's page selector
+  grammar. The per-connection discovery token moves into `companion_ble`, so
+  the output catalog works whether or not the signal catalog is usable.
   It does not parse the document and gains no sink dependency.
 - One catalog describes every sink in the build. Output type names are unique
   across sinks; each entry names the sink that owns it.

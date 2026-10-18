@@ -490,7 +490,7 @@ which CoreBluetooth does automatically.
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |
 | 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 31 bytes. |
 | after `hardware_id` | 1 | `extension_version` (u8) | Protocol 1.1: `1`. |
-| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable. Planned protocol 1.2: bit 1 means the output catalog is usable. Other bits zero. |
+| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable. Planned protocol 1.2: bit 1 means the output catalog is usable. Other bits zero. Protocol 1.2 firmware always appends both bytes and reports minor `2`. |
 
 Both strings are at most 31 bytes. For `firmware_version` this matches the
 32-byte, NUL-terminated `esp_app_desc_t` version field; `hardware_id` is a
@@ -510,7 +510,9 @@ protocol 1.1 appends two bytes, for at most 74 bytes.
 - Protocol 1.1 appends `extension_version` and `extension_flags` after the
   complete length-prefixed `hardware_id`. It reports extension version `1`
   even when the extension is unusable; bit 0 is then clear. When the extension
-  is usable, bit 0 is set. All other extension flag bits are reserved and zero.
+  is usable, bit 0 is set. Planned protocol 1.2 defines bit 1 for the
+  [output catalog](output-catalog.md#device-info); all other extension flag
+  bits are reserved and zero.
 - `flags` bit 0 is readable before pairing, so any central in range can learn
   whether the window is open. This is accepted: the window relies on the
   owner's physical presence, not on secrecy. The advertisement still omits it.

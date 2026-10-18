@@ -91,9 +91,11 @@ UUID `ab49xxxx-09b6-4509-bf8e-2790253baf98`:
 - Keep Device info's original fields and offsets, and continue reporting the
   actual legacy `live_signal_layout_version` (`2` on current firmware). Append
   `extension_version` u8 (`1`) and `extension_flags` u8 after `hardware_id`;
-  bit 0 means the catalog and extensible stream are usable, and other bits are
-  zero. Existing clients ignore the appended bytes under the minor-version
-  compatibility rule. New clients require extension version `1` and bit 0.
+  bit 0 means the catalog and extensible stream are usable. Bit 1 is defined
+  by the planned protocol 1.2 [output catalog](output-catalog.md#device-info);
+  other bits are zero. Existing clients ignore the appended bytes under the
+  minor-version compatibility rule. New clients require extension version `1`
+  and bit 0.
 - `catalog_format` and packet `format` are independent u8 versions, both
   initially `1`. Neither reinterprets the legacy layout-version field.
 - Existing protocol 1.0 devices still work through the legacy stream.
