@@ -302,7 +302,8 @@ TEST_CASE("led_solid lights its zone and colour on activate and clears it on dea
   controller.publish(kBrakePressed, true);
   CHECK(region_is(controller.pixels.frame, 10, 5, local_argb::Rgb{0, 9, 3}));
   CHECK(region_is(controller.pixels.frame, 0, 10, local_argb::kBlack));
-  CHECK(region_is(controller.pixels.frame, 15, local_argb::kDefaultLedCount - 15, local_argb::kBlack));
+  CHECK(region_is(controller.pixels.frame, 15, local_argb::kDefaultLedCount - 15,
+                  local_argb::kBlack));
 
   controller.publish(kBrakePressed, false);
   CHECK(controller.pixels.frame == local_argb::kBlackFrame);

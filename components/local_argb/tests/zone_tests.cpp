@@ -50,7 +50,8 @@ void test_zone_can_cover_any_contiguous_subset_of_the_strip() {
   assert(validate_zone({kDefaultLedCount - 1, 1, FillDirection::CenterOut}) == ZoneValidity::Valid);
   assert(validate_zone({35, 30, FillDirection::CenterOut}) == ZoneValidity::Valid);
 
-  const auto whole_strip = filled({0, kDefaultLedCount, FillDirection::StartToEnd}, FillFraction::full());
+  const auto whole_strip =
+      filled({0, kDefaultLedCount, FillDirection::StartToEnd}, FillFraction::full());
   PixelFrame all_lit{};
   std::fill_n(all_lit.begin(), kDefaultLedCount, kColor);
   assert(whole_strip == all_lit);

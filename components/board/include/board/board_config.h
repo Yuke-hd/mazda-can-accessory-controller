@@ -40,8 +40,8 @@ struct VehicleLightStrip {
 };
 
 // The onboard WS2812 is a single physical status pixel. The vehicle light
-// strip is a separate logical renderer surface and is intentionally longer; the driver allocates it at the
-// longest strip the renderer supports.
+// strip is a separate logical renderer surface and is intentionally longer; the driver allocates it
+// at the longest strip the renderer supports.
 inline constexpr std::uint16_t kOnboardRgbPixelCount = 1;
 inline constexpr std::uint16_t kVehicleLightStripPixelCount = 300;
 

@@ -100,7 +100,8 @@ public:
     begin_driver_write();
     const Rgb status = internal::onboard_status_color(frame);
     bool vehicle_success = vehicle_handle_ != nullptr;
-    for (std::size_t index = 0; vehicle_success && index < length && index < frame.size(); ++index) {
+    for (std::size_t index = 0; vehicle_success && index < length && index < frame.size();
+         ++index) {
       const auto &pixel = frame[index];
       vehicle_success =
           led_strip_set_pixel(vehicle_handle_, index, pixel.red, pixel.green, pixel.blue) == ESP_OK;
