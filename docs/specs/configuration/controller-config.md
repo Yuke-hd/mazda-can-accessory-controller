@@ -95,7 +95,10 @@ A `range` rule has these fields:
 
 ### Output bindings
 
-Every binding has a `type` and the `action` it follows.
+Every binding has a `type` and the `action` it follows. The accepted
+[output catalog](../companion/output-catalog.md) will generate these output
+types, fields and limits from a per-sink descriptor and publish them to the
+companion app; until it is implemented, this section is the source.
 
 `led_effect` binds the action to a discrete local LED effect:
 

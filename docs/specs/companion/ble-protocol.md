@@ -16,8 +16,12 @@ own companion documents:
   availability encoding and rate cap.
 - [`extensible-live-signals.md`](extensible-live-signals.md): protocol 1.1
   catalog discovery and extensible live-signal packets.
+- [`output-catalog.md`](output-catalog.md): accepted protocol 1.2 output
+  catalog, which describes the output types the controller accepts.
 
 The protocol 1.1 extension is a specification for follow-on implementation.
+The protocol 1.2 output catalog is an accepted contract and is not yet
+implemented.
 The existing fixed-layout firmware and app decoders remain supported. This
 extension has not been validated on hardware, on a phone, or in a vehicle.
 
@@ -402,9 +406,10 @@ ab49xxxx-09b6-4509-bf8e-2790253baf98
 | Command | `0005` | `ab490005-09b6-4509-bf8e-2790253baf98` |
 | Signal catalog | `0006` | `ab490006-09b6-4509-bf8e-2790253baf98` |
 | Extensible live signals | `0007` | `ab490007-09b6-4509-bf8e-2790253baf98` |
+| Output catalog (planned, 1.2) | `0008` | `ab490008-09b6-4509-bf8e-2790253baf98` |
 
 These UUIDs are fixed for every protocol version, so an app can always find the
-device info characteristic and read the protocol version. Values `0008`–`ffff`
+device info characteristic and read the protocol version. Values `0009`–`ffff`
 are reserved for later characteristics.
 
 ### Characteristics
@@ -418,6 +423,7 @@ are reserved for later characteristics.
 | Command | Write | Encrypted, bonded | [Command](#command) |
 | Signal catalog | Read, Write | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#catalog-discovery) |
 | Extensible live signals | Notify | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#extensible-value-packets) |
+| Output catalog (planned, 1.2) | Read, Write | Encrypted, bonded | [Output catalog](output-catalog.md#ble-transport) |
 
 "Write" means ATT Write Request (write with response). No characteristic
 supports Write Without Response, so every write is acknowledged and flow
@@ -484,7 +490,7 @@ which CoreBluetooth does automatically.
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |
 | 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 31 bytes. |
 | after `hardware_id` | 1 | `extension_version` (u8) | Protocol 1.1: `1`. |
-| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable; other bits zero. |
+| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable. Planned protocol 1.2: bit 1 means the output catalog is usable. Other bits zero. |
 
 Both strings are at most 31 bytes. For `firmware_version` this matches the
 32-byte, NUL-terminated `esp_app_desc_t` version field; `hardware_id` is a
@@ -607,6 +613,7 @@ format versions are carried by their respective extension payloads:
 | Live-signal layout | The Live signals frame. | The frame layout or signal set changes. |
 | Catalog format | The 0006 catalog document and paging bytes. | Existing catalog framing or field meaning changes incompatibly. |
 | Extensible live format | The 0007 packet and record grammar. | Existing packet framing or field meaning changes incompatibly. |
+| Output catalog format | The 0008 page header and JSON document (planned, 1.2). | Existing document keys, field kinds or page framing change incompatibly. A new output type, field or effect is content and changes no version. |
 
 A minor protocol version may add fields at the end of a value, flag bits,
 opcodes, error codes and characteristics. It may not remove, reorder or
@@ -630,6 +637,9 @@ The app must enforce this compatibility rule:
    and validates the complete catalog before subscribing to UUID `0007`. If
    the extension is absent, disabled, or unknown, the client may use the
    supported fixed layout reported by `live_signal_layout_version` instead.
+7. A client uses the output catalog only when `protocol_minor` is at least 2
+   and `extension_flags` bit 1 is set; see
+   [output catalog client behaviour](output-catalog.md#client-behaviour).
 
 A later minor version may append a lowest accepted schema version to device
 info if the firmware gains schema migrations. Version 1 accepts exactly one
