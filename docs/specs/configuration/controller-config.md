@@ -44,6 +44,7 @@ silently. Numbers are `float`, the action engine's operand type.
 | `actions` | list of action | no (empty) | The named actions. |
 | `rules` | list of rule | no (empty) | Signal rules that drive actions. |
 | `outputs` | list of output binding | no (empty) | What each action does. |
+| `sinks` | sink settings | no (defaults) | Settings of each output sink; see [Sink settings](#sink-settings). |
 
 ### Actions
 
@@ -114,7 +115,7 @@ companion app; until it is implemented, this section is the source.
 | --- | --- | --- | --- |
 | `action` | string | yes | A declared action name. |
 | `zone.start` | integer | yes | First logical pixel, from 0. |
-| `zone.length` | integer | yes | Pixel count; the zone must fit the strip. |
+| `zone.length` | integer | yes | Pixel count; the zone must fit the configured strip length. |
 | `zone.direction` | direction name | yes | `start_to_end`, `end_to_start` or `center_out`. |
 | `color` | `{red, green, blue}` integers 0..255 | yes | Colour at full level. |
 | `priority` | integer 0..255 | no (`100`) | Drawing order among fills. |
@@ -191,6 +192,67 @@ Solids and fills together may use at most 8 fill slots; the factory profile uses
 override that exceeds them fails at apply, and the firmware then fails off to
 black with no factory fallback.
 
+### Sink settings
+
+`sinks` holds settings that belong to one output sink rather than to a
+binding. It is a map from sink name to that sink's settings. Version 1 defines
+one sink, `local_argb`, with one setting:
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `sinks.local_argb.pixel_count` | integer 100..300 | no (`100`) | Number of pixels on the attached strip. |
+
+```yaml
+sinks:
+  local_argb:
+    pixel_count: 144
+```
+
+The range is from `100` to the board maximum, `local_argb::kMaxLedCount`
+(`300` on the WeAct CAN485 V1.1). A document without `sinks`, without
+`local_argb` or without `pixel_count` describes a 100-pixel strip, which is
+the behaviour of every earlier version 1 document. Unknown sink names and
+unknown settings are rejected, as unknown fields are elsewhere in the schema.
+See [ADR-0007](../../decisions/0007-configurable-strip-length.md).
+
+Every zone, in every binding kind, must fit within the configured length. A
+zone past the end rejects the whole document, so a commit that shortens the
+strip below a zone in use fails and the running configuration is kept. Zones
+are absolute pixel positions: changing the length never moves a zone.
+
+The factory effects keep fixed widths and are anchored to the strip ends:
+
+| Effect | Pixels |
+| --- | --- |
+| `left_turn` | The first 35, from `0`. |
+| `right_turn` | The last 35, from `pixel_count - 35`. |
+| `brake` | The middle 30, from `(pixel_count - 30) / 2` rounded down. |
+
+On a 100-pixel strip these are pixels 0..34, 65..99 and 35..64, as before.
+The onboard status pixel follows these effect regions, so on a longer strip
+it watches the centred brake region. Zone outputs do not move: the factory
+`brake` solid on pixels 35..64 lies outside that region on a strip longer
+than 100 pixels, and the status pixel would not show it. The factory profile
+sets no length and stays at 100 pixels. How the status pixel should treat
+fixed-zone outputs on a longer strip is not specified here and needs a
+decision before such a strip is supported.
+The turn animations keep their present timing at every length. Pixels between
+the regions on a longer strip are free for fills, solids and transients. The
+minimum of 100 is the space these effects need. A duration-based animation
+setting, which would let the layout scale with the length, is undecided and
+not part of this schema.
+
+The length is applied at startup only. A changed length is a configuration
+commit, which is checked in full, persisted and followed by a restart
+([ADR-0002](../../decisions/0002-config-commit-persists-then-restarts.md)).
+Startup black, fail-off black and the black written before that restart
+must cover the board maximum, so pixels past a shortened strip are dark. A normal
+frame sends only the configured length.
+
+A strip longer than 100 pixels is not yet a supported install: the
+[hardware record](../../architecture/hardware/weact-can485-v1.1.md) marks it
+unverified until a power measurement is reviewed.
+
 ### Persisted names
 
 Names are snake_case and case-sensitive. `names.hpp` holds the single table
@@ -219,9 +281,11 @@ A loader works in two steps.
 
 `validate()` needs no parser, signal catalog or runtime. It returns the first
 error as `{error, section, index}`. It checks the version first, then
-`actions`, `rules` and `outputs`, each in document order. Where a constraint
-is one the action engine or LED adapter already enforces, the error has the
-same name and meaning.
+`sinks`, then `actions`, `rules` and `outputs`, each in document order.
+Sink settings come first because the configured length bounds every zone. A
+sink setting error reports section `Document` and index `0`. Where a
+constraint is one the action engine or LED adapter already enforces, the
+error has the same name and meaning.
 
 | Error | Rejected when |
 | --- | --- |
@@ -239,7 +303,8 @@ same name and meaning.
 | `InvalidRange` | A range bound or span is not finite, or `input.from >= input.to`. |
 | `UnknownLedEffect`, `UnknownFillDirection` | The value is not a recognized enumerator. |
 | `EmptyZone` | `zone.length` is 0. |
-| `ZoneOutOfRange` | The zone does not fit the 100-pixel logical strip (`local_argb::kLedCount`), or has a negative start or length. |
+| `InvalidPixelCount` | `sinks.local_argb.pixel_count` is outside `100..local_argb::kMaxLedCount`. |
+| `ZoneOutOfRange` | The zone does not fit within `sinks.local_argb.pixel_count` (100 when omitted), or has a negative start or length. |
 | `InvalidColor` | A colour channel is outside 0..255. |
 | `InvalidPriority` | A priority is outside 0..255. |
 | `DuplicateBinding` | The same binding kind and action already drive this effect or zone. Fill zones include start, length and direction; transient and solid zones include only start and length. A solid and a fill with the same action, start, length and direction share one fill slot and are also duplicates. |
@@ -263,6 +328,12 @@ so they remain with the runtime apply step and keep their existing
 - The meaning of a version 1 document never changes. A later change that
   alters meaning, adds a required field or renames a value uses a new
   version.
+- An optional field whose default keeps the meaning of every earlier
+  document may be added to version 1. `sinks.local_argb.pixel_count` is such
+  a field: its default of `100` is the earlier fixed length. Firmware built
+  before the field is implemented rejects a document that contains `sinks` as
+  an unknown root field. After a firmware downgrade, such a document fails to
+  load, which fails safe.
 - A future loader may accept older versions by migrating them into the
   current model before validation. Version 1 needs no migrations.
 
@@ -318,7 +389,9 @@ python3 tools/compile_controller_config.py \
 The generated JSON can be inspected or passed to host tooling. It remains
 subject to the normal runtime loader validation when applied to firmware.
 
-Omitted `actions`, `rules` and `outputs` become empty lists. Integer fields
+Omitted `actions`, `rules` and `outputs` become empty lists. An omitted
+`sinks.local_argb.pixel_count` is not added to the JSON; the compiler checks
+zones against the default length of `100`. Integer fields
 are checked before float normalization: exactly integral forms such as `1.0`
 are accepted, while fractional versions, priorities, zone coordinates and
 RGB channels are rejected. Numeric rule fields are rounded to the model's
@@ -351,7 +424,8 @@ schema exposes them:
 - board revision and transceiver electrical behaviour;
 - hardware capability declarations;
 - renderer worker, supervisor, frame timing and other internals;
-- the logical strip length (`kLedCount`), which bounds `zone` but is not set by it.
+- the board maximum strip length (`local_argb::kMaxLedCount`), which bounds
+  `sinks.local_argb.pixel_count`.
 
 ## Production lighting profile
 
