@@ -279,6 +279,8 @@ bool RendererController::write_desired(const PixelFrame &desired) noexcept {
   // A lit frame covers the active length. Every black frame covers the whole
   // buffer, so startup, fail-off and the black before a restart can never
   // leave a pixel lit beyond the active length.
+  // This relies on the active length being constant: a lit frame never
+  // writes past it, so the pixels beyond stay black from the last black write.
   const std::size_t length = desired == kBlackFrame ? kMaxLedCount : kDefaultLedCount;
   if (sink_->write(desired, length)) {
     last_written_ = desired;

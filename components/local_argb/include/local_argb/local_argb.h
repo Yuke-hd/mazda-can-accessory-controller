@@ -11,7 +11,7 @@ namespace local_argb {
 // Generic renderer values. No vehicle, transport, board, or RTOS
 // type crosses the ordinary local_argb include boundary. Rgb, kBlack,
 // kMaxLedCount, kDefaultLedCount, PixelFrame, kBlackFrame, and PixelFrameSink come from the
-// renderer- independent frame contract in local_argb/pixel_frame.hpp.
+// renderer-independent frame contract in local_argb/pixel_frame.hpp.
 inline constexpr std::uint8_t kBrightnessCeiling = 16;
 inline constexpr std::size_t kTurnLedCount = 35;
 inline constexpr std::size_t kBrakeLedCount = 30;
