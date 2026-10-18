@@ -7,6 +7,7 @@
 #include "controller_config/persisted/json_loader.hpp"
 #include "controller_config/persisted/production_profile.hpp"
 #include "local_argb/lighting_sink.hpp"
+#include "local_argb/pixel_frame.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
 #include "support/fake_signal_provider.hpp"
 #include "vehicle_signals/signal_catalog.hpp"
@@ -283,7 +284,7 @@ TEST_CASE("generated factory RPM fill covers the board vehicle light strip") {
     if (fill != nullptr && fill->action == "rpm_fill") {
       ++rpm_fills;
       CHECK(fill->zone.start == 0);
-      CHECK(fill->zone.length == board::kWeActCan485V11.vehicle_light_strip.pixel_count);
+      CHECK(fill->zone.length == local_argb::kDefaultLedCount);
     }
   }
   CHECK(rpm_fills == 1);

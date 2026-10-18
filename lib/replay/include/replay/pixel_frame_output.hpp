@@ -21,7 +21,7 @@ class TimestampedPixelFrameSink final : public local_argb::PixelFrameSink {
 public:
   explicit TimestampedPixelFrameSink(const ReplayClock &clock) noexcept : clock_(&clock) {}
 
-  bool write(const local_argb::PixelFrame &frame) noexcept override;
+  bool write(const local_argb::PixelFrame &frame, std::size_t length) noexcept override;
 
   [[nodiscard]] const std::vector<TimestampedPixelFrame> &frames() const noexcept {
     return frames_;
@@ -55,7 +55,7 @@ public:
   // this marker is incomplete, for example when replay or output fails.
   bool write_end() noexcept;
 
-  bool write(const local_argb::PixelFrame &frame) noexcept override;
+  bool write(const local_argb::PixelFrame &frame, std::size_t length) noexcept override;
 
   [[nodiscard]] bool good() const noexcept { return output_->good(); }
 

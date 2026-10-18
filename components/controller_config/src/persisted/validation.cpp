@@ -179,7 +179,7 @@ freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
 // As local_argb's renderer: a recognized direction, a non-empty length, and a
 // zone that fits inside the logical strip.
 [[nodiscard]] ValidationError zone_error(const LedZone &zone) noexcept {
-  constexpr auto kStripLength = static_cast<Integer>(local_argb::kLedCount);
+  constexpr auto kStripLength = static_cast<Integer>(local_argb::kDefaultLedCount);
   if (!name_of(zone.direction).has_value())
     return ValidationError::UnknownFillDirection;
   if (zone.length == 0)

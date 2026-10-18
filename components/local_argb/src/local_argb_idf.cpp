@@ -96,11 +96,11 @@ public:
     vehicle_handle_ = vehicle_handle;
   }
 
-  bool write(const PixelFrame &frame) noexcept override {
+  bool write(const PixelFrame &frame, const std::size_t length) noexcept override {
     begin_driver_write();
     const Rgb status = internal::onboard_status_color(frame);
     bool vehicle_success = vehicle_handle_ != nullptr;
-    for (std::size_t index = 0; vehicle_success && index < frame.size(); ++index) {
+    for (std::size_t index = 0; vehicle_success && index < length && index < frame.size(); ++index) {
       const auto &pixel = frame[index];
       vehicle_success =
           led_strip_set_pixel(vehicle_handle_, index, pixel.red, pixel.green, pixel.blue) == ESP_OK;
@@ -136,6 +136,7 @@ internal::RendererRuntime g_runtime{g_controller, g_gated_sink};
 led_strip_handle_t g_onboard_strip{nullptr};
 led_strip_handle_t g_vehicle_strip{nullptr};
 // Only worker() owns this receive buffer; keep the enlarged snapshot off its stack.
+// The renderer's working frames are members of g_controller, also static.
 internal::LightingCommand g_worker_command{};
 StaticQueue_t g_queue_storage{};
 std::uint8_t g_queue_buffer[sizeof(internal::LightingCommand)]{};
@@ -254,9 +255,9 @@ bool start() noexcept {
                 "local ARGB vehicle strip is fixed to GPIO16");
   static_assert(board::kWeActCan485V11.vehicle_light_strip.pixel_count ==
                     board::kVehicleLightStripPixelCount,
-                "local ARGB vehicle strip must expose the full 100-pixel frame");
-  static_assert(kLedCount == board::kVehicleLightStripPixelCount,
-                "local ARGB logical renderer must match the 100-pixel vehicle strip");
+                "local ARGB vehicle strip must expose the full frame buffer");
+  static_assert(kMaxLedCount == board::kVehicleLightStripPixelCount,
+                "local ARGB frame buffer must match the allocated vehicle strip");
 
   if (xTaskCreate(supervisor, "argb_guard", kSupervisorStackDepth, nullptr, kSupervisorPriority,
                   &g_supervisor) != pdPASS) {
@@ -323,7 +324,7 @@ bool start() noexcept {
   }
   if (worker_created != pdPASS) {
     disarm_worker_lease();
-    (void)g_sink.write(kBlackFrame);
+    (void)g_sink.write(kBlackFrame, kMaxLedCount);
     (void)led_strip_del(g_vehicle_strip);
     (void)led_strip_del(g_onboard_strip);
     g_vehicle_strip = nullptr;
@@ -341,7 +342,7 @@ void fail_off() noexcept {
   // Invalidate starts overwritten before the worker saw them, while preserving
   // a progress stall's closed gate. Racing publishers detect the epoch change.
   if (!g_runtime.fail_off(g_queue_sink)) {
-    (void)g_sink.write(kBlackFrame);
+    (void)g_sink.write(kBlackFrame, kMaxLedCount);
   }
 }
 

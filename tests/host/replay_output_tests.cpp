@@ -78,8 +78,8 @@ bool is_black(const local_argb::PixelFrame &frame) {
 
 } // namespace
 
-TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
-  static_assert(local_argb::kLedCount == 100);
+TEST_CASE("timestamped sink records relative time and the whole frame buffer") {
+  static_assert(local_argb::kDefaultLedCount == 100);
   replay::ReplayClock clock;
   replay::TimestampedPixelFrameSink pixels{clock};
   replay::LocalArgbOutputStage stage{pixels, clock};
@@ -92,7 +92,7 @@ TEST_CASE("timestamped sink records relative time and exactly 100 RGB pixels") {
   CHECK(pixels.frames().front().timestamp_us == 0);
   for (const auto &output : pixels.frames()) {
     CHECK(output.timestamp_us <= 110'000);
-    CHECK(output.pixels.size() == 100);
+    CHECK(output.pixels.size() == local_argb::kMaxLedCount);
   }
 }
 
@@ -149,8 +149,10 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
                     [](const auto pixel) { return pixel == kCyan; }));
   CHECK(std::all_of(full.begin() + 35, full.begin() + 65,
                     [](const auto pixel) { return pixel == kRed; }));
-  CHECK(
-      std::all_of(full.begin() + 65, full.end(), [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(std::all_of(full.begin() + 65, full.begin() + local_argb::kDefaultLedCount,
+                    [](const auto pixel) { return pixel == kCyan; }));
+  CHECK(std::all_of(full.begin() + local_argb::kDefaultLedCount, full.end(),
+                    [](const auto pixel) { return pixel == local_argb::kBlack; }));
 
   const auto &left = frame_at(pixels.frames(), 300'000).pixels;
   CHECK(left[65] == kAmber);
@@ -167,7 +169,7 @@ TEST_CASE("synthetic replay covers production RPM, turn, hazard, priority, and b
   CHECK(right[33] == local_argb::kBlack);
   CHECK(std::all_of(right.begin(), right.begin() + 34,
                     [](const auto pixel) { return pixel == local_argb::kBlack; }));
-  CHECK(std::all_of(right.begin() + 65, right.end(),
+  CHECK(std::all_of(right.begin() + 65, right.begin() + local_argb::kDefaultLedCount,
                     [](const auto pixel) { return pixel == kCyan; }));
 
   const auto &hazard = frame_at(pixels.frames(), 500'000).pixels;
@@ -244,7 +246,7 @@ TEST_CASE("JSONL serialization ignores caller stream flags and locale") {
   local_argb::PixelFrame frame = local_argb::kBlackFrame;
   frame[0] = {128, 16, 16};
 
-  REQUIRE(pixels.write(frame));
+  REQUIRE(pixels.write(frame, local_argb::kDefaultLedCount));
   CHECK(pixels.good());
   CHECK(output.flags() == flags);
   CHECK(output.fill() == fill);
@@ -265,8 +267,8 @@ TEST_CASE("JSONL stream starts with one header and types every record") {
 
   REQUIRE(pixels.write_header());
   REQUIRE(pixels.write_header());
-  REQUIRE(pixels.write(local_argb::kBlackFrame));
-  REQUIRE(pixels.write(local_argb::kBlackFrame));
+  REQUIRE(pixels.write(local_argb::kBlackFrame, local_argb::kMaxLedCount));
+  REQUIRE(pixels.write(local_argb::kBlackFrame, local_argb::kMaxLedCount));
 
   std::istringstream lines{output.str()};
   std::string line;
@@ -287,7 +289,7 @@ TEST_CASE("first pixel write emits the header implicitly") {
   replay::JsonlPixelFrameSink pixels{clock, output};
   replay::LocalArgbOutputStage stage{pixels, clock};
 
-  REQUIRE(pixels.write(local_argb::kBlackFrame));
+  REQUIRE(pixels.write(local_argb::kBlackFrame, local_argb::kMaxLedCount));
 
   const std::string serialized = output.str();
   CHECK(serialized.rfind("{\"type\":\"header\",", 0) == 0);
@@ -300,7 +302,7 @@ TEST_CASE("JSONL stream ends with a completion marker") {
   replay::JsonlPixelFrameSink pixels{clock, output};
   replay::LocalArgbOutputStage stage{pixels, clock};
 
-  REQUIRE(pixels.write(local_argb::kBlackFrame));
+  REQUIRE(pixels.write(local_argb::kBlackFrame, local_argb::kMaxLedCount));
   REQUIRE(pixels.write_end());
   CHECK(output.str().find("{\"type\":\"end\"}\n") != std::string::npos);
   CHECK(pixels.write_end());

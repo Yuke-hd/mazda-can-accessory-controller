@@ -19,7 +19,7 @@ constexpr bool frame_region_has_color(const PixelFrame &frame, const std::size_t
 }
 
 // The embedded board exposes one physical pixel while the renderer owns the
-// full 100-pixel semantic frame. Collapse that frame to a visible diagnostic
+// full semantic frame. Collapse that frame to a visible diagnostic
 // status without changing the renderer's animation or region ownership.
 constexpr Rgb onboard_status_color(const PixelFrame &frame) noexcept {
   const bool brake_active = frame_region_has_color(frame, kBrakeLedStart, kBrakeLedCount);
@@ -98,7 +98,7 @@ public:
   }
 
 private:
-  [[nodiscard]] PixelFrame frame_for(vehicle_core::MonotonicTimestamp now_us) const noexcept;
+  void draw_frame(vehicle_core::MonotonicTimestamp now_us, PixelFrame &frame) const noexcept;
   bool write_desired(const PixelFrame &desired) noexcept;
 
   PixelFrameSink *sink_;
@@ -107,6 +107,9 @@ private:
   vehicle_core::MonotonicTimestamp last_tick_us_{0};
   std::uint32_t transient_epoch_{0};
   bool has_command_{false};
+  // Working frames live in the controller, which the worker owns statically,
+  // so a frame never sits on the worker stack.
+  PixelFrame desired_{};
   PixelFrame last_written_{};
   bool has_last_written_{false};
   bool faulted_{false};

@@ -31,18 +31,19 @@ struct MicroSdPins {
 
 struct OnboardRgb {
   std::int8_t data;
-  std::uint8_t pixel_count;
+  std::uint16_t pixel_count;
 };
 
 struct VehicleLightStrip {
   std::int8_t data;
-  std::uint8_t pixel_count;
+  std::uint16_t pixel_count;
 };
 
 // The onboard WS2812 is a single physical status pixel. The vehicle light
-// strip is a separate logical renderer surface and is intentionally longer.
-inline constexpr std::uint8_t kOnboardRgbPixelCount = 1;
-inline constexpr std::uint8_t kVehicleLightStripPixelCount = 100;
+// strip is a separate logical renderer surface and is intentionally longer; the driver allocates it at the
+// longest strip the renderer supports.
+inline constexpr std::uint16_t kOnboardRgbPixelCount = 1;
+inline constexpr std::uint16_t kVehicleLightStripPixelCount = 300;
 
 struct AuxiliaryPins {
   std::int8_t vin_sense;

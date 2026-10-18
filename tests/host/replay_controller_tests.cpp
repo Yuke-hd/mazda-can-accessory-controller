@@ -22,7 +22,7 @@ constexpr std::uint32_t kTurnSwitchId = 0x091;
 
 class RecordingPixelSink final : public local_argb::PixelFrameSink {
 public:
-  bool write(const local_argb::PixelFrame &frame) noexcept override {
+  bool write(const local_argb::PixelFrame &frame, std::size_t) noexcept override {
     if (fail_next_) {
       fail_next_ = false;
       return false;

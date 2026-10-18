@@ -83,7 +83,7 @@ constexpr ActionId kGaugeAction{4};
 
 class RecordingPixelSink final : public local_argb::PixelFrameSink {
 public:
-  bool write(const PixelFrame &frame) noexcept override {
+  bool write(const PixelFrame &frame, std::size_t) noexcept override {
     frames.push_back(frame);
     if (failures_remaining == 0)
       return true;

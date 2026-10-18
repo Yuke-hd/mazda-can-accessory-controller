@@ -24,7 +24,7 @@ class RecordingPixels final : public local_argb::PixelFrameSink {
 public:
   explicit RecordingPixels(const replay::ReplayClock &clock) : clock_(clock) {}
 
-  bool write(const local_argb::PixelFrame &frame) noexcept override {
+  bool write(const local_argb::PixelFrame &frame, std::size_t) noexcept override {
     if (fail_write_number_ == frames_.size() + 1) {
       fail_write_number_ = 0;
       return false;
