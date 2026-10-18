@@ -7,7 +7,7 @@
 # configure-time run makes a malformed descriptor fail configuration; the build
 # rule regenerates when a descriptor, the board file or the generator changes.
 # Sets OUTPUT_CATALOG_JSON and OUTPUT_CATALOG_INCLUDE_DIR in the caller's scope
-# and defines the output_catalog target.
+# and defines the output_catalog target, so it may be called once per project.
 
 set(_output_catalog_generator "${CMAKE_CURRENT_LIST_DIR}/generate_output_catalog.py")
 
@@ -15,6 +15,9 @@ function(output_catalog_generate)
   cmake_parse_arguments(PARSE_ARGV 0 _arg "" "BOARD_FILE;OUTPUT_DIR" "")
   if(NOT _arg_BOARD_FILE OR NOT _arg_OUTPUT_DIR)
     message(FATAL_ERROR "output_catalog_generate requires BOARD_FILE and OUTPUT_DIR")
+  endif()
+  if(TARGET output_catalog)
+    message(FATAL_ERROR "output_catalog_generate may be called once per project")
   endif()
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
 

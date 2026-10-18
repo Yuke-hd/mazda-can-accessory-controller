@@ -346,10 +346,19 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
             """)
         self.assert_rejected(self.generate([descriptor]), "collide.yaml", "outputs[0]", "kABMin")
 
-    def test_cxx_keyword_type_is_rejected(self) -> None:
+    def test_reserved_cxx_namespace_type_is_rejected(self) -> None:
+        for name in ("switch", "std"):
+            with self.subTest(name=name):
+                descriptor = self.write_descriptor(
+                    "reserved.yaml", f"descriptor_format: 1\nsink: s\noutputs:\n  - {{type: {name}, fields: []}}\n")
+                self.assert_rejected(self.generate([descriptor]), "reserved.yaml", "outputs[0].type")
+
+    def test_unhashable_key_is_rejected_without_traceback(self) -> None:
         descriptor = self.write_descriptor(
-            "keyword.yaml", "descriptor_format: 1\nsink: s\noutputs:\n  - {type: switch, fields: []}\n")
-        self.assert_rejected(self.generate([descriptor]), "keyword.yaml", "outputs[0].type")
+            "complex_key.yaml", "descriptor_format: 1\nsink: s\n? [a]\n: 1\noutputs: []\n")
+        run = self.generate([descriptor])
+        self.assert_rejected(run, "complex_key.yaml", "malformed YAML")
+        self.assertNotIn("Traceback", run.stderr)
 
     def test_top_level_and_output_violations_are_rejected(self) -> None:
         cases = {
@@ -508,6 +517,16 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/paths.txt"
         result = self.run_cmake("--build", str(self.build))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("kDurationMsMax = 4000;", header.read_text(encoding="utf-8"))
+
+    def test_second_generation_call_is_rejected(self) -> None:
+        cmake_lists = self.source / "CMakeLists.txt"
+        cmake_lists.write_text(cmake_lists.read_text(encoding="utf-8") + f"""
+output_catalog_generate(BOARD_FILE "{self.board_file.as_posix()}"
+                        OUTPUT_DIR "${{CMAKE_CURRENT_BINARY_DIR}}/second")
+""", encoding="utf-8")
+        result = self.configure()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("once per project", result.stdout + result.stderr)
 
     def test_weact_board_file_selects_led_descriptor(self) -> None:
         self.board_file = WEACT_BOARD_FILE

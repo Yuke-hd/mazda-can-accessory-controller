@@ -13,6 +13,7 @@ in docs/specs/companion/output-catalog.md.
 from __future__ import annotations
 
 import argparse
+import collections.abc
 import json
 import os
 import re
@@ -51,9 +52,11 @@ KIND_ATTRIBUTES: Mapping[str, Sequence[str]] = {
 LIST_ATTRIBUTES = {"values", "directions"}
 DEFAULT_KINDS = {"integer"}
 
-# Output type names become C++ namespaces in the limits header.
-CXX_KEYWORDS = frozenset(
-    "alignas alignof and and_eq asm auto bitand bitor bool break case catch char char16_t "
+# Output type names become C++ namespaces in the limits header. A nested
+# ``std`` namespace would shadow the standard library for the header's own
+# ``std::`` references, so it is reserved alongside the keywords.
+RESERVED_NAMESPACES = frozenset(
+    "std alignas alignof and and_eq asm auto bitand bitor bool break case catch char char16_t "
     "char32_t class compl const const_cast constexpr continue decltype default delete do "
     "double dynamic_cast else enum explicit export extern false float for friend goto if "
     "inline int long mutable namespace new noexcept not not_eq nullptr operator or or_eq "
@@ -177,8 +180,8 @@ class DescriptorReader:
         entry = self.mapping(value, path, ("type", "fields"), ("rule_types",))
         type_path = _child(path, "type")
         output_type = self.name(entry["type"], type_path)
-        if output_type in CXX_KEYWORDS:
-            raise self.fail(type_path, f"'{output_type}' is a C++ keyword and cannot name a header namespace")
+        if output_type in RESERVED_NAMESPACES:
+            raise self.fail(type_path, f"'{output_type}' is reserved in C++ and cannot name a header namespace")
         result: dict[str, Any] = {"type": output_type, "sink": sink}
         if "rule_types" in entry:
             result["rule_types"] = self.name_list(entry["rule_types"], _child(path, "rule_types"))
@@ -258,6 +261,9 @@ def _yaml_loader() -> Any:
         mapping: dict[Any, Any] = {}
         for key_node, value_node in node.value:
             key = loader.construct_object(key_node, deep=deep)
+            if not isinstance(key, collections.abc.Hashable):
+                raise yaml.constructor.ConstructorError(  # type: ignore[union-attr]
+                    "while constructing a mapping", node.start_mark, "found unhashable key", key_node.start_mark)
             if key in mapping:
                 raise yaml.constructor.ConstructorError(  # type: ignore[union-attr]
                     "while constructing a mapping", node.start_mark, f"duplicate key '{key}'", key_node.start_mark)
