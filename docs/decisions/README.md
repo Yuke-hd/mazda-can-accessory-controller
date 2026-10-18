@@ -13,3 +13,4 @@ decision gets a new record that supersedes the old one, rather than an edit.
 | [0003](0003-ble-pairing-window.md) | Gate BLE pairing with Just Works and a physical-presence window | Accepted |
 | [0004](0004-vehicle-io-interrupts-on-core-1.md) | Install the vehicle I/O interrupts on core 1 and leave BLE on core 0 | Proposed |
 | [0005](0005-discoverable-live-signals.md) | Discover live signals through a catalog and an extensible stream while retaining legacy compatibility | Accepted |
+| [0006](0006-generated-output-catalog.md) | Generate an output catalog from per-sink YAML descriptors | Accepted |
