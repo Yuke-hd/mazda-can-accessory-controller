@@ -229,6 +229,13 @@ The factory effects keep fixed widths and are anchored to the strip ends:
 | `brake` | The middle 30, from `(pixel_count - 30) / 2` rounded down. |
 
 On a 100-pixel strip these are pixels 0..34, 65..99 and 35..64, as before.
+The onboard status pixel follows these effect regions, so on a longer strip
+it watches the centred brake region. Zone outputs do not move: the factory
+`brake` solid on pixels 35..64 lies outside that region on a strip longer
+than 100 pixels, and the status pixel would not show it. The factory profile
+sets no length and stays at 100 pixels. How the status pixel should treat
+fixed-zone outputs on a longer strip is not specified here and needs a
+decision before such a strip is supported.
 The turn animations keep their present timing at every length. Pixels between
 the regions on a longer strip are free for fills, solids and transients. The
 minimum of 100 is the space these effects need. A duration-based animation
@@ -275,9 +282,10 @@ A loader works in two steps.
 `validate()` needs no parser, signal catalog or runtime. It returns the first
 error as `{error, section, index}`. It checks the version first, then
 `sinks`, then `actions`, `rules` and `outputs`, each in document order.
-Sink settings come first because the configured length bounds every zone. Where a constraint
-is one the action engine or LED adapter already enforces, the error has the
-same name and meaning.
+Sink settings come first because the configured length bounds every zone. A
+sink setting error reports section `Document` and index `0`. Where a
+constraint is one the action engine or LED adapter already enforces, the
+error has the same name and meaning.
 
 | Error | Rejected when |
 | --- | --- |
@@ -322,7 +330,10 @@ so they remain with the runtime apply step and keep their existing
   version.
 - An optional field whose default keeps the meaning of every earlier
   document may be added to version 1. `sinks.local_argb.pixel_count` is such
-  a field: its default of `100` is the earlier fixed length.
+  a field: its default of `100` is the earlier fixed length. Firmware built
+  before the field is implemented rejects a document that contains `sinks` as
+  an unknown root field. After a firmware downgrade, such a document fails to
+  load, which fails safe.
 - A future loader may accept older versions by migrating them into the
   current model before validation. Version 1 needs no migrations.
 

@@ -19,8 +19,9 @@ not configurable.
 The owner wants one firmware build to drive strips of different lengths,
 with the length set by the user rather than by a rebuild. WLED's
 recommendation of at most 512 LEDs per pin was considered. The owner chose
-a maximum of 300 pixels, which leaves a margin in stack, timing and power for
-this board.
+a maximum of 300 pixels, intended to leave a margin in stack and refresh
+timing on this board. The power margin is unverified until the measurement in
+the hardware record is reviewed.
 
 A longer buffer is not free on this firmware:
 

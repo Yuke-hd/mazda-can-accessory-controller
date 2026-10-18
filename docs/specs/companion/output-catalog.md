@@ -158,7 +158,9 @@ document; see [Compatibility](#compatibility).
 | `zone` | `pixels`, optional `pixels_setting`, `directions` (1–32 entries) | `{start, length, direction}` with `start >= 0`, `length >= 1`, `start + length <= pixels`, and `direction` one of `directions`. With `pixels_setting`, also `start + length` at most the value of that setting in the same document, or its default when omitted. |
 
 `pixels` is the board maximum. `pixels_setting` names an `integer` setting of
-the same sink whose `max` is at most `pixels`; any other name is an error. The
+the same sink whose `max` is at most that zone's `pixels`; any other name, or
+a larger `max`, is an error. The generator has no separate notion of a board
+maximum: a setting's `max` is bounded only through the zones that name it. The
 app checks a zone against the setting's value in the document it is editing,
 so a zone and a shorter strip length are never both accepted.
 
@@ -170,6 +172,9 @@ so a zone and a shorter strip length are never both accepted.
 `tools/generate_output_catalog.py` reads the selected descriptors and writes
 two outputs. It uses Python 3 and PyYAML, which the firmware build already
 requires for the factory configuration.
+
+After [#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291)
+the command is as below; until then the board value is `strip_pixels=100`.
 
 ```sh
 python3 tools/generate_output_catalog.py \
@@ -254,6 +259,8 @@ inline constexpr std::int32_t kPriorityDefault = 100;
 - One namespace per output type, named after the type, and one per sink with
   settings, named `<sink>_settings`. An output type with that name is an
   error.
+- Order: `kOutputTypeNames`, then the sink settings namespaces in descriptor
+  order, then the output type namespaces in catalog order.
 - Constants are `k` + PascalCase field name + PascalCase attribute: `Min`,
   `Max`, `Default`, `Values`, `Pixels`, `PixelsSetting`, `Directions`.
   Setting constants use the setting name in place of the field name.
@@ -292,8 +299,9 @@ factory configuration in `firmware/weact-can485-v1.1/CMakeLists.txt`:
 
 - `firmware/weact-can485-v1.1/output_catalog.cmake` sets
   `OUTPUT_CATALOG_DESCRIPTORS` and `OUTPUT_CATALOG_BOARD` for that board
-  (`strip_max_pixels=300`). The firmware project and the host build both include
-  it, so host tests compile the same header the firmware uses.
+  (`strip_max_pixels=300` after #291; `strip_pixels=100` until then). The
+  firmware project and the host build both include it, so host tests compile
+  the same header the firmware uses.
 - A configure-time run makes a malformed descriptor fail configuration
   immediately. The build rule regenerates when a descriptor, the board file or
   the generator changes.
@@ -406,10 +414,16 @@ model tolerant; the rules below assume it.
 | New output type, field or enum value | Content only. No version changes. Apps with the tolerant model show what they cannot edit read-only. Apps without it fail to decode a configuration that uses the new value; see the rollout rule. |
 | New field kind | Content only. Apps with the tolerant model show the affected types read-only. |
 | New attribute on a known kind | Content only, if optional. A new required attribute needs a catalog format change. |
-| New sink setting | Content only. An optional setting with a default adds no persisted schema version. Apps with the tolerant model keep it on write-back. |
-| Changed meaning of an existing key or attribute | Catalog format change. |
+| New sink setting | Content only. An optional setting with a default needs no new configuration schema version. Apps with the tolerant model keep it on write-back. |
+| Changed meaning of an existing key or attribute | Catalog format change, once a firmware serving the catalog has been released. |
 | Page header change | Catalog format change. |
 | Persisted configuration change | Configuration schema version change, as today. |
+
+The catalog format stays `1` for the ADR-0007 changes: the `sinks` entry, the
+`pixels_setting` attribute and zone `pixels` meaning the board maximum are
+all part of format 1. No firmware serving the catalog has been released, so
+no client depends on the earlier meaning of `pixels`. After the first release,
+the table above applies in full.
 
 ## Limits
 
@@ -523,7 +537,7 @@ Stacked pull requests, one per ticket. Tracked by
 | 7 ([esp-can-companion#82](https://github.com/Yuke-hd/esp-can-companion/issues/82)) | iOS tolerant configuration model: keep unknown output types, effects, enum values and keys as raw JSON, and write them back unchanged. | — | `Yuke-hd/esp-can-companion` (`CompanionProtocol` configuration model) |
 | 8 ([esp-can-companion#83](https://github.com/Yuke-hd/esp-can-companion/issues/83)) | iOS output catalog client and generic form renderer: characteristic `0008` in the BLE transport, paged download reusing the signal catalog client, and catalog-driven forms, including sink settings and setting-bounded zones. | 1 for vectors, 6 for devices, 7 | `Yuke-hd/esp-can-companion` |
 | 9 ([#288](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/288)) | Docs: ADR-0007, the sink setting in this spec and the configuration spec, hardware record. | — | `docs/` |
-| 10 ([#289](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/289)) | Renderer: 300-pixel buffer, `kDefaultLedCount`, `std::uint16_t` board pixel counts, static frames, full-length black frames, end-anchored layout. Output unchanged at 100 pixels. | — | `components/local_argb/`, board headers, `tests/host/` |
+| 10 ([#289](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/289)) | Renderer: 300-pixel buffer, `kDefaultLedCount`, `std::uint16_t` board pixel counts, static frames, full-length black frames, end-anchored layout. Output unchanged at 100 pixels. | — | `components/local_argb/`, `components/local_argb_sink_contract/`, board headers, `tests/host/` |
 | 11 ([#290](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/290)) | Generator: sink `settings` and `pixels_setting`, with tests. Output for today's descriptor unchanged. | 2, 9 | `tools/`, `tests/tools/` |
 | 12 ([#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291)) | Runtime strip length: loader, validator, YAML compiler, descriptor setting, `strip_max_pixels=300`, renderer length after restart; replaces the reference vector. | 3, 4, 9, 10, 11 | `components/`, `tools/`, `firmware/.../output_catalog.cmake`, `tests/` |
 
