@@ -40,14 +40,14 @@ INT32_MAX = 2**31 - 1
 NAME_PATTERN = re.compile(r"[a-z][a-z0-9_]*")
 BOARD_VALUE_PATTERN = re.compile(r"-?[0-9]+")
 
-# Attributes of each field kind, in catalog document order. ``default`` is the
-# only optional attribute and is allowed on integer fields alone.
+# Attributes of each field kind, in catalog document order. ``default`` is an
+# optional integer attribute; zones also allow ``pixels_setting``.
 KIND_ATTRIBUTES: Mapping[str, Sequence[str]] = {
     "action": (),
     "integer": ("min", "max"),
     "enum": ("values",),
     "rgb": ("min", "max"),
-    "zone": ("pixels", "directions"),
+    "zone": ("pixels", "pixels_setting", "directions"),
 }
 LIST_ATTRIBUTES = {"values", "directions"}
 DEFAULT_KINDS = {"integer"}
@@ -165,16 +165,45 @@ class DescriptorReader:
             raise self.fail(path, "integer does not fit in int32")
         return value
 
-    def read(self, document: Any) -> list[dict[str, Any]]:
-        top = self.mapping(document, "$", ("descriptor_format", "sink", "outputs"))
+    def read(self, document: Any) -> dict[str, Any]:
+        top = self.mapping(document, "$", ("descriptor_format", "sink", "outputs"), ("settings",))
         descriptor_format = top["descriptor_format"]
         if isinstance(descriptor_format, bool) or descriptor_format != DESCRIPTOR_FORMAT:
             raise self.fail("descriptor_format", f"unsupported descriptor format; expected {DESCRIPTOR_FORMAT}")
         sink = self.name(top["sink"], "sink")
+        settings: dict[str, dict[str, Any]] = {}
+        if "settings" in top:
+            if not isinstance(top["settings"], list):
+                raise self.fail("settings", "expected a list")
+            for index, value in enumerate(top["settings"]):
+                path = _child("settings", index)
+                if isinstance(value, dict):
+                    if "kind" in value and value["kind"] != "integer":
+                        raise self.fail(_child(path, "kind"), "a setting must have kind integer")
+                    if "required" in value and value["required"] is not False:
+                        raise self.fail(_child(path, "required"), "a setting must have required: false")
+                setting = self.field(value, path)
+                if setting["name"] in settings:
+                    raise self.fail(_child(path, "name"), f"duplicate setting name '{setting['name']}'")
+                settings[setting["name"]] = setting
         outputs = top["outputs"]
         if not isinstance(outputs, list):
             raise self.fail("outputs", "expected a list")
-        return [self.output(entry, _child("outputs", index), sink) for index, entry in enumerate(outputs)]
+        entries = [self.output(entry, _child("outputs", index), sink) for index, entry in enumerate(outputs)]
+        for output_index, output in enumerate(entries):
+            for field_index, field in enumerate(output["fields"]):
+                if "pixels_setting" not in field:
+                    continue
+                path = f"outputs[{output_index}].fields[{field_index}].pixels_setting"
+                name = field["pixels_setting"]
+                if name not in settings:
+                    raise self.fail(path, f"unknown integer setting '{name}' in sink '{sink}'")
+                if settings[name]["max"] > field["pixels"]:
+                    raise self.fail(path, f"setting '{name}' max exceeds zone pixels")
+        result: dict[str, Any] = {"outputs": entries}
+        if "settings" in top:
+            result["sinks"] = [{"sink": sink, "settings": list(settings.values())}]
+        return result
 
     def output(self, value: Any, path: str, sink: str) -> dict[str, Any]:
         entry = self.mapping(value, path, ("type", "fields"), ("rule_types",))
@@ -212,16 +241,21 @@ class DescriptorReader:
         if not isinstance(kind, str) or kind not in KIND_ATTRIBUTES:
             raise self.fail(_child(path, "kind"), f"unknown field kind; expected one of {', '.join(KIND_ATTRIBUTES)}")
         attributes = KIND_ATTRIBUTES[kind]
-        optional = ("default",) if kind in DEFAULT_KINDS else ()
-        self.mapping(value, path, ("name", "kind", "required", *attributes), optional)
+        optional = ("default",) if kind in DEFAULT_KINDS else ("pixels_setting",) if kind == "zone" else ()
+        required_attributes = [attribute for attribute in attributes if attribute not in optional]
+        self.mapping(value, path, ("name", "kind", "required", *required_attributes), optional)
         required = value["required"]
         if not isinstance(required, bool):
             raise self.fail(_child(path, "required"), "expected true or false")
 
         result: dict[str, Any] = {"name": name, "kind": kind, "required": required}
         for attribute in attributes:
+            if attribute not in value:
+                continue
             attribute_path = _child(path, attribute)
-            if attribute in LIST_ATTRIBUTES:
+            if attribute == "pixels_setting":
+                result[attribute] = self.name(value[attribute], attribute_path)
+            elif attribute in LIST_ATTRIBUTES:
                 result[attribute] = self.name_list(value[attribute], attribute_path)
             else:
                 result[attribute] = self.integer(value[attribute], attribute_path)
@@ -288,31 +322,42 @@ def load_descriptor(path: str) -> Any:
         raise CatalogError(path, "$", f"malformed YAML: {error}") from error
 
 
-def build_catalog(descriptors: Sequence[str], board_arguments: Sequence[str]) -> list[dict[str, Any]]:
+def build_catalog(descriptors: Sequence[str], board_arguments: Sequence[str]) -> tuple[
+        dict[str, Any], dict[str, tuple[str, str]]]:
     if len(descriptors) > MAX_DESCRIPTORS:
         raise CatalogError("--descriptor", "$", f"at most {MAX_DESCRIPTORS} descriptors are allowed")
     board = BoardValues(board_arguments)
     outputs: list[dict[str, Any]] = []
-    owners: dict[str, tuple[str, str]] = {}
+    sinks: list[dict[str, Any]] = []
+    namespaces: dict[str, tuple[str, str]] = {}
+
+    def claim_namespace(name: str, source: str, path: str) -> None:
+        if name in namespaces:
+            first_source, first_path = namespaces[name]
+            raise CatalogError(source, path,
+                               f"header namespace '{name}' is already defined at {first_source}: {first_path}")
+        namespaces[name] = (source, path)
+
     for descriptor in descriptors:
-        entries = DescriptorReader(descriptor, board).read(load_descriptor(descriptor))
-        for index, entry in enumerate(entries):
+        fragment = DescriptorReader(descriptor, board).read(load_descriptor(descriptor))
+        for sink in fragment.get("sinks", []):
+            claim_namespace(sink["sink"] + "_settings", descriptor, "settings")
+            sinks.append(sink)
+        for index, entry in enumerate(fragment["outputs"]):
             path = _child("outputs", index)
             if len(outputs) == MAX_OUTPUT_TYPES:
                 raise CatalogError(descriptor, path, f"more than {MAX_OUTPUT_TYPES} output types in the build")
-            if entry["type"] in owners:
-                first_source, first_path = owners[entry["type"]]
-                raise CatalogError(
-                    descriptor, _child(path, "type"),
-                    f"output type '{entry['type']}' is already defined at {first_source}: {first_path}")
-            owners[entry["type"]] = (descriptor, _child(path, "type"))
+            claim_namespace(entry["type"], descriptor, _child(path, "type"))
             outputs.append(entry)
     board.check_all_used()
-    return outputs
+    result: dict[str, Any] = {"outputs": outputs}
+    if sinks:
+        result["sinks"] = sinks
+    return result, namespaces
 
 
-def render_catalog(outputs: Sequence[Mapping[str, Any]], descriptors: Sequence[str]) -> bytes:
-    document = json.dumps({"outputs": list(outputs)}, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+def render_catalog(catalog: Mapping[str, Any], descriptors: Sequence[str]) -> bytes:
+    document = json.dumps(catalog, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     if not 1 <= len(document) <= MAX_DOCUMENT_BYTES:
         raise CatalogError(", ".join(descriptors), "$",
                            f"catalog document is {len(document)} bytes; the limit is {MAX_DOCUMENT_BYTES}")
@@ -339,8 +384,9 @@ def _string_array(name: str, values: Sequence[str]) -> list[str]:
     return lines
 
 
-def render_header(outputs: Sequence[Mapping[str, Any]],
+def render_header(catalog: Mapping[str, Any],
                   on_duplicate: Callable[[str, str], CatalogError]) -> bytes:
+    outputs = catalog["outputs"]
     lines = [
         "// Generated by tools/generate_output_catalog.py from the output catalog",
         "// descriptors. Do not edit; see docs/specs/companion/output-catalog.md.",
@@ -355,29 +401,33 @@ def render_header(outputs: Sequence[Mapping[str, Any]],
         *_string_array("kOutputTypeNames", [output["type"] for output in outputs]),
         "",
     ]
-    for output in outputs:
+    sections = [(sink["sink"] + "_settings", sink["settings"], []) for sink in catalog.get("sinks", [])]
+    sections += [(output["type"], output["fields"], output.get("rule_types", [])) for output in outputs]
+    for namespace, fields, rule_types in sections:
         body: list[str] = []
         constants: set[str] = set()
 
         def declare(constant: str, declaration: list[str]) -> None:
             if constant in constants:
-                raise on_duplicate(output["type"], constant)
+                raise on_duplicate(namespace, constant)
             constants.add(constant)
             body.extend(declaration)
 
-        if "rule_types" in output:
-            declare("kRuleTypes", _string_array("kRuleTypes", output["rule_types"]))
-        for field in output["fields"]:
+        if rule_types:
+            declare("kRuleTypes", _string_array("kRuleTypes", rule_types))
+        for field in fields:
             prefix = "k" + _pascal(field["name"])
             for attribute in (*KIND_ATTRIBUTES[field["kind"]], "default"):
                 if attribute not in field:
                     continue
                 constant = prefix + _pascal(attribute)
-                if attribute in LIST_ATTRIBUTES:
+                if attribute == "pixels_setting":
+                    declare(constant, [f'inline constexpr std::string_view {constant} = "{field[attribute]}";'])
+                elif attribute in LIST_ATTRIBUTES:
                     declare(constant, _string_array(constant, field[attribute]))
                 else:
                     declare(constant, [f"inline constexpr std::int32_t {constant} = {field[attribute]};"])
-        lines += [f"namespace {output['type']} {{", *body, f"}} // namespace {output['type']}", ""]
+        lines += [f"namespace {namespace} {{", *body, f"}} // namespace {namespace}", ""]
     lines += ["} // namespace controller_config::generated", ""]
     return "\n".join(lines).encode("utf-8")
 
@@ -403,15 +453,15 @@ def _write_all(files: Sequence[tuple[Path, bytes]]) -> None:
 
 
 def generate(descriptors: Sequence[str], board: Sequence[str]) -> tuple[bytes, bytes]:
-    outputs = build_catalog(descriptors, board)
-    catalog = render_catalog(outputs, descriptors)
+    document, namespaces = build_catalog(descriptors, board)
+    catalog = render_catalog(document, descriptors)
 
-    def duplicate_constant(output_type: str, constant: str) -> CatalogError:
-        index = next(i for i, output in enumerate(outputs) if output["type"] == output_type)
-        return CatalogError(", ".join(descriptors), f"outputs[{index}]",
-                            f"field names of '{output_type}' produce the header constant {constant} twice")
+    def duplicate_constant(namespace: str, constant: str) -> CatalogError:
+        source, path = namespaces[namespace]
+        return CatalogError(source, path,
+                            f"field names of '{namespace}' produce the header constant {constant} twice")
 
-    return catalog, render_header(outputs, duplicate_constant)
+    return catalog, render_header(document, duplicate_constant)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
