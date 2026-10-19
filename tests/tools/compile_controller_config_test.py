@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from itertools import product
 import re
 import subprocess
@@ -25,7 +26,23 @@ SIGNAL_CATALOG_HEADER = (
 PERSISTED_NAMES = REPOSITORY / "components" / "controller_config" / "src" / "persisted" / "names.cpp"
 
 
+def generate_catalog(directory: Path) -> Path:
+    catalog = directory / "output_catalog.json"
+    subprocess.run([sys.executable, str(REPOSITORY / "tools/generate_output_catalog.py"),
+                    "--descriptor", str(REPOSITORY / "components/local_argb_actions/output_catalog.yaml"),
+                    "--board", "strip_pixels=100", "--catalog", str(catalog),
+                    "--limits-header", str(directory / "output_limits.hpp")], check=True,
+                   capture_output=True, text=True)
+    return catalog
+
+
 class ControllerConfigCompilerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.catalog_directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.catalog_directory.cleanup)
+        cls.output_catalog = generate_catalog(Path(cls.catalog_directory.name))
+
     def run_compiler(
         self, source: str, output_name: str = "output.json"
     ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
@@ -35,7 +52,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             output_path = root / output_name
             input_path.write_text(source, encoding="utf-8")
             result = subprocess.run(
-                [sys.executable, str(COMPILER), str(input_path), str(output_path)],
+                [sys.executable, str(COMPILER), "--output-catalog", str(self.output_catalog), str(input_path), str(output_path)],
                 cwd=REPOSITORY,
                 check=False,
                 capture_output=True,
@@ -920,6 +937,13 @@ class ControllerConfigCompilerTests(unittest.TestCase):
     def test_persisted_enum_names_have_compiler_spellings(self) -> None:
         from tools.compile_controller_config import ENUMS
 
+        enums = {key: dict(value) for key, value in ENUMS.items()}
+        catalog = json.loads(self.output_catalog.read_text())
+        enums["type"].update({entry["type"]: entry["type"] for entry in catalog["outputs"]})
+        for kind, attribute in (("effect", "values"), ("direction", "directions")):
+            enums[kind] = {name: name for entry in catalog["outputs"] for field in entry["fields"]
+                           for name in field.get(attribute, [])}
+
         names_source = PERSISTED_NAMES.read_text(encoding="utf-8")
         tables = {
             enum: set(re.findall(r'"([a-z][a-z0-9_]*)"', body))
@@ -935,10 +959,10 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             "effect": tables["LedEffect"],
             "direction": tables["FillDirection"],
         }
-        self.assertEqual(set(ENUMS), set(expected))
+        self.assertEqual(set(enums), set(expected))
         for kind, names in expected.items():
             with self.subTest(kind=kind):
-                self.assertEqual(set(ENUMS[kind].values()), names)
+                self.assertEqual(set(enums[kind].values()), names)
 
     def test_deep_yaml_fails_with_a_compile_diagnostic(self) -> None:
         nested = "1"
@@ -1161,7 +1185,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "controller-config.json"
             result = subprocess.run(
-                [sys.executable, str(COMPILER), str(PRODUCTION_YAML), str(output_path)],
+                [sys.executable, str(COMPILER), "--output-catalog", str(self.output_catalog), str(PRODUCTION_YAML), str(output_path)],
                 cwd=REPOSITORY,
                 check=False,
                 capture_output=True,
@@ -1192,7 +1216,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(COMPILER),
+                    str(COMPILER), "--output-catalog", str(self.output_catalog),
                     str(examples / "actual-gear-actions-v1.yaml"),
                     str(output_path),
                 ],
@@ -1217,7 +1241,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(COMPILER),
+                    str(COMPILER), "--output-catalog", str(self.output_catalog),
                     str(examples / "door-liftgate-open-actions-v1.yaml"),
                     str(output_path),
                 ],
@@ -1242,7 +1266,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(COMPILER),
+                    str(COMPILER), "--output-catalog", str(self.output_catalog),
                     str(examples / "indicator-lamp-actions.yaml"),
                     str(output_path),
                 ],
@@ -1267,6 +1291,88 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             json.loads(output.decode("utf-8")),
             json.loads(SPEED_LEVEL_EXAMPLE_JSON.read_text(encoding="utf-8")),
         )
+
+
+class OutputCatalogCompilerTests(unittest.TestCase):
+    run_compiler = ControllerConfigCompilerTests.run_compiler
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output_catalog = generate_catalog(Path(directory.name))
+        self.catalog = json.loads(self.output_catalog.read_text())
+
+    def compile_output(self, output: dict, **extra: object):
+        self.output_catalog.write_text(json.dumps(self.catalog))
+        source = json.dumps({"version": 1, "actions": [{"name": "a"}],
+                             "outputs": [output], **extra})
+        return self.run_compiler(source)
+
+    def test_changed_catalog_names_limits_and_defaults_control_acceptance(self) -> None:
+        descriptor = self.catalog["outputs"][0]
+        descriptor["type"] = "custom_effect"
+        fields = {field["name"]: field for field in descriptor["fields"]}
+        fields["effect"]["values"] = ["custom_animation"]
+        fields["priority"].update(min=4, max=12, default=7)
+        output = {"type": "CustomEffect", "action": "a", "effect": "CustomAnimation"}
+        result, payload = self.compile_output(output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(payload)["outputs"][0],
+                         {"type": "custom_effect", "action": "a", "effect": "custom_animation", "priority": 7})
+        for invalid in ({"priority": 3}, {"priority": 13}, {"effect": "brake"}, {"type": "led_effect"}):
+            with self.subTest(invalid=invalid):
+                result, payload = self.compile_output({**output, **invalid})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIsNone(payload)
+
+    def test_changed_zone_color_direction_and_duration_limits(self) -> None:
+        descriptor = self.catalog["outputs"][2]
+        fields = {field["name"]: field for field in descriptor["fields"]}
+        fields["zone"].update(pixels=120, directions=["custom_direction"])
+        fields["color"].update(min=2, max=10)
+        fields["duration_ms"].update(min=4, max=6)
+        output = {"type": "led_transient", "action": "a", "duration_ms": 5,
+                  "zone": {"start": 100, "length": 20, "direction": "CustomDirection"},
+                  "color": {"red": 2, "green": 5, "blue": 10}}
+        result, payload = self.compile_output(output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for invalid in ({"duration_ms": 3}, {"duration_ms": 7},
+                        {"color": {"red": 1, "green": 5, "blue": 10}},
+                        {"color": {"red": 2, "green": 5, "blue": 11}},
+                        {"zone": {"start": 100, "length": 21, "direction": "custom_direction"}},
+                        {"zone": {"start": 0, "length": 1, "direction": "center_out"}}):
+            with self.subTest(invalid=invalid):
+                result, payload = self.compile_output({**output, **invalid})
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIsNone(payload)
+
+    def test_sink_settings_bound_zones_using_explicit_value_or_default(self) -> None:
+        self.catalog["sinks"] = [{"sink": "local_argb", "settings": [
+            {"name": "pixel_count", "kind": "integer", "required": False,
+             "min": 10, "max": 100, "default": 40}]}]
+        zone = next(field for field in self.catalog["outputs"][1]["fields"] if field["name"] == "zone")
+        zone["pixels_setting"] = "pixel_count"
+        output = {"type": "led_fill", "action": "a", "zone": {
+            "start": 0, "length": 50, "direction": "center_out"},
+            "color": {"red": 0, "green": 1, "blue": 2}}
+        for settings, accepted in ((None, False), ({"pixel_count": 60}, True),
+                                   ({"pixel_count": 40}, False), ({"pixel_count": 101}, False),
+                                   ({"pixel_count": 9}, False), ({"unknown": 60}, False)):
+            with self.subTest(settings=settings):
+                extra = {} if settings is None else {"sinks": {"local_argb": settings}}
+                result, payload = self.compile_output(output, **extra)
+                self.assertEqual(result.returncode, 0 if accepted else 2, result.stderr)
+                if accepted:
+                    self.assertEqual(json.loads(payload)["sinks"], extra["sinks"])
+                else:
+                    self.assertIsNone(payload)
+
+    def test_factory_output_bytes_are_unchanged(self) -> None:
+        result, payload = self.run_compiler((REPOSITORY / "config/default.yaml").read_text())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Captured from the compiler before switching its authority to the catalog.
+        self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                         "a8dfaf97e04b0ad0e188ec95e466daad96d2a141a82f4c9b08ba1f499a13b79b")
 
 
 if __name__ == "__main__":

@@ -54,12 +54,13 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CONTROLLER_CONFIG_DEFAULT_YAML}"
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
-    "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp")
+    "${OUTPUT_CATALOG_JSON}")
 message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 execute_process(
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
           "${CONTROLLER_CONFIG_DEFAULT_YAML}" "${CONTROLLER_CONFIG_FACTORY_JSON}"
+          --output-catalog "${OUTPUT_CATALOG_JSON}"
   RESULT_VARIABLE _controller_config_compile_result
   OUTPUT_VARIABLE _controller_config_compile_output
   ERROR_VARIABLE _controller_config_compile_error)
@@ -75,10 +76,11 @@ add_custom_command(
   OUTPUT "${CONTROLLER_CONFIG_FACTORY_JSON}"
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
           "${CONTROLLER_CONFIG_DEFAULT_YAML}" "${CONTROLLER_CONFIG_FACTORY_JSON}"
+          --output-catalog "${OUTPUT_CATALOG_JSON}"
   DEPENDS "${CONTROLLER_CONFIG_DEFAULT_YAML}"
           "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
           "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
-          "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp"
+          "${OUTPUT_CATALOG_JSON}"
   COMMENT "Compiling factory controller configuration")
 add_custom_target(controller_config_factory_json
   DEPENDS "${CONTROLLER_CONFIG_FACTORY_JSON}")

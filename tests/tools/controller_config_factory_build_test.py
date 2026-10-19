@@ -27,6 +27,29 @@ class FactoryBuildTests(unittest.TestCase):
             capture_output=True, text=True, check=False,
         )
 
+    def test_firmware_factory_compiler_uses_generated_catalog_at_configure_and_build(self):
+        firmware = REPOSITORY / "firmware" / "weact-can485-v1.1"
+        # Exercise the real pre-IDF generation rules without requiring the SDK.
+        contents = (firmware / "CMakeLists.txt").read_text(encoding="utf-8")
+        contents = contents.split('include($ENV{IDF_PATH}/tools/cmake/project.cmake)', 1)[0]
+        contents = contents.replace("${CMAKE_CURRENT_LIST_DIR}", firmware.as_posix())
+        contents += "\nproject(factory_generation_guard NONE)\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result = self.configure(directory, contents)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            output = directory / "build" / "factory_default_config.json"
+            expected = output.read_bytes()
+            self.assertTrue((directory / "build/output_catalog/output_catalog.json").is_file())
+            output.unlink()
+            result = subprocess.run(
+                [self.cmake, "--build", str(directory / "build"),
+                 "--target", "controller_config_factory_json"],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(output.read_bytes(), expected)
+
     def test_component_rejects_unset_and_missing_factory_json(self):
         for selection in ("", 'set(CONTROLLER_CONFIG_FACTORY_JSON "missing.json")'):
             with self.subTest(selection=selection), tempfile.TemporaryDirectory() as temporary:

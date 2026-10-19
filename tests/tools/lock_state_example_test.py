@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from compile_controller_config_test import generate_catalog
+
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 COMPILER = REPOSITORY / "tools" / "compile_controller_config.py"
@@ -21,8 +23,9 @@ class LockStateExampleTests(unittest.TestCase):
     def test_lock_state_yaml_matches_canonical_json_example(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "lock-state-actions.json"
+            catalog = generate_catalog(Path(directory))
             result = subprocess.run(
-                [sys.executable, str(COMPILER), str(LOCK_STATE_YAML), str(output_path)],
+                [sys.executable, str(COMPILER), "--output-catalog", str(catalog), str(LOCK_STATE_YAML), str(output_path)],
                 cwd=REPOSITORY,
                 check=False,
                 capture_output=True,
