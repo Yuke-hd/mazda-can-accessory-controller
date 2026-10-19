@@ -1,7 +1,7 @@
 # Local ARGB renderer runtime
 
 This document specifies the runtime behavior of `components/local_argb`, which
-owns the fixed 100-pixel frame and the WeAct board's separate status pixel. The
+owns the frame buffer and the WeAct board's separate status pixel. The
 action adapter's commands and held-level behavior are specified in
 [local LED actions](local-led-actions.md). Board capabilities and firmware
 construction are documented in [hardware capabilities](../../architecture/hardware/weact-can485-v1.1.md)
@@ -9,8 +9,13 @@ and [firmware composition](../../architecture/firmware-composition.md).
 
 ## Outputs and startup
 
-The logical frame is 100 pixels: 35 pixels for each turn region and a 30-pixel
-center brake region. Turn effects use an amber flow, the brake region uses
+The frame buffer holds 300 pixels (`kMaxLedCount`) and the driver allocates
+the vehicle strip at that size. The active length is fixed at 100 pixels
+(`kDefaultLedCount`): the left turn takes the first 35 pixels, the right turn
+the last 35, and the brake the middle 30. A normal frame writes only the
+active length; every black frame (startup, each fail-off path, and the black
+written before a restart) writes all 300 pixels. The renderer keeps its
+working frames in static storage owned by the worker, not on its stack. Turn effects use an amber flow, the brake region uses
 red, and fills use their configured color. The brightness ceiling is 16 per
 channel. The one-pixel onboard status LED shows red when the center brake
 region contains non-black pixels, amber when either turn region contains

@@ -10,14 +10,20 @@ namespace local_argb {
 
 // Generic renderer values. No vehicle, transport, board, or RTOS
 // type crosses the ordinary local_argb include boundary. Rgb, kBlack,
-// kLedCount, PixelFrame, kBlackFrame, and PixelFrameSink come from the renderer-
-// independent frame contract in local_argb/pixel_frame.hpp.
+// kMaxLedCount, kDefaultLedCount, PixelFrame, kBlackFrame, and PixelFrameSink come from the
+// renderer-independent frame contract in local_argb/pixel_frame.hpp.
 inline constexpr std::uint8_t kBrightnessCeiling = 16;
 inline constexpr std::size_t kTurnLedCount = 35;
-inline constexpr std::size_t kBrakeLedStart = kTurnLedCount;
 inline constexpr std::size_t kBrakeLedCount = 30;
-inline constexpr std::size_t kRightTurnLedStart = kBrakeLedStart + kBrakeLedCount;
-static_assert(kRightTurnLedStart + kTurnLedCount == kLedCount);
+// The factory layout is anchored to the strip ends: the left turn starts the
+// strip, the right turn ends it and the brake sits in the middle.
+inline constexpr std::size_t kBrakeLedStart = (kDefaultLedCount - kBrakeLedCount) / 2;
+inline constexpr std::size_t kRightTurnLedStart = kDefaultLedCount - kTurnLedCount;
+static_assert(2 * kTurnLedCount + kBrakeLedCount <= kDefaultLedCount,
+              "factory regions must fit the active length");
+static_assert(kTurnLedCount <= kBrakeLedStart &&
+                  kBrakeLedStart + kBrakeLedCount <= kRightTurnLedStart,
+              "brake region must sit between the turn regions");
 
 // These timing values describe renderer supervision, not vehicle freshness.
 // Freshness deadlines are carried by the private LightingCommand handoff.

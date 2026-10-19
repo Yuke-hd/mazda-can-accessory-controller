@@ -574,8 +574,8 @@ public:
       : stream_buffer_(socket, stop_requested, server_shutdown), stream_(&stream_buffer_),
         encoder_(clock, stream_) {}
 
-  bool write(const local_argb::PixelFrame &frame) noexcept override {
-    return encoder_.write(frame) && stream_buffer_.good();
+  bool write(const local_argb::PixelFrame &frame, const std::size_t length) noexcept override {
+    return encoder_.write(frame, length) && stream_buffer_.good();
   }
 
   [[nodiscard]] bool write_header() noexcept {

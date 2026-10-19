@@ -37,7 +37,7 @@ void check_error(const persisted::ControllerConfig &config, persisted::Validatio
 
 class PixelSink final : public local_argb::PixelFrameSink {
 public:
-  bool write(const local_argb::PixelFrame &value) noexcept override {
+  bool write(const local_argb::PixelFrame &value, std::size_t) noexcept override {
     frame = value;
     return true;
   }

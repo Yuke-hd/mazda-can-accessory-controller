@@ -99,7 +99,7 @@ ZoneValidity validate_zone(const LedZone &zone) noexcept {
   if (zone.length == 0)
     return ZoneValidity::EmptyZone;
   // Written as a subtraction so a huge length cannot wrap start + length.
-  if (zone.start >= kLedCount || zone.length > kLedCount - zone.start)
+  if (zone.start >= kDefaultLedCount || zone.length > kDefaultLedCount - zone.start)
     return ZoneValidity::OutOfRange;
   return ZoneValidity::Valid;
 }
@@ -111,7 +111,7 @@ ZoneValidity fill_zone(PixelFrame &frame, const LedZone &zone, const FillFractio
     return validity;
 
   // L = length * fraction pixels, kept exact as lit_amount / unit. length <=
-  // kLedCount and the numerator is below 2^32, so the product fits in 64 bits.
+  // kDefaultLedCount and the numerator is below 2^32, so the product fits in 64 bits.
   const auto lit_amount = static_cast<std::uint64_t>(zone.length) * fraction.numerator();
   const std::uint64_t unit = fraction.denominator();
   switch (zone.direction) {

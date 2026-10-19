@@ -12,7 +12,8 @@ TransientBindings::bind(const action_engine::ActionId action,
   const auto &zone = effect.zone;
   if (effect.duration_us == 0 ||
       effect.duration_us > local_argb::internal::kMaxTransientDurationUs || zone.length == 0 ||
-      zone.start >= local_argb::kLedCount || zone.length > local_argb::kLedCount - zone.start ||
+      zone.start >= local_argb::kDefaultLedCount ||
+      zone.length > local_argb::kDefaultLedCount - zone.start ||
       (zone.direction != local_argb::internal::FillDirection::StartToEnd &&
        zone.direction != local_argb::internal::FillDirection::EndToStart &&
        zone.direction != local_argb::internal::FillDirection::CenterOut))

@@ -19,7 +19,7 @@ enum class ZoneValidity : std::uint8_t {
   // length == 0; an empty zone is rejected rather than silently drawing
   // nothing so configuration mistakes are visible.
   EmptyZone,
-  // The zone does not fit inside [0, kLedCount).
+  // The zone does not fit inside [0, kDefaultLedCount).
   OutOfRange,
   // The direction value is not one of the declared enumerators.
   UnknownDirection,

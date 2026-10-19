@@ -13,8 +13,9 @@ namespace {
 
 class FakePixelSink final : public local_argb::PixelFrameSink {
 public:
-  bool write(const local_argb::PixelFrame &frame) noexcept override {
+  bool write(const local_argb::PixelFrame &frame, std::size_t length) noexcept override {
     writes.push_back(frame);
+    lengths.push_back(length);
     if (failures_remaining != 0) {
       --failures_remaining;
       return false;
@@ -23,6 +24,7 @@ public:
   }
 
   std::vector<local_argb::PixelFrame> writes;
+  std::vector<std::size_t> lengths;
   unsigned failures_remaining{0};
 };
 
@@ -85,6 +87,46 @@ void test_failed_colour_attempt_retries_black_then_recovers() {
   assert(renderer.tick(101)); // redundant black is suppressed after success
   assert(renderer.apply(green(300), 200));
   assert(!renderer.faulted());
+}
+
+void test_lit_frames_cover_active_length_and_every_black_covers_buffer() {
+  using local_argb::kDefaultLedCount;
+  using local_argb::kMaxLedCount;
+  static_assert(kMaxLedCount == 300 && kDefaultLedCount == 100);
+  FakePixelSink sink;
+  local_argb::internal::RendererController renderer{sink};
+  assert(renderer.start());
+  assert(sink.lengths.back() == kMaxLedCount); // startup black
+
+  assert(renderer.apply(green(250), 100));
+  assert(sink.lengths.back() == kDefaultLedCount); // normal frame
+  for (std::size_t index = kDefaultLedCount; index < kMaxLedCount; ++index)
+    assert(sink.writes.back()[index] == local_argb::kBlack);
+
+  assert(renderer.tick(300)); // command expired: fail-off black
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(sink.lengths.back() == kMaxLedCount);
+
+  sink.failures_remaining = 1;
+  assert(!renderer.apply(green(900), 400)); // driver failure: black retry
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(sink.lengths.back() == kMaxLedCount);
+
+  // The explicit fail-off command (published for restart and fail_off) is an
+  // empty command and renders black across the buffer.
+  assert(renderer.apply(green(2000), 1000));
+  assert(sink.lengths.back() == kDefaultLedCount);
+  assert(renderer.apply(local_argb::internal::LightingCommand{}, 1010));
+  assert(sink.writes.back() == local_argb::kBlackFrame);
+  assert(sink.lengths.back() == kMaxLedCount);
+}
+
+void test_factory_layout_is_anchored_to_strip_ends() {
+  using namespace local_argb;
+  static_assert(kTurnLedCount == 35 && kBrakeLedCount == 30);
+  static_assert(kBrakeLedStart == 35);
+  static_assert(kRightTurnLedStart == kDefaultLedCount - kTurnLedCount);
+  static_assert(kRightTurnLedStart + kTurnLedCount == kDefaultLedCount);
 }
 
 void test_duplicate_command_and_tick_write_once() {
@@ -231,7 +273,7 @@ void test_turn_flow_and_brake_regions() {
   brake.actionable = true;
   assert(renderer.apply(brake, 100));
   const auto &brake_frame = sink.writes.back();
-  for (std::size_t index = 0; index < local_argb::kLedCount; ++index) {
+  for (std::size_t index = 0; index < local_argb::kDefaultLedCount; ++index) {
     const bool in_brake = index >= local_argb::kBrakeLedStart &&
                           index < local_argb::kBrakeLedStart + local_argb::kBrakeLedCount;
     assert((brake_frame[index] == local_argb::Rgb{local_argb::kBrightnessCeiling, 0, 0}) ==
@@ -295,8 +337,8 @@ void test_turn_flow_starts_at_inner_edges_and_moves_outward() {
 
   assert(right_renderer.tick(1'133'322)); // 34 * 33,333 us: the outer-edge phase
   const auto right_outer = right_sink.writes.back();
-  assert(right_outer[local_argb::kLedCount - 1] == amber);
-  assert(right_outer[local_argb::kLedCount - 2] == amber_tail);
+  assert(right_outer[local_argb::kDefaultLedCount - 1] == amber);
+  assert(right_outer[local_argb::kDefaultLedCount - 2] == amber_tail);
   assert(right_outer[local_argb::kRightTurnLedStart] == local_argb::kBlack);
 }
 
@@ -336,7 +378,8 @@ void test_empty_fill_list_keeps_the_generic_colour() {
 
   const local_argb::Rgb green_rgb{0, local_argb::kBrightnessCeiling, 0};
   assert(sink.writes.back().front() == green_rgb);
-  assert(sink.writes.back().back() == green_rgb);
+  assert(sink.writes.back()[local_argb::kDefaultLedCount - 1] == green_rgb);
+  assert(sink.writes.back()[local_argb::kDefaultLedCount] == local_argb::kBlack);
 }
 
 void test_fill_list_is_bounded() {
@@ -842,6 +885,8 @@ int main() {
   test_startup_and_independent_expiry();
   test_failed_colour_attempt_retries_black_then_recovers();
   test_bounded_overwrite_and_generic_sink();
+  test_lit_frames_cover_active_length_and_every_black_covers_buffer();
+  test_factory_layout_is_anchored_to_strip_ends();
   test_duplicate_command_and_tick_write_once();
   test_failed_startup_clear_stays_faulted_and_retries_black();
   test_failed_fallback_clear_needs_black_before_recovery();

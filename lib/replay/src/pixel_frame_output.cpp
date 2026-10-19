@@ -1,5 +1,6 @@
 #include "replay/pixel_frame_output.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <string>
@@ -31,7 +32,8 @@ bool append_rgb(std::string &output, const local_argb::Rgb pixel) {
 
 } // namespace
 
-bool TimestampedPixelFrameSink::write(const local_argb::PixelFrame &frame) noexcept {
+bool TimestampedPixelFrameSink::write(const local_argb::PixelFrame &frame,
+                                      const std::size_t) noexcept {
   try {
     frames_.push_back({clock_->now(), frame});
     return true;
@@ -51,7 +53,7 @@ bool JsonlPixelFrameSink::write_header() noexcept {
     append_literal(line, "{\"type\":\"header\",\"version\":");
     append_decimal(line, kJsonlFormatVersion);
     append_literal(line, ",\"pixel_count\":");
-    append_decimal(line, local_argb::kLedCount);
+    append_decimal(line, local_argb::kDefaultLedCount);
     append_literal(line, "}\n");
     output_->write(line.data(), static_cast<std::streamsize>(line.size()));
     if (!output_->good())
@@ -80,16 +82,20 @@ bool JsonlPixelFrameSink::write_end() noexcept {
   }
 }
 
-bool JsonlPixelFrameSink::write(const local_argb::PixelFrame &frame) noexcept {
+bool JsonlPixelFrameSink::write(const local_argb::PixelFrame &frame,
+                                const std::size_t length) noexcept {
   try {
     if (wrote_end_ || !write_header())
       return false;
     std::string line;
-    line.reserve(64 + frame.size() * 16);
+    // The stream describes the default-length strip; a full-buffer black write
+    // beyond it adds no pixels, so the stream is unchanged by the larger buffer.
+    const std::size_t count = std::min(length, local_argb::kDefaultLedCount);
+    line.reserve(64 + count * 16);
     append_literal(line, "{\"type\":\"pixels\",\"timestamp_us\":");
     if (!append_decimal(line, clock_->now()) || !append_literal(line, ",\"pixels\":["))
       return false;
-    for (std::size_t index = 0; index < frame.size(); ++index) {
+    for (std::size_t index = 0; index < count; ++index) {
       if (index != 0)
         if (!append_literal(line, ","))
           return false;

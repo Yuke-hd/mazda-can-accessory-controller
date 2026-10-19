@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +12,7 @@ namespace {
 
 using local_argb::kBlack;
 using local_argb::kBlackFrame;
-using local_argb::kLedCount;
+using local_argb::kDefaultLedCount;
 using local_argb::PixelFrame;
 using local_argb::Rgb;
 using local_argb::internal::fill_zone;
@@ -44,26 +45,27 @@ PixelFrame filled(const LedZone zone, const FillFraction fraction) {
 }
 
 void test_zone_can_cover_any_contiguous_subset_of_the_strip() {
-  assert(validate_zone({0, kLedCount, FillDirection::StartToEnd}) == ZoneValidity::Valid);
+  assert(validate_zone({0, kDefaultLedCount, FillDirection::StartToEnd}) == ZoneValidity::Valid);
   assert(validate_zone({0, 1, FillDirection::EndToStart}) == ZoneValidity::Valid);
-  assert(validate_zone({kLedCount - 1, 1, FillDirection::CenterOut}) == ZoneValidity::Valid);
+  assert(validate_zone({kDefaultLedCount - 1, 1, FillDirection::CenterOut}) == ZoneValidity::Valid);
   assert(validate_zone({35, 30, FillDirection::CenterOut}) == ZoneValidity::Valid);
 
-  const auto whole_strip = filled({0, kLedCount, FillDirection::StartToEnd}, FillFraction::full());
+  const auto whole_strip =
+      filled({0, kDefaultLedCount, FillDirection::StartToEnd}, FillFraction::full());
   PixelFrame all_lit{};
-  all_lit.fill(kColor);
+  std::fill_n(all_lit.begin(), kDefaultLedCount, kColor);
   assert(whole_strip == all_lit);
 }
 
 void test_invalid_zones_report_reason_and_leave_frame_untouched() {
   PixelFrame frame = kBlackFrame;
   frame[0] = Rgb{1, 2, 3};
-  frame[kLedCount - 1] = Rgb{4, 5, 6};
+  frame[kDefaultLedCount - 1] = Rgb{4, 5, 6};
   const PixelFrame before = frame;
 
   const LedZone empty{10, 0, FillDirection::StartToEnd};
-  const LedZone start_past_end{kLedCount, 1, FillDirection::StartToEnd};
-  const LedZone overruns_end{kLedCount - 2, 3, FillDirection::EndToStart};
+  const LedZone start_past_end{kDefaultLedCount, 1, FillDirection::StartToEnd};
+  const LedZone overruns_end{kDefaultLedCount - 2, 3, FillDirection::EndToStart};
   const LedZone wrapping_length{1, static_cast<std::size_t>(-1), FillDirection::CenterOut};
   const LedZone unknown_direction{0, 4, static_cast<FillDirection>(0x7f)};
 
@@ -93,11 +95,11 @@ void test_fraction_extremes_stay_exact() {
 
   // L = 100 * (MAX - 1) / MAX = 99 + (MAX - 100) / MAX: 99 full pixels and a
   // last pixel at (MAX - 100) / MAX, which floors every channel to c - 1.
-  const auto frame = filled({0, kLedCount, FillDirection::StartToEnd},
+  const auto frame = filled({0, kDefaultLedCount, FillDirection::StartToEnd},
                             FillFraction::of(UINT32_MAX - 1, UINT32_MAX));
-  for (std::size_t index = 0; index + 1 < kLedCount; ++index)
+  for (std::size_t index = 0; index + 1 < kDefaultLedCount; ++index)
     assert(frame[index] == kColor);
-  assert((frame[kLedCount - 1] == Rgb{199, 99, 49}));
+  assert((frame[kDefaultLedCount - 1] == Rgb{199, 99, 49}));
 }
 
 void test_start_to_end_fills_from_the_zone_start() {
@@ -181,10 +183,10 @@ void test_center_out_even_zone_splits_fill_between_halves() {
 void test_single_pixel_zone_shows_fraction_as_brightness_in_every_direction() {
   for (const auto direction :
        {FillDirection::StartToEnd, FillDirection::EndToStart, FillDirection::CenterOut}) {
-    const LedZone zone{kLedCount - 1, 1, direction};
-    assert_frame(filled(zone, FillFraction::of(1, 2)), {{kLedCount - 1, kHalf}});
-    assert_frame(filled(zone, FillFraction::of(1, 10)), {{kLedCount - 1, kTenth}});
-    assert_frame(filled(zone, FillFraction::full()), {{kLedCount - 1, kColor}});
+    const LedZone zone{kDefaultLedCount - 1, 1, direction};
+    assert_frame(filled(zone, FillFraction::of(1, 2)), {{kDefaultLedCount - 1, kHalf}});
+    assert_frame(filled(zone, FillFraction::of(1, 10)), {{kDefaultLedCount - 1, kTenth}});
+    assert_frame(filled(zone, FillFraction::full()), {{kDefaultLedCount - 1, kColor}});
   }
 }
 
@@ -197,7 +199,7 @@ void test_fill_only_writes_lit_pixels_inside_the_zone() {
   const LedZone zone{50, 4, FillDirection::EndToStart};
   assert(fill_zone(frame, zone, FillFraction::of(5, 8), kColor) == ZoneValidity::Valid);
 
-  for (std::size_t index = 0; index < kLedCount; ++index) {
+  for (std::size_t index = 0; index < kDefaultLedCount; ++index) {
     if (index == 52 || index == 53)
       assert(frame[index] == kColor);
     else if (index == 51)
@@ -242,7 +244,7 @@ void test_pixels_never_dim_as_the_fraction_grows() {
       PixelFrame previous = kBlackFrame;
       for (std::uint32_t numerator = 0; numerator <= 100; ++numerator) {
         const auto current = filled(zone, FillFraction::of(numerator, 100));
-        for (std::size_t index = 0; index < kLedCount; ++index) {
+        for (std::size_t index = 0; index < kDefaultLedCount; ++index) {
           assert(no_dimmer(current[index], previous[index]));
           if (index < zone.start || index >= zone.start + zone.length)
             assert(current[index] == kBlack);

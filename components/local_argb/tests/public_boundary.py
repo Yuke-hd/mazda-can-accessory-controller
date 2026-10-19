@@ -131,11 +131,12 @@ def main() -> int:
         frame_probe.write_text(
             '#include "local_argb/pixel_frame.hpp"\n'
             "struct Probe final : local_argb::PixelFrameSink {\n"
-            "  bool write(const local_argb::PixelFrame &frame) noexcept override {\n"
-            "    return frame == local_argb::kBlackFrame && frame[0] == local_argb::kBlack;\n"
+            "  bool write(const local_argb::PixelFrame &frame, std::size_t length) noexcept override {\n"
+            "    return length == local_argb::kMaxLedCount && frame == local_argb::kBlackFrame &&\n"
+            "           frame[0] == local_argb::kBlack;\n"
             "  }\n"
             "};\n"
-            "int main() { Probe probe; return probe.write(local_argb::kBlackFrame) ? 0 : 1; }\n",
+            "int main() { Probe probe; return probe.write(local_argb::kBlackFrame, local_argb::kMaxLedCount) ? 0 : 1; }\n",
             encoding="utf-8",
         )
         frame_result = subprocess.run(

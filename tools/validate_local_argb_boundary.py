@@ -484,8 +484,8 @@ def main() -> int:
             failures.append(f"{label} is missing: {needle}")
     for needle, label in (
         ("OnboardRgb{4, kOnboardRgbPixelCount}", "GPIO4/single-pixel onboard board record"),
-        ("VehicleLightStrip{16, kVehicleLightStripPixelCount}", "GPIO16/100-pixel vehicle board record"),
-        ("kVehicleLightStripPixelCount = 100", "100-pixel logical renderer record"),
+        ("VehicleLightStrip{16, kVehicleLightStripPixelCount}", "GPIO16/300-pixel vehicle board record"),
+        ("kVehicleLightStripPixelCount = 300", "300-pixel logical renderer record"),
     ):
         if needle not in board_header:
             failures.append(f"{label} is missing: {needle}")

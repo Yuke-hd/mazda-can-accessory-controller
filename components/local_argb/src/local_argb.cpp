@@ -2,6 +2,7 @@
 
 #include "../private_include/local_argb/led_zone.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -242,24 +243,23 @@ bool RendererController::apply(const LightingCommand &command,
 }
 
 bool RendererController::tick(const vehicle_core::MonotonicTimestamp now_us) noexcept {
-  PixelFrame desired = kBlackFrame;
+  desired_ = kBlackFrame;
   if (now_us < last_tick_us_ || faulted_ || !command_.actionable ||
       now_us > command_.valid_until_us)
     transients_.cancel();
   transients_.expire(now_us);
   last_tick_us_ = now_us;
   if (!faulted_ && has_command_ && command_.actionable && now_us <= command_.valid_until_us) {
-    desired = frame_for(now_us);
+    draw_frame(now_us, desired_);
   }
-  return write_desired(desired);
+  return write_desired(desired_);
 }
 
-PixelFrame
-RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) const noexcept {
-  PixelFrame frame = kBlackFrame;
+void RendererController::draw_frame(const vehicle_core::MonotonicTimestamp now_us,
+                                    PixelFrame &frame) const noexcept {
   if (!command_.left_turn && !command_.right_turn && !command_.brake && command_.fills.empty()) {
     // Preserve the generic colour-only handoff for compatibility consumers.
-    frame.fill(ceiling_clamped(command_.color));
+    std::fill_n(frame.begin(), kDefaultLedCount, ceiling_clamped(command_.color));
   }
 
   // Painter's order by priority: each layer owns its region wherever no
@@ -270,14 +270,19 @@ RendererController::frame_for(const vehicle_core::MonotonicTimestamp now_us) con
   const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
   for (const Layer &layer : layers)
     draw_owned(frame, layer, animation_, elapsed);
-  return frame;
 }
 
 bool RendererController::write_desired(const PixelFrame &desired) noexcept {
   if (has_last_written_ && desired == last_written_) {
     return true;
   }
-  if (sink_->write(desired)) {
+  // A lit frame covers the active length. Every black frame covers the whole
+  // buffer, so startup, fail-off and the black before a restart can never
+  // leave a pixel lit beyond the active length.
+  // This relies on the active length being constant: a lit frame never
+  // writes past it, so the pixels beyond stay black from the last black write.
+  const std::size_t length = desired == kBlackFrame ? kMaxLedCount : kDefaultLedCount;
+  if (sink_->write(desired, length)) {
     last_written_ = desired;
     has_last_written_ = true;
     return true;
@@ -286,7 +291,7 @@ bool RendererController::write_desired(const PixelFrame &desired) noexcept {
   faulted_ = true;
   transients_.cancel();
   has_last_written_ = false;
-  if (desired != kBlackFrame && sink_->write(kBlackFrame)) {
+  if (desired != kBlackFrame && sink_->write(kBlackFrame, kMaxLedCount)) {
     last_written_ = kBlackFrame;
     has_last_written_ = true;
   }
