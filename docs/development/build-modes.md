@@ -20,7 +20,7 @@ vehicle validation.
 | [Firmware diagnostics](#51-firmware-diagnostic-builds) | Opt-in runtime stats, stage profiling, freshness debug | ESP-IDF 5.5.4 | No |
 | [Firmware with a custom profile](#6-firmware-with-a-custom-profile) | Embed a local controller config | ESP-IDF 5.5.4 | No |
 | [Replay tools](#7-replay-tools) | Run `can-replay` and `gvret-led-emulator` on the host | Host build | Built with the host build |
-| [Validators](#8-validators-and-formatting) | Architecture, boundary, and format checks | Python 3, clang-format 14 | Yes |
+| [Validators](#8-validators-and-formatting) | Architecture, boundary, and format checks | Python 3, clang-format supporting C++17 | Yes |
 | [Telemetry baseline](#9-telemetry-baseline) | Synthetic performance measurement | Host build, Python 3 | No |
 
 Check your tools first. This never installs anything:
@@ -192,12 +192,12 @@ output from a real capture is derived vehicle data and follows the
 | Public headers | `python3 tools/check_public_headers.py --root .` | [Architecture validation](architecture-validation.md) |
 | IRAM placement | Runs automatically as a firmware POST_BUILD step (`tools/check_iram_placement.py`) | [Flash-cache layout](flash-cache-layout.md) |
 | Toolchain checker tests | `python3 -m unittest discover -s tests/tools -p '*_test.py'` | CI |
-| Formatting | `clang-format --dry-run --Werror <files>` | CI uses clang-format **14** |
+| Formatting | `clang-format --style=file --dry-run --Werror <files>` | Any clang-format version supporting C++17; CI installs Ubuntu's package |
 
 Format check over the same files CI covers:
 
 ```sh
-clang-format --dry-run --Werror $(find lib components firmware tests -type f \
+clang-format --style=file --dry-run --Werror $(find lib components firmware tests -type f \
   \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
 ```
 

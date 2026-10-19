@@ -47,6 +47,7 @@ reports/generated/
 *.bak
 
 .agents/
+/.codex/environments
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
