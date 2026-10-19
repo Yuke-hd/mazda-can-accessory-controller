@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import socket
@@ -32,13 +33,27 @@ outputs:
 """
 
 
-def reference_catalog() -> bytes:
+SETTINGS_DESCRIPTOR = """\
+descriptor_format: 1
+sink: test_sink
+settings:
+  - {name: pixel_count, kind: integer, required: false,
+     min: 100, max: {board: strip_max_pixels}, default: 100}
+outputs:
+  - type: test_output
+    fields:
+      - {name: zone, kind: zone, required: true, pixels: {board: strip_max_pixels},
+         pixels_setting: pixel_count, directions: [start_to_end]}
+"""
+
+
+def reference_catalog(index: int = 0) -> bytes:
     """The WeAct document from the spec's Synthetic reference vectors section."""
     text = SPEC.read_text(encoding="utf-8")
     section = text.split("## Synthetic reference vectors", 1)[1]
-    match = re.search(r"```json\n(.*?)\n```", section, re.DOTALL)
-    assert match is not None, "reference vector block missing from the spec"
-    return match.group(1).encode("utf-8")
+    matches = re.findall(r"```json\n(.*?)\n```", section, re.DOTALL)
+    assert len(matches) > index, "reference vector block missing from the spec"
+    return matches[index].encode("utf-8")
 
 
 class GeneratorRun:
@@ -274,6 +289,183 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
         self.assertNotEqual(bad.returncode, 0)
         self.assertEqual(good.catalog.read_bytes(), catalog)
         self.assertEqual(good.header.read_bytes(), header)
+
+    # Sink settings and setting-bounded zones -------------------------------------
+
+    def test_setting_descriptor_matches_future_reference_vector(self) -> None:
+        match = re.search(r"```yaml\n(.*?)\n```", SPEC.read_text(encoding="utf-8"), re.DOTALL)
+        self.assertIsNotNone(match, "descriptor example missing from the spec")
+        descriptor = self.write_descriptor("future.yaml", match.group(1))
+        run = self.generate([descriptor], ["strip_max_pixels=300"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        expected = reference_catalog(1)
+        self.assertEqual(len(expected), 1747)
+        self.assertEqual(run.catalog.read_bytes(), expected)
+
+    def test_settings_catalog_and_header_encoding(self) -> None:
+        descriptor = self.write_descriptor("settings.yaml", SETTINGS_DESCRIPTOR)
+        run = self.generate([descriptor], ["strip_max_pixels=300"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        expected = ('{"outputs":[{"type":"test_output","sink":"test_sink","fields":['
+                    '{"name":"zone","kind":"zone","required":true,"pixels":300,'
+                    '"pixels_setting":"pixel_count","directions":["start_to_end"]}]}],'
+                    '"sinks":[{"sink":"test_sink","settings":[{"name":"pixel_count",'
+                    '"kind":"integer","required":false,"min":100,"max":300,"default":100}]}]}')
+        self.assertEqual(run.catalog.read_bytes(), expected.encode("utf-8"))
+        header = run.header.read_text(encoding="utf-8")
+        self.assertIn(
+            "namespace test_sink_settings {\n"
+            "inline constexpr std::int32_t kPixelCountMin = 100;\n"
+            "inline constexpr std::int32_t kPixelCountMax = 300;\n"
+            "inline constexpr std::int32_t kPixelCountDefault = 100;\n"
+            "} // namespace test_sink_settings\n", header)
+        self.assertIn('inline constexpr std::string_view kZonePixelsSetting = "pixel_count";', header)
+        self.assertLess(header.index("kOutputTypeNames"), header.index("namespace test_sink_settings"))
+        self.assertLess(header.index("namespace test_sink_settings"), header.index("namespace test_output"))
+        again = self.generate([descriptor], ["strip_max_pixels=300"], output="again")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertEqual(again.catalog.read_bytes(), run.catalog.read_bytes())
+        self.assertEqual(again.header.read_bytes(), run.header.read_bytes())
+        compiler = shutil.which("c++")
+        if compiler is not None:
+            source = self.root / "settings.cpp"
+            source.write_text(
+                '#include <controller_config/generated/output_limits.hpp>\n'
+                'namespace g = controller_config::generated;\n'
+                'static_assert(g::test_sink_settings::kPixelCountMax == 300);\n'
+                'static_assert(g::test_output::kZonePixelsSetting == "pixel_count");\n',
+                encoding="utf-8")
+            result = subprocess.run(
+                [compiler, "-std=c++17", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-fsyntax-only",
+                 "-I", str(run.header.parents[2]), str(source)], capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_setting_max_may_be_below_zone_pixels_and_all_bounds_resolve_board_values(self) -> None:
+        descriptor = self.write_descriptor("smaller_max.yaml", SETTINGS_DESCRIPTOR.replace(
+            "min: 100, max: {board: strip_max_pixels}, default: 100",
+            "min: {board: minimum}, max: {board: active_max}, default: {board: initial}"))
+        run = self.generate([descriptor], ["strip_max_pixels=300", "minimum=100", "active_max=299", "initial=150"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        catalog = json.loads(run.catalog.read_bytes())
+        self.assertEqual(catalog["outputs"][0]["fields"][0]["pixels"], 300)
+        setting = catalog["sinks"][0]["settings"][0]
+        self.assertEqual((setting["min"], setting["max"], setting["default"]), (100, 299, 150))
+        header = run.header.read_text(encoding="utf-8")
+        for attribute, value in (("Min", 100), ("Max", 299), ("Default", 150)):
+            self.assertIn(f"inline constexpr std::int32_t kPixelCount{attribute} = {value};", header)
+
+    def test_settings_and_sinks_keep_descriptor_order(self) -> None:
+        first = self.write_descriptor("first.yaml", SETTINGS_DESCRIPTOR.replace(
+            "outputs:\n", "  - {name: brightness, kind: integer, required: false, min: 0, max: 255, default: 50}\noutputs:\n"))
+        second = self.write_descriptor("second.yaml", SETTINGS_DESCRIPTOR.replace(
+            "test_sink", "other_sink").replace("test_output", "other_output"))
+        run = self.generate([second, first], ["strip_max_pixels=300"])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        catalog = json.loads(run.catalog.read_bytes())
+        self.assertEqual([s["sink"] for s in catalog["sinks"]], ["other_sink", "test_sink"])
+        self.assertEqual([s["name"] for s in catalog["sinks"][1]["settings"]], ["pixel_count", "brightness"])
+        header = run.header.read_text(encoding="utf-8")
+        self.assertLess(header.index("namespace other_sink_settings"), header.index("namespace test_sink_settings"))
+
+    def test_empty_settings_are_published(self) -> None:
+        descriptor = self.write_descriptor("empty_settings.yaml", MINIMAL_DESCRIPTOR + "settings: []\n")
+        run = self.generate([descriptor])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.catalog.read_bytes())["sinks"], [{"sink": "test_sink", "settings": []}])
+
+    def test_settings_only_descriptor_has_no_separate_board_maximum(self) -> None:
+        descriptor = self.write_descriptor("settings_only.yaml", """\
+            descriptor_format: 1
+            sink: test_sink
+            settings:
+              - {name: pixel_count, kind: integer, required: false, min: 100, max: 500, default: 100}
+            outputs: []
+            """)
+        run = self.generate([descriptor])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        catalog = json.loads(run.catalog.read_bytes())
+        self.assertEqual(catalog["outputs"], [])
+        self.assertEqual(catalog["sinks"][0]["settings"][0]["max"], 500)
+        self.assertIn("namespace test_sink_settings", run.header.read_text(encoding="utf-8"))
+
+    def test_duplicate_sink_settings_are_rejected(self) -> None:
+        first = self.write_descriptor("first.yaml", SETTINGS_DESCRIPTOR)
+        second = self.write_descriptor("second.yaml", SETTINGS_DESCRIPTOR.replace("test_output", "other_output"))
+        self.assert_rejected(self.generate([first, second], ["strip_max_pixels=300"]),
+                             "second.yaml", "settings", "test_sink_settings")
+
+    def test_invalid_settings_name_file_and_path(self) -> None:
+        valid = "{name: pixel_count, kind: integer, required: false, min: 100, max: 300, default: 100}"
+        cases = [
+            ("{}", "settings"),
+            ("[" + valid.replace("kind: integer", "kind: enum").replace(
+                ", min: 100, max: 300, default: 100", ", values: [a]") + "]", "settings[0].kind"),
+            ("[" + valid.replace("required: false", "required: true") + "]", "settings[0].required"),
+            ("[" + valid.replace(", default: 100", "") + "]", "settings[0].default"),
+            ("[" + valid.replace("default: 100", "default: 99") + "]", "settings[0].default"),
+            ("[" + valid.replace("default: 100", "default: 301") + "]", "settings[0].default"),
+            ("[" + valid.replace(", min: 100", "") + "]", "settings[0].min"),
+            ("[" + valid.replace("max: 300", "max: 300.0") + "]", "settings[0].max"),
+            ("[" + valid.replace("min: 100", "min: true") + "]", "settings[0].min"),
+            ("[" + valid.replace(", max: 300", "") + "]", "settings[0].max"),
+            ("[" + valid.replace("min: 100", "min: 301") + "]", "settings[0].min"),
+            ("[" + valid.replace("default: 100", "default: 100.0") + "]", "settings[0].default"),
+            ("[" + valid.replace("max: 300", "max: 2147483648") + "]", "settings[0].max"),
+            ("[" + valid.replace("pixel_count", "PixelCount") + "]", "settings[0].name"),
+            ("[" + valid.replace("default: 100", "default: 100, label: pixels") + "]", "settings[0].label"),
+            ("[" + valid + ", " + valid + "]", "settings[1].name"),
+        ]
+        for settings, path in cases:
+            with self.subTest(settings=settings):
+                descriptor = self.write_descriptor("bad_settings.yaml", MINIMAL_DESCRIPTOR + f"settings: {settings}\n")
+                self.assert_rejected(self.generate([descriptor]), "bad_settings.yaml", path)
+
+    def test_invalid_pixels_setting_names_file_and_path(self) -> None:
+        cases = [
+            SETTINGS_DESCRIPTOR.replace("pixels_setting: pixel_count", "pixels_setting: missing"),
+            SETTINGS_DESCRIPTOR.replace("pixels_setting: pixel_count", "pixels_setting: PixelCount"),
+            SETTINGS_DESCRIPTOR.replace("pixels_setting: pixel_count", "pixels_setting: 100"),
+            SETTINGS_DESCRIPTOR.replace("pixels: {board: strip_max_pixels}", "pixels: 299"),
+            SETTINGS_DESCRIPTOR.split("settings:")[0] + "outputs:" + SETTINGS_DESCRIPTOR.split("outputs:")[1],
+        ]
+        for source in cases:
+            with self.subTest(source=source):
+                descriptor = self.write_descriptor("bad_bound.yaml", source)
+                self.assert_rejected(self.generate([descriptor], ["strip_max_pixels=300"]),
+                                     "bad_bound.yaml", "outputs[0].fields[0].pixels_setting")
+
+    def test_pixels_setting_cannot_reference_an_output_field_or_another_sink(self) -> None:
+        owner = self.write_descriptor("owner.yaml", SETTINGS_DESCRIPTOR)
+        other = self.write_descriptor("other.yaml", """\
+            descriptor_format: 1
+            sink: other_sink
+            outputs:
+              - type: other_output
+                fields:
+                  - {name: pixel_count, kind: integer, required: false, min: 100, max: 300, default: 100}
+                  - {name: zone, kind: zone, required: true, pixels: 300,
+                     pixels_setting: pixel_count, directions: [start_to_end]}
+            """)
+        self.assert_rejected(self.generate([owner, other], ["strip_max_pixels=300"]),
+                             "other.yaml", "outputs[0].fields[1].pixels_setting")
+
+    def test_settings_namespace_collision_is_rejected_in_either_descriptor_order(self) -> None:
+        settings = self.write_descriptor("settings.yaml", SETTINGS_DESCRIPTOR)
+        output = self.write_descriptor("output.yaml", MINIMAL_DESCRIPTOR.replace("test_output", "test_sink_settings"))
+        for descriptors in ([settings, output], [output, settings]):
+            with self.subTest(descriptors=descriptors):
+                self.assert_rejected(self.generate(descriptors, ["strip_max_pixels=300"]), "test_sink_settings")
+
+    def test_colliding_setting_constants_are_rejected(self) -> None:
+        descriptor = self.write_descriptor("collide_settings.yaml", """\
+            descriptor_format: 1
+            sink: s
+            settings:
+              - {name: a_b, kind: integer, required: false, min: 0, max: 1, default: 0}
+              - {name: a__b, kind: integer, required: false, min: 0, max: 1, default: 0}
+            outputs: []
+            """)
+        self.assert_rejected(self.generate([descriptor]), "collide_settings.yaml", "settings", "kABMin")
 
     # Descriptor rules ------------------------------------------------------------
 
