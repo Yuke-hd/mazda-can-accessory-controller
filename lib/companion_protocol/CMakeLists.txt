@@ -20,6 +20,8 @@ if(COMMAND idf_component_register)
                               "src/link_security.cpp"
                               "src/live_signal_stream.cpp"
                               "src/live_signals.cpp"
+                              "src/output_catalog_export.cpp"
+                              "src/output_catalog_selector.cpp"
                               "src/pairing_window.cpp"
                               "src/read_back.cpp"
                               "src/signal_catalog_export.cpp"
@@ -43,6 +45,8 @@ add_library(companion_protocol STATIC
   src/link_security.cpp
   src/live_signal_stream.cpp
   src/live_signals.cpp
+  src/output_catalog_export.cpp
+  src/output_catalog_selector.cpp
   src/pairing_window.cpp
   src/read_back.cpp
   src/signal_catalog_export.cpp

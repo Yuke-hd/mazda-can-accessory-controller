@@ -146,6 +146,8 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
             header, "portable companion protocol", COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES
         )
         for header in (
+            "companion_protocol/output_catalog_export.hpp",
+            "companion_protocol/output_catalog_selector.hpp",
             "companion_protocol/signal_catalog_export.hpp",
             "companion_protocol/signal_catalog_selector.hpp",
             "companion_protocol/extensible_live_signals.hpp",
