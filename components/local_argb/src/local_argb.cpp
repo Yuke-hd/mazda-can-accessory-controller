@@ -82,7 +82,8 @@ public:
   explicit LayerStack(const LightingCommand &command, const LightingFills &transients,
                       const std::size_t pixel_count) noexcept {
     for (const LightingFill &fill : command.fills) {
-      if (fill.level != FillFraction::empty() && validate_zone(fill.zone) == ZoneValidity::Valid)
+      if (fill.level != FillFraction::empty() &&
+          validate_zone(fill.zone, pixel_count) == ZoneValidity::Valid)
         push({LayerKind::Fill, fill.priority, &fill, fill.zone.start, fill.zone.length});
     }
     if (command.brake)
@@ -186,7 +187,7 @@ void TransientLayers::expire(const vehicle_core::MonotonicTimestamp now_us) noex
 
 void TransientLayers::apply(const LightingTransientStarts &starts,
                             const vehicle_core::MonotonicTimestamp now_us,
-                            const std::uint32_t epoch) noexcept {
+                            const std::uint32_t epoch, const std::size_t pixel_count) noexcept {
   std::array<bool, LightingTransientStarts::kCapacity> present{};
   for (const auto &start : starts) {
     const auto index = start.id.value() - 1;
@@ -198,7 +199,7 @@ void TransientLayers::apply(const LightingTransientStarts &starts,
               start.effect.duration_us > 0 && start.effect.duration_us <= kMaxTransientDurationUs &&
                   start.epoch == epoch && now_us >= start.origin_us &&
                   now_us - start.origin_us < start.effect.duration_us &&
-                  validate_zone(start.effect.zone) == ZoneValidity::Valid};
+                  validate_zone(start.effect.zone, pixel_count) == ZoneValidity::Valid};
   }
   for (std::size_t index = 0; index < timing_.size(); ++index)
     if (!present[index])
@@ -236,7 +237,7 @@ bool RendererController::apply(const LightingCommand &command,
   const bool effects_changed = !has_command_ || command.left_turn != command_.left_turn ||
                                command.right_turn != command_.right_turn ||
                                command.brake != command_.brake;
-  transients_.apply(command.transients, now_us, epoch);
+  transients_.apply(command.transients, now_us, epoch, pixel_count_);
   command_ = command;
   has_command_ = true;
   if (effects_changed)

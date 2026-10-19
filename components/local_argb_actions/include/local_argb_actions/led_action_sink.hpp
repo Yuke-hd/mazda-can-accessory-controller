@@ -73,9 +73,10 @@ public:
     return fills_.bind(action, effect);
   }
 
-  [[nodiscard]] BindingStatus bind(action_engine::ActionId action,
-                                   const local_argb::internal::LightingTransient &effect) noexcept {
-    return transients_.bind(action, effect);
+  [[nodiscard]] BindingStatus
+  bind(action_engine::ActionId action, const local_argb::internal::LightingTransient &effect,
+       std::size_t pixel_count = local_argb::kDefaultLedCount) noexcept {
+    return transients_.bind(action, effect, pixel_count);
   }
 
   void execute(const action_engine::ActionCommand &command) noexcept override;

@@ -6,6 +6,7 @@
 
 #include "action_engine/action.hpp"
 #include "local_argb/lighting_sink.hpp"
+#include "local_argb/pixel_frame.hpp"
 #include "local_argb_actions/effect_bindings.hpp"
 
 namespace local_argb_actions {
@@ -18,7 +19,8 @@ public:
   static constexpr std::size_t kCapacity = local_argb::internal::LightingTransientStarts::kCapacity;
 
   [[nodiscard]] BindingStatus bind(action_engine::ActionId action,
-                                   const local_argb::internal::LightingTransient &effect) noexcept;
+                                   const local_argb::internal::LightingTransient &effect,
+                                   std::size_t pixel_count = local_argb::kDefaultLedCount) noexcept;
   [[nodiscard]] bool trigger(action_engine::ActionId action,
                              vehicle_core::MonotonicTimestamp origin_us,
                              std::uint32_t epoch) noexcept;

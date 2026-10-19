@@ -59,7 +59,7 @@ inline constexpr AnimationStrategy kCenterOutFillAnimation = &render_center_out_
 class TransientLayers {
 public:
   void apply(const LightingTransientStarts &starts, vehicle_core::MonotonicTimestamp now_us,
-             std::uint32_t epoch) noexcept;
+             std::uint32_t epoch, std::size_t pixel_count = kMaxLedCount) noexcept;
   void cancel() noexcept;
   void expire(vehicle_core::MonotonicTimestamp now_us) noexcept;
   [[nodiscard]] LightingFills active(const LightingTransientStarts &starts) const noexcept;
