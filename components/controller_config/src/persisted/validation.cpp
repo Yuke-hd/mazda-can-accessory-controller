@@ -1,6 +1,7 @@
 #include "controller_config/persisted/validation.hpp"
 
 #include <cmath>
+#include <limits>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -20,9 +21,61 @@ namespace {
 using action_engine::Comparison;
 using action_engine::NumericRange;
 
-constexpr Integer kMaxByte = 255;
+struct OutputLimits {
+  Integer pixels;
+  Integer color_min;
+  Integer color_max;
+  Integer priority_min;
+  Integer priority_max;
+};
 
-[[nodiscard]] bool is_byte(const Integer value) noexcept { return value >= 0 && value <= kMaxByte; }
+constexpr OutputLimits limits_for(const LedFillBinding &) noexcept {
+  using namespace generated::led_fill;
+  return {kZonePixels, kColorMin, kColorMax, kPriorityMin, kPriorityMax};
+}
+
+constexpr OutputLimits limits_for(const LedTransientBinding &) noexcept {
+  using namespace generated::led_transient;
+  return {kZonePixels, kColorMin, kColorMax, kPriorityMin, kPriorityMax};
+}
+
+constexpr OutputLimits limits_for(const LedSolidBinding &) noexcept {
+  using namespace generated::led_solid;
+  return {kZonePixels, kColorMin, kColorMax, kPriorityMin, kPriorityMax};
+}
+
+constexpr bool fits_byte(const Integer minimum, const Integer maximum) noexcept {
+  return minimum >= std::numeric_limits<std::uint8_t>::min() && minimum <= maximum &&
+         maximum <= std::numeric_limits<std::uint8_t>::max();
+}
+
+// The fixed strip uses the default length until runtime strip settings are supported.
+static_assert(generated::led_effect::kPriorityDefault ==
+              local_argb::internal::EffectPriority::kDefault);
+static_assert(fits_byte(generated::led_effect::kPriorityMin, generated::led_effect::kPriorityMax));
+static_assert(generated::led_fill::kPriorityDefault ==
+              local_argb::internal::EffectPriority::kDefault);
+static_assert(fits_byte(generated::led_fill::kPriorityMin, generated::led_fill::kPriorityMax));
+static_assert(generated::led_fill::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(fits_byte(generated::led_fill::kColorMin, generated::led_fill::kColorMax));
+static_assert(generated::led_transient::kPriorityDefault ==
+              local_argb::internal::EffectPriority::kDefault);
+static_assert(fits_byte(generated::led_transient::kPriorityMin,
+                        generated::led_transient::kPriorityMax));
+static_assert(generated::led_transient::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(fits_byte(generated::led_transient::kColorMin, generated::led_transient::kColorMax));
+static_assert(generated::led_solid::kPriorityDefault ==
+              local_argb::internal::EffectPriority::kDefault);
+static_assert(fits_byte(generated::led_solid::kPriorityMin, generated::led_solid::kPriorityMax));
+static_assert(generated::led_solid::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(fits_byte(generated::led_solid::kColorMin, generated::led_solid::kColorMax));
+static_assert(static_cast<std::uint64_t>(generated::led_transient::kDurationMsMax) * 1000U ==
+              local_argb::internal::kMaxTransientDurationUs);
+
+constexpr bool in_range(const Integer value, const Integer minimum,
+                        const Integer maximum) noexcept {
+  return value >= minimum && value <= maximum;
+}
 
 [[nodiscard]] bool is_declared(const std::vector<Action> &actions,
                                const std::string_view name) noexcept {
@@ -178,14 +231,13 @@ freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
 
 // As local_argb's renderer: a recognized direction, a non-empty length, and a
 // zone that fits inside the logical strip.
-[[nodiscard]] ValidationError zone_error(const LedZone &zone) noexcept {
-  constexpr auto kStripLength = static_cast<Integer>(local_argb::kDefaultLedCount);
+[[nodiscard]] ValidationError zone_error(const LedZone &zone, const Integer pixels) noexcept {
   if (!name_of(zone.direction).has_value())
     return ValidationError::UnknownFillDirection;
   if (zone.length == 0)
     return ValidationError::EmptyZone;
-  if (zone.start < 0 || zone.length < 0 || zone.start >= kStripLength ||
-      zone.length > kStripLength - zone.start)
+  if (zone.start < 0 || zone.length < 0 || zone.start >= pixels ||
+      zone.length > pixels - zone.start)
     return ValidationError::ZoneOutOfRange;
   return ValidationError::None;
 }
@@ -193,18 +245,23 @@ freshness_error(const action_engine::FreshnessRequirement freshness) noexcept {
 [[nodiscard]] ValidationError body_error(const LedEffectBinding &binding) noexcept {
   if (!name_of(binding.effect).has_value())
     return ValidationError::UnknownLedEffect;
-  if (!is_byte(binding.priority))
+  if (!in_range(binding.priority, generated::led_effect::kPriorityMin,
+                generated::led_effect::kPriorityMax))
     return ValidationError::InvalidPriority;
   return ValidationError::None;
 }
 
 template <typename Binding>
 [[nodiscard]] ValidationError zone_binding_error(const Binding &binding) noexcept {
-  if (const ValidationError error = zone_error(binding.zone); error != ValidationError::None)
+  const auto limits = limits_for(binding);
+  if (const ValidationError error = zone_error(binding.zone, limits.pixels);
+      error != ValidationError::None)
     return error;
-  if (!is_byte(binding.color.red) || !is_byte(binding.color.green) || !is_byte(binding.color.blue))
+  if (!in_range(binding.color.red, limits.color_min, limits.color_max) ||
+      !in_range(binding.color.green, limits.color_min, limits.color_max) ||
+      !in_range(binding.color.blue, limits.color_min, limits.color_max))
     return ValidationError::InvalidColor;
-  if (!is_byte(binding.priority))
+  if (!in_range(binding.priority, limits.priority_min, limits.priority_max))
     return ValidationError::InvalidPriority;
   return ValidationError::None;
 }
@@ -216,7 +273,8 @@ template <typename Binding>
 [[nodiscard]] ValidationError body_error(const LedTransientBinding &binding) noexcept {
   if (const auto error = zone_binding_error(binding); error != ValidationError::None)
     return error;
-  if (binding.duration_ms <= 0 || binding.duration_ms > kMaxTransientDurationMs)
+  if (!in_range(binding.duration_ms, generated::led_transient::kDurationMsMin,
+                generated::led_transient::kDurationMsMax))
     return ValidationError::InvalidDuration;
   return ValidationError::None;
 }
