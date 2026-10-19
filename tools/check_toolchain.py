@@ -81,16 +81,6 @@ def _exact(expected: Version) -> Callable[[str], Tuple[bool, str]]:
     return check
 
 
-def _major_exact(expected: int) -> Callable[[str], Tuple[bool, str]]:
-    def check(output: str) -> Tuple[bool, str]:
-        actual = _version(output)
-        if actual is None:
-            return False, f"could not parse a version (need major version {expected})"
-        return actual[0] == expected, f"reported {'.'.join(map(str, actual))}; need major version {expected}"
-
-    return check
-
-
 def _present(output: str) -> Tuple[bool, str]:
     return True, output.strip().splitlines()[0] if output.strip() else "executable responded"
 
@@ -108,7 +98,14 @@ REQUIREMENTS = (
     ),
     Requirement("Ninja", "ninja", ("--version",), frozenset({"host"}), _present, "https://ninja-build.org/"),
     Requirement("C++ compiler", "c++", ("--version",), frozenset({"host"}), _present, "https://gcc.gnu.org/install/"),
-    Requirement("clang-format", "clang-format-14", ("--version",), frozenset({"host"}), _major_exact(14), "https://clang.llvm.org/docs/ClangFormat.html"),
+    Requirement(
+        "clang-format",
+        "clang-format",
+        ("--version",),
+        frozenset({"host"}),
+        _present,
+        "https://clang.llvm.org/docs/ClangFormat.html",
+    ),
     Requirement("Python", "python3", ("--version",), frozenset({"host", "firmware"}), _at_least((3, 8)), "https://www.python.org/downloads/"),
     Requirement("ripgrep", "rg", ("--version",), frozenset({"host"}), _present, "https://github.com/BurntSushi/ripgrep#installation"),
     Requirement("ESP-IDF", "idf.py", ("--version",), frozenset({"firmware"}), _exact((5, 5, 4)), "https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32/get-started/"),

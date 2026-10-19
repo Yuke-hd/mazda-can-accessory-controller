@@ -83,6 +83,11 @@ hardware changes, consult `docs/architecture/hardware/weact-can485-v1.1.md`.
   was not run. Flashing or interacting with hardware requires explicit task
   scope and verification of the actual port, wiring, fuse, power, and board.
 
+## ESP-IDF
+
+ESP-IDF v5.5.4 is installed at `/Users/yuke/ESP-IDF/v5.5.4`. Source its
+`export.sh` before firmware commands so `idf.py` is available.
+
 <!-- trail:start -->
 ## Trail — repo context graph
 

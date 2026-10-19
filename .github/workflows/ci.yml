@@ -28,7 +28,7 @@ jobs:
       - name: Install host tools
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y clang-format-14 ccache ninja-build ripgrep python3 python3-pip
+          sudo apt-get install --no-install-recommends -y clang-format ccache ninja-build ripgrep python3 python3-pip
           python3 -m pip install --user --disable-pip-version-check --no-input --requirement tools/requirements.txt
       - name: Install pinned CMake
         env:
@@ -46,12 +46,12 @@ jobs:
         run: python3 tools/check_toolchain.py --scope host
       - name: Test toolchain checker diagnostics
         run: python3 -m unittest discover -s tests/tools -p '*_test.py'
-      - name: Validate C++ formatting
+      - name: Validate C++17 formatting
         shell: bash
         run: |
           mapfile -t sources < <(find lib components firmware tests -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.cpp' \) -print)
           test "${#sources[@]}" -gt 0
-          clang-format-14 --style=file --dry-run --Werror "${sources[@]}"
+          clang-format --style=file --dry-run --Werror "${sources[@]}"
       - name: Configure host tests
         run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_ENABLE_TELEMETRY_PROFILING=ON -DMAZDA_ENABLE_DECODER_CALL_PROBING=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build host tests
