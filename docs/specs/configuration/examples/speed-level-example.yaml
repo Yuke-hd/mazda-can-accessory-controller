@@ -2,10 +2,12 @@
 # onto SetLevel(speed_level) through the existing range rule. The 0..120 km/h
 # input range is an EXAMPLE only, not a vehicle maximum or an agreed factory
 # range; config/default.yaml does not enable this action. No output is bound.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/speed-level-example.yaml \
-#     /tmp/speed-level-example.json
+#     /tmp/speed-level-example.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:

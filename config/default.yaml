@@ -1,8 +1,10 @@
 # Factory controller profile embedded by the firmware build.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     config/default.yaml \
-#     /tmp/controller-config-v1.json
+#     /tmp/controller-config-v1.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:

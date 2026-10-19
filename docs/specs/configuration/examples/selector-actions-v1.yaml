@@ -2,10 +2,12 @@
 # vehicle.selector_position choice. This example is available for owner
 # configuration and is not part of the factory profile. It binds no LED
 # output; pair an action with an output to make it visible.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/selector-actions-v1.yaml \
-#     /tmp/selector-actions-v1.json
+#     /tmp/selector-actions-v1.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:
