@@ -180,6 +180,7 @@ static_assert(std::is_same_v<std::variant_alternative_t<3, OutputBinding>, LedSo
 // The top-level persisted document.
 struct ControllerConfig {
   Integer version{kSchemaVersion};
+  Integer pixel_count{generated::local_argb_settings::kPixelCountDefault};
   std::vector<Action> actions{};
   std::vector<Rule> rules{};
   std::vector<OutputBinding> outputs{};

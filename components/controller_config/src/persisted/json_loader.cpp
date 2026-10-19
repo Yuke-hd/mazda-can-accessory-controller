@@ -567,6 +567,8 @@ template <typename Entry, typename Parser>
 
 [[nodiscard]] std::string validation_path(const ValidationResult result) {
   switch (result.section) {
+  case ConfigSection::Sinks:
+    return "sinks.local_argb.pixel_count";
   case ConfigSection::Actions:
     return indexed_path("actions", result.index);
   case ConfigSection::Rules:
@@ -580,6 +582,8 @@ template <typename Entry, typename Parser>
 }
 [[nodiscard]] std::string validation_message(const ValidationError error) {
   switch (error) {
+  case ValidationError::InvalidPixelCount:
+    return "pixel_count is outside the sink setting range";
   case ValidationError::UnsupportedVersion:
     return "unsupported configuration version; expected 1";
   case ValidationError::EmptyActionName:
@@ -729,9 +733,23 @@ ConfigLoadResult parse_controller_config(const std::string_view json) {
               "configuration root must be an object");
     return failure(std::move(error));
   }
-  if (!reject_unknown_fields(*root, "", {"version", "actions", "rules", "outputs"}, error))
+  if (!reject_unknown_fields(*root, "", {"version", "actions", "rules", "outputs", "sinks"}, error))
     return failure(std::move(error));
   ControllerConfig config{};
+  if (const auto *sinks = optional_field(*root, "sinks")) {
+    if (!require_object(sinks, "sinks", error) ||
+        !reject_unknown_fields(*sinks, "sinks", {"local_argb"}, error))
+      return failure(std::move(error));
+    if (const auto *argb = optional_field(*sinks, "local_argb")) {
+      if (!require_object(argb, "sinks.local_argb", error) ||
+          !reject_unknown_fields(*argb, "sinks.local_argb", {"pixel_count"}, error))
+        return failure(std::move(error));
+      if (const auto *count = optional_field(*argb, "pixel_count")) {
+        if (!parse_integer(count, "sinks.local_argb.pixel_count", config.pixel_count, error))
+          return failure(std::move(error));
+      }
+    }
+  }
   const cJSON *version = required_field(*root, "version", "", error);
   if (version == nullptr || !parse_integer(version, "version", config.version, error) ||
       !parse_array(*root, "actions", config.actions, parse_action, error) ||
@@ -966,6 +984,11 @@ std::string serialize_controller_config(const ControllerConfig &configuration) {
   output.reserve(512U);
   output += "{\"version\":";
   append_integer(output, configuration.version);
+  if (configuration.pixel_count != generated::local_argb_settings::kPixelCountDefault) {
+    output += ",\"sinks\":{\"local_argb\":{\"pixel_count\":";
+    append_integer(output, configuration.pixel_count);
+    output += "}}";
+  }
   output += ",\"actions\":[";
   for (std::size_t index = 0; index < configuration.actions.size(); ++index) {
     if (index != 0U)

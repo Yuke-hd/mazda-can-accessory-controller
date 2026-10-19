@@ -174,8 +174,7 @@ so a zone and a shorter strip length are never both accepted.
 two outputs. It uses Python 3 and PyYAML, which the firmware build already
 requires for the factory configuration.
 
-After [#291](https://github.com/Yuke-hd/mazda-can-accessory-controller/issues/291)
-the command is as below; until then the board value is `strip_pixels=100`.
+The WeAct board value is `strip_max_pixels=300`:
 
 ```sh
 python3 tools/generate_output_catalog.py \
@@ -300,7 +299,7 @@ factory configuration in `firmware/weact-can485-v1.1/CMakeLists.txt`:
 
 - `firmware/weact-can485-v1.1/output_catalog.cmake` sets
   `OUTPUT_CATALOG_DESCRIPTORS` and `OUTPUT_CATALOG_BOARD` for that board
-  (`strip_max_pixels=300` after #291; `strip_pixels=100` until then). The
+  (`strip_max_pixels=300`). The
   firmware project and the host build both include it, so host tests compile
   the same header the firmware uses.
 - A configure-time run makes a malformed descriptor fail configuration
@@ -566,18 +565,8 @@ model. Tickets 1–6 add no new content and are safe to ship first.
 
 ## Synthetic reference vectors
 
-The current WeAct CAN485 V1.1 catalog, generated from the descriptor
-without its `settings` and `pixels_setting` and with `strip_pixels=100`, is
-these 1518 bytes, on one line. The generator tests read this block, the
-first after this heading:
-
-```json
-{"outputs":[{"type":"led_effect","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"effect","kind":"enum","required":true,"values":["left_turn","right_turn","brake"]},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_fill","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_transient","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"duration_ms","kind":"integer","required":true,"min":1,"max":5000},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_solid","sink":"local_argb","rule_types":["state","sampled_state"],"fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":100,"directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]}]}
-```
-
-After ticket 12, the descriptor above with `strip_max_pixels=300` generates
-these 1747 bytes. Ticket 12 makes this the first block, removes the one
-above, and updates the page vectors to its length:
+The current WeAct CAN485 V1.1 catalog with `strip_max_pixels=300` is
+1747 bytes, on one line. The generator tests read this first block:
 
 ```json
 {"outputs":[{"type":"led_effect","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"effect","kind":"enum","required":true,"values":["left_turn","right_turn","brake"]},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_fill","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_transient","sink":"local_argb","fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"duration_ms","kind":"integer","required":true,"min":1,"max":5000},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]},{"type":"led_solid","sink":"local_argb","rule_types":["state","sampled_state"],"fields":[{"name":"action","kind":"action","required":true},{"name":"zone","kind":"zone","required":true,"pixels":300,"pixels_setting":"pixel_count","directions":["start_to_end","end_to_start","center_out"]},{"name":"color","kind":"rgb","required":true,"min":0,"max":255},{"name":"priority","kind":"integer","required":false,"min":0,"max":255,"default":100}]}],"sinks":[{"sink":"local_argb","settings":[{"name":"pixel_count","kind":"integer","required":false,"min":100,"max":300,"default":100}]}]}
@@ -587,7 +576,7 @@ Page vectors use token `0x01020304` and the current document:
 
 | Vector | Bytes (hex) |
 | --- | --- |
-| First page header for the WeAct document | `01 04 03 02 01 ee 05 00 00 c8 00`, then document bytes 0–199 |
+| First page header for the WeAct document | `01 04 03 02 01 d3 06 00 00 c8 00`, then document bytes 0–199 |
 | Selector for offset 200 | `01 04 03 02 01 c8 00` |
-| Terminal page for the WeAct document | `01 04 03 02 01 ee 05 ee 05 00 00` |
+| Terminal page for the WeAct document | `01 04 03 02 01 d3 06 d3 06 00 00` |
 | Whole page for the empty document | `01 04 03 02 01 0e 00 00 00 0e 00 7b 22 6f 75 74 70 75 74 73 22 3a 5b 5d 7d` |

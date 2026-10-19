@@ -15,12 +15,13 @@
 namespace controller_config::persisted {
 
 // Where a validation error was found.
-enum class ConfigSection : std::uint8_t { Document, Actions, Rules, Outputs };
+enum class ConfigSection : std::uint8_t { Document, Actions, Rules, Outputs, Sinks };
 
 // Names match action_engine::ConfigStatus and local_argb_actions::BindingStatus
 // where the constraint is the same one.
 enum class ValidationError : std::uint8_t {
   None,
+  InvalidPixelCount,
   UnsupportedVersion,    // version is not kSchemaVersion.
   EmptyActionName,       // An action name is empty.
   DuplicateActionName,   // An action name is declared twice.

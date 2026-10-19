@@ -160,6 +160,7 @@ TEST_CASE("every parse diagnostic category and code has its wire code") {
 
 TEST_CASE("every validation error has the wire code of the same name") {
   using Error = persisted::ValidationError;
+  CHECK(to_wire(Error::InvalidPixelCount) == wire::ValidationCode::InvalidRange);
   using Wire = wire::ValidationCode;
   const std::vector<std::pair<Error, Wire>> codes{
       {Error::None, Wire::None},
@@ -194,6 +195,7 @@ TEST_CASE("every validation error has the wire code of the same name") {
 }
 
 TEST_CASE("every section, apply stage, binding and engine status has its wire code") {
+  CHECK(to_wire(persisted::ConfigSection::Sinks) == wire::ConfigSection::Document);
   CHECK(to_wire(persisted::ConfigSection::Document) == wire::ConfigSection::Document);
   CHECK(to_wire(persisted::ConfigSection::Actions) == wire::ConfigSection::Actions);
   CHECK(to_wire(persisted::ConfigSection::Rules) == wire::ConfigSection::Rules);

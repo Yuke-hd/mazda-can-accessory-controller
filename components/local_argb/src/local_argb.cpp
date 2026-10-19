@@ -30,7 +30,8 @@ Rgb ceiling_clamped(const LightingRgb color) noexcept {
   return {ceiling_clamped(color.red), ceiling_clamped(color.green), ceiling_clamped(color.blue)};
 }
 
-void draw_flow(PixelFrame &frame, const bool left, const std::size_t phase) noexcept {
+void draw_flow(PixelFrame &frame, const bool left, const std::size_t phase,
+               const std::size_t pixel_count) noexcept {
   for (std::size_t tail = 0; tail < kFlowTailLength; ++tail) {
     const auto brightness = kFlowTailLength - tail;
     if (left) {
@@ -47,15 +48,17 @@ void draw_flow(PixelFrame &frame, const bool left, const std::size_t phase) noex
       // clipped when it would leave the right turn region.
       const auto head = phase;
       if (head >= tail)
-        frame[kRightTurnLedStart + head - tail] = scaled(kAmber, brightness, kFlowTailLength);
+        frame[pixel_count - kTurnLedCount + head - tail] =
+            scaled(kAmber, brightness, kFlowTailLength);
     }
   }
 }
 
-void draw_center_out_fill(PixelFrame &frame, const bool left, const std::size_t phase) noexcept {
+void draw_center_out_fill(PixelFrame &frame, const bool left, const std::size_t phase,
+                          const std::size_t pixel_count) noexcept {
   const auto fill_count = phase + 1;
   for (std::size_t offset = 0; offset < fill_count; ++offset) {
-    const auto position = left ? kTurnLedCount - 1 - offset : kRightTurnLedStart + offset;
+    const auto position = left ? kTurnLedCount - 1 - offset : pixel_count - kTurnLedCount + offset;
     frame[position] = kAmber;
   }
 }
@@ -76,18 +79,20 @@ struct Layer {
 // have an invalid zone light nothing and so own nothing.
 class LayerStack {
 public:
-  explicit LayerStack(const LightingCommand &command, const LightingFills &transients) noexcept {
+  explicit LayerStack(const LightingCommand &command, const LightingFills &transients,
+                      const std::size_t pixel_count) noexcept {
     for (const LightingFill &fill : command.fills) {
       if (fill.level != FillFraction::empty() && validate_zone(fill.zone) == ZoneValidity::Valid)
         push({LayerKind::Fill, fill.priority, &fill, fill.zone.start, fill.zone.length});
     }
     if (command.brake)
-      push({LayerKind::Brake, command.priorities.brake, nullptr, kBrakeLedStart, kBrakeLedCount});
+      push({LayerKind::Brake, command.priorities.brake, nullptr, (pixel_count - kBrakeLedCount) / 2,
+            kBrakeLedCount});
     if (command.left_turn)
       push({LayerKind::LeftTurn, command.priorities.left_turn, nullptr, 0, kTurnLedCount});
     if (command.right_turn)
-      push({LayerKind::RightTurn, command.priorities.right_turn, nullptr, kRightTurnLedStart,
-            kTurnLedCount});
+      push({LayerKind::RightTurn, command.priorities.right_turn, nullptr,
+            pixel_count - kTurnLedCount, kTurnLedCount});
     for (const LightingFill &fill : transients)
       push({LayerKind::Fill, fill.priority, &fill, fill.zone.start, fill.zone.length});
   }
@@ -115,7 +120,8 @@ private:
 };
 
 void draw_layer(PixelFrame &frame, const Layer &layer, const AnimationStrategy animation,
-                const vehicle_core::Microseconds elapsed_us) noexcept {
+                const vehicle_core::Microseconds elapsed_us,
+                const std::size_t pixel_count) noexcept {
   switch (layer.kind) {
   case LayerKind::Fill:
     (void)fill_zone(frame, layer.fill->zone, layer.fill->level, ceiling_clamped(layer.fill->color));
@@ -125,10 +131,10 @@ void draw_layer(PixelFrame &frame, const Layer &layer, const AnimationStrategy a
       frame[layer.start + index] = kRed;
     return;
   case LayerKind::LeftTurn:
-    animation(frame, AnimationContext{true, false, elapsed_us});
+    animation(frame, AnimationContext{true, false, elapsed_us, pixel_count});
     return;
   case LayerKind::RightTurn:
-    animation(frame, AnimationContext{false, true, elapsed_us});
+    animation(frame, AnimationContext{false, true, elapsed_us, pixel_count});
     return;
   }
 }
@@ -136,10 +142,11 @@ void draw_layer(PixelFrame &frame, const Layer &layer, const AnimationStrategy a
 // A layer owns its whole region, dark pixels included: clearing the region
 // first removes every lower layer's pixels there. No colours are mixed.
 void draw_owned(PixelFrame &frame, const Layer &layer, const AnimationStrategy animation,
-                const vehicle_core::Microseconds elapsed_us) noexcept {
+                const vehicle_core::Microseconds elapsed_us,
+                const std::size_t pixel_count) noexcept {
   for (std::size_t index = 0; index < layer.count; ++index)
     frame[layer.start + index] = kBlack;
-  draw_layer(frame, layer, animation, elapsed_us);
+  draw_layer(frame, layer, animation, elapsed_us, pixel_count);
 }
 
 } // namespace
@@ -147,9 +154,9 @@ void draw_owned(PixelFrame &frame, const Layer &layer, const AnimationStrategy a
 void render_running_flow(PixelFrame &frame, const AnimationContext &context) noexcept {
   const auto phase = static_cast<std::size_t>((context.elapsed_us / kFlowStepUs) % kTurnLedCount);
   if (context.left_turn)
-    draw_flow(frame, true, phase);
+    draw_flow(frame, true, phase, context.pixel_count);
   if (context.right_turn)
-    draw_flow(frame, false, phase);
+    draw_flow(frame, false, phase, context.pixel_count);
 }
 
 void render_center_out_fill(PixelFrame &frame, const AnimationContext &context) noexcept {
@@ -161,9 +168,9 @@ void render_center_out_fill(PixelFrame &frame, const AnimationContext &context) 
   }
   const auto phase = cycle_step;
   if (context.left_turn)
-    draw_center_out_fill(frame, true, phase);
+    draw_center_out_fill(frame, true, phase, context.pixel_count);
   if (context.right_turn)
-    draw_center_out_fill(frame, false, phase);
+    draw_center_out_fill(frame, false, phase, context.pixel_count);
 }
 
 void TransientLayers::cancel() noexcept {
@@ -259,17 +266,17 @@ void RendererController::draw_frame(const vehicle_core::MonotonicTimestamp now_u
                                     PixelFrame &frame) const noexcept {
   if (!command_.left_turn && !command_.right_turn && !command_.brake && command_.fills.empty()) {
     // Preserve the generic colour-only handoff for compatibility consumers.
-    std::fill_n(frame.begin(), kDefaultLedCount, ceiling_clamped(command_.color));
+    std::fill_n(frame.begin(), pixel_count_, ceiling_clamped(command_.color));
   }
 
   // Painter's order by priority: each layer owns its region wherever no
   // later, higher-or-equal layer overlaps it; see EffectPriority.
   const auto transients = transients_.active(command_.transients);
-  LayerStack layers{command_, transients};
+  LayerStack layers{command_, transients, pixel_count_};
   layers.sort_by_priority();
   const auto elapsed = now_us >= animation_started_us_ ? now_us - animation_started_us_ : 0;
   for (const Layer &layer : layers)
-    draw_owned(frame, layer, animation_, elapsed);
+    draw_owned(frame, layer, animation_, elapsed, pixel_count_);
 }
 
 bool RendererController::write_desired(const PixelFrame &desired) noexcept {
@@ -281,7 +288,7 @@ bool RendererController::write_desired(const PixelFrame &desired) noexcept {
   // leave a pixel lit beyond the active length.
   // This relies on the active length being constant: a lit frame never
   // writes past it, so the pixels beyond stay black from the last black write.
-  const std::size_t length = desired == kBlackFrame ? kMaxLedCount : kDefaultLedCount;
+  const std::size_t length = desired == kBlackFrame ? kMaxLedCount : pixel_count_;
   if (sink_->write(desired, length)) {
     last_written_ = desired;
     has_last_written_ = true;

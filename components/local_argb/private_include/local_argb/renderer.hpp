@@ -21,10 +21,13 @@ constexpr bool frame_region_has_color(const PixelFrame &frame, const std::size_t
 // The embedded board exposes one physical pixel while the renderer owns the
 // full semantic frame. Collapse that frame to a visible diagnostic
 // status without changing the renderer's animation or region ownership.
-constexpr Rgb onboard_status_color(const PixelFrame &frame) noexcept {
-  const bool brake_active = frame_region_has_color(frame, kBrakeLedStart, kBrakeLedCount);
-  const bool turn_active = frame_region_has_color(frame, 0, kTurnLedCount) ||
-                           frame_region_has_color(frame, kRightTurnLedStart, kTurnLedCount);
+constexpr Rgb onboard_status_color(const PixelFrame &frame,
+                                   const std::size_t pixel_count = kDefaultLedCount) noexcept {
+  const bool brake_active =
+      frame_region_has_color(frame, (pixel_count - kBrakeLedCount) / 2, kBrakeLedCount);
+  const bool turn_active =
+      frame_region_has_color(frame, 0, kTurnLedCount) ||
+      frame_region_has_color(frame, pixel_count - kTurnLedCount, kTurnLedCount);
   if (brake_active) {
     // A single pixel cannot show both effects; keep the safety-critical brake
     // indication visible when a turn and brake frame overlap.
@@ -37,6 +40,7 @@ struct AnimationContext {
   bool left_turn{false};
   bool right_turn{false};
   vehicle_core::Microseconds elapsed_us{0};
+  std::size_t pixel_count{kDefaultLedCount};
 };
 
 // Animation strategies are function pointers rather than owned objects so a
@@ -86,6 +90,13 @@ public:
     animation_ = animation != nullptr ? animation : kRunningFlowAnimation;
   }
 
+  // Boot-only: call before start and before the worker is created.
+  bool configure_pixel_count(std::size_t count) noexcept {
+    if (count < kDefaultLedCount || count > kMaxLedCount || has_last_written_)
+      return false;
+    pixel_count_ = count;
+    return true;
+  }
   bool start() noexcept;
   bool apply(const LightingCommand &command, vehicle_core::MonotonicTimestamp now_us,
              std::uint32_t epoch = 0) noexcept;
@@ -102,6 +113,7 @@ private:
   bool write_desired(const PixelFrame &desired) noexcept;
 
   PixelFrameSink *sink_;
+  std::size_t pixel_count_{kDefaultLedCount};
   LightingCommand command_{};
   TransientLayers transients_{};
   vehicle_core::MonotonicTimestamp last_tick_us_{0};

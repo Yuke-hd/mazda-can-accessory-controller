@@ -98,7 +98,7 @@ public:
 
   bool write(const PixelFrame &frame, const std::size_t length) noexcept override {
     begin_driver_write();
-    const Rgb status = internal::onboard_status_color(frame);
+    const Rgb status = internal::onboard_status_color(frame, length);
     bool vehicle_success = vehicle_handle_ != nullptr;
     for (std::size_t index = 0; vehicle_success && index < length && index < frame.size();
          ++index) {
@@ -242,10 +242,12 @@ LightingSink &sink() noexcept { return g_gated_sink; }
 
 } // namespace internal
 
-bool start() noexcept {
+bool start(const std::size_t pixel_count) noexcept {
   if (g_started) {
     return true;
   }
+  if (!g_controller.configure_pixel_count(pixel_count))
+    return false;
   static_assert(board::kWeActCan485V11.onboard_rgb.data == 4,
                 "local ARGB is fixed to the GPIO4 onboard LED");
   static_assert(board::kWeActCan485V11.onboard_rgb.pixel_count == board::kOnboardRgbPixelCount,

@@ -215,6 +215,7 @@ bool configure_engine_lighting(
   // `backend` is null or the static config_backend, which outlives the service.
   config_service.record_boot(selected, backend);
   if (!selected.ok()) {
+    (void)local_argb::start(); // Clear the full strip even when no document is usable.
     if (selected.override_diagnostic.has_value())
       log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);
     if (!selected.override_storage_message.empty())
@@ -238,6 +239,10 @@ bool configure_engine_lighting(
     ESP_LOGI(kTag, "using embedded factory controller configuration");
 
   active_configuration = std::move(*selected.configuration);
+  if (!local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))) {
+    ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
+    return false;
+  }
   const auto status = controller_config::persisted::apply_controller_config(active_configuration,
                                                                             led_actions, engine);
   if (!status.ok()) {
@@ -255,17 +260,13 @@ bool configure_engine_lighting(
 } // namespace
 
 namespace {
-// Runs the vehicle I/O startup sequence: startup black, configuration, signal
+// Runs the vehicle I/O startup sequence: load configuration, startup black,
+// apply configuration, signal
 // subscriptions and the CAN start, in that order. Every failure after
 // local_argb::start() fails off before refusing. The task that runs it becomes
 // the telemetry facade's lifecycle owner, so every facade lifecycle call
 // (subscribe, attach, start) must stay in this function.
 bool start_vehicle_io() noexcept {
-  if (!local_argb::start()) {
-    ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
-    return false;
-  }
-
   config_backend = controller_config::persisted::make_nvs_config_store_backend();
   if (config_backend == nullptr)
     ESP_LOGW(kTag, "NVS configuration storage unavailable; using factory configuration");

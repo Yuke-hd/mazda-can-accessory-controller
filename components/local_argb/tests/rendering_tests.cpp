@@ -93,32 +93,36 @@ void test_lit_frames_cover_active_length_and_every_black_covers_buffer() {
   using local_argb::kDefaultLedCount;
   using local_argb::kMaxLedCount;
   static_assert(kMaxLedCount == 300 && kDefaultLedCount == 100);
-  FakePixelSink sink;
-  local_argb::internal::RendererController renderer{sink};
-  assert(renderer.start());
-  assert(sink.lengths.back() == kMaxLedCount); // startup black
+  for (const std::size_t count : {100U, 144U, 300U}) {
+    FakePixelSink sink;
+    local_argb::internal::RendererController renderer{sink};
+    assert(renderer.configure_pixel_count(count));
+    assert(renderer.start());
+    assert(!renderer.configure_pixel_count(count));
+    assert(sink.lengths.back() == kMaxLedCount); // startup black
 
-  assert(renderer.apply(green(250), 100));
-  assert(sink.lengths.back() == kDefaultLedCount); // normal frame
-  for (std::size_t index = kDefaultLedCount; index < kMaxLedCount; ++index)
-    assert(sink.writes.back()[index] == local_argb::kBlack);
+    assert(renderer.apply(green(250), 100));
+    assert(sink.lengths.back() == count); // normal frame
+    for (std::size_t index = count; index < kMaxLedCount; ++index)
+      assert(sink.writes.back()[index] == local_argb::kBlack);
 
-  assert(renderer.tick(300)); // command expired: fail-off black
-  assert(sink.writes.back() == local_argb::kBlackFrame);
-  assert(sink.lengths.back() == kMaxLedCount);
+    assert(renderer.tick(300)); // command expired: fail-off black
+    assert(sink.writes.back() == local_argb::kBlackFrame);
+    assert(sink.lengths.back() == kMaxLedCount);
 
-  sink.failures_remaining = 1;
-  assert(!renderer.apply(green(900), 400)); // driver failure: black retry
-  assert(sink.writes.back() == local_argb::kBlackFrame);
-  assert(sink.lengths.back() == kMaxLedCount);
+    sink.failures_remaining = 1;
+    assert(!renderer.apply(green(900), 400)); // driver failure: black retry
+    assert(sink.writes.back() == local_argb::kBlackFrame);
+    assert(sink.lengths.back() == kMaxLedCount);
 
-  // The explicit fail-off command (published for restart and fail_off) is an
-  // empty command and renders black across the buffer.
-  assert(renderer.apply(green(2000), 1000));
-  assert(sink.lengths.back() == kDefaultLedCount);
-  assert(renderer.apply(local_argb::internal::LightingCommand{}, 1010));
-  assert(sink.writes.back() == local_argb::kBlackFrame);
-  assert(sink.lengths.back() == kMaxLedCount);
+    // The explicit fail-off command (published for restart and fail_off) is an
+    // empty command and renders black across the buffer.
+    assert(renderer.apply(green(2000), 1000));
+    assert(sink.lengths.back() == count);
+    assert(renderer.apply(local_argb::internal::LightingCommand{}, 1010));
+    assert(sink.writes.back() == local_argb::kBlackFrame);
+    assert(sink.lengths.back() == kMaxLedCount);
+  }
 }
 
 void test_factory_layout_is_anchored_to_strip_ends() {
@@ -127,6 +131,26 @@ void test_factory_layout_is_anchored_to_strip_ends() {
   static_assert(kBrakeLedStart == 35);
   static_assert(kRightTurnLedStart == kDefaultLedCount - kTurnLedCount);
   static_assert(kRightTurnLedStart + kTurnLedCount == kDefaultLedCount);
+}
+
+void test_configured_effect_layout_and_status() {
+  using namespace local_argb;
+  for (const std::size_t count : {100U, 144U, 300U}) {
+    FakePixelSink sink;
+    internal::RendererController renderer{sink};
+    assert(!renderer.configure_pixel_count(99));
+    assert(!renderer.configure_pixel_count(301));
+    assert(renderer.configure_pixel_count(count));
+    assert(renderer.start());
+    auto command = green(1000);
+    command.brake = true;
+    command.right_turn = true;
+    assert(renderer.apply(command, 100));
+    const auto &frame = sink.writes.back();
+    assert(frame[(count - kBrakeLedCount) / 2] != kBlack);
+    assert(frame[count - kTurnLedCount] != kBlack);
+    assert(internal::onboard_status_color(frame, count) == internal::kOnboardBrakeStatus);
+  }
 }
 
 void test_duplicate_command_and_tick_write_once() {
@@ -887,6 +911,7 @@ int main() {
   test_bounded_overwrite_and_generic_sink();
   test_lit_frames_cover_active_length_and_every_black_covers_buffer();
   test_factory_layout_is_anchored_to_strip_ends();
+  test_configured_effect_layout_and_status();
   test_duplicate_command_and_tick_write_once();
   test_failed_startup_clear_stays_faulted_and_retries_black();
   test_failed_fallback_clear_needs_black_before_recovery();

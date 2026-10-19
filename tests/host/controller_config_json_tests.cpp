@@ -185,3 +185,37 @@ TEST_CASE("JSON loader keeps unverified freshness available to other signals") {
         result.configuration->rules[0]);
   }
 }
+
+TEST_CASE("strip settings preserve schema one and bound every zone") {
+  CHECK(parse_controller_config(R"({"version":1})").configuration->pixel_count == 100);
+  for (const int count : {100, 144, 300}) {
+    const std::string prefix =
+        "{\"version\":1,\"sinks\":{\"local_argb\":{\"pixel_count\":" + std::to_string(count) +
+        "}},\"actions\":[{\"name\":\"a\"}],\"outputs\":[";
+    for (const auto *type : {"led_fill", "led_solid", "led_transient"}) {
+      for (const int extra : {0, 1}) {
+        const auto json =
+            prefix + "{\"type\":\"" + type +
+            "\",\"action\":\"a\",\"zone\":{\"start\":" + std::to_string(count - 1 + extra) +
+            ",\"length\":1,\"direction\":\"start_to_end\"},\"color\":{\"red\":1,\"green\":0,"
+            "\"blue\":0}" +
+            (std::string(type) == "led_transient" ? ",\"duration_ms\":1" : "") + "}]}";
+        const auto loaded = parse_controller_config(json);
+        CHECK(loaded.ok() == (extra == 0));
+        if (loaded.ok()) {
+          CHECK(loaded.configuration->pixel_count == count);
+          const auto roundtrip =
+              parse_controller_config(serialize_controller_config(*loaded.configuration));
+          REQUIRE(roundtrip.ok());
+          CHECK(roundtrip.configuration->pixel_count == count);
+        }
+      }
+    }
+  }
+  for (const auto *value : {"99", "301", "-1", "1.5", "true", "null"}) {
+    const auto result = parse_controller_config(
+        std::string("{\"version\":1,\"sinks\":{\"local_argb\":{\"pixel_count\":") + value + "}}}");
+    CHECK_FALSE(result.ok());
+    CHECK_FALSE(result.configuration.has_value());
+  }
+}

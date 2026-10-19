@@ -3,6 +3,9 @@
 # fact here must be one the configuration validator enforces.
 descriptor_format: 1
 sink: local_argb
+settings:
+  - {name: pixel_count, kind: integer, required: false,
+     min: 100, max: {board: strip_max_pixels}, default: 100}
 outputs:
   - type: led_effect
     fields:
@@ -15,7 +18,7 @@ outputs:
     fields:
       - *action
       - &zone {name: zone, kind: zone, required: true,
-               pixels: {board: strip_pixels},
+               pixels: {board: strip_max_pixels}, pixels_setting: pixel_count,
                directions: [start_to_end, end_to_start, center_out]}
       - &color {name: color, kind: rgb, required: true, min: 0, max: 255}
       - *priority

@@ -49,25 +49,25 @@ constexpr bool fits_byte(const Integer minimum, const Integer maximum) noexcept 
          maximum <= std::numeric_limits<std::uint8_t>::max();
 }
 
-// The fixed strip uses the default length until runtime strip settings are supported.
+// Catalog limits must match the renderer contract and board frame capacity.
 static_assert(generated::led_effect::kPriorityDefault ==
               local_argb::internal::EffectPriority::kDefault);
 static_assert(fits_byte(generated::led_effect::kPriorityMin, generated::led_effect::kPriorityMax));
 static_assert(generated::led_fill::kPriorityDefault ==
               local_argb::internal::EffectPriority::kDefault);
 static_assert(fits_byte(generated::led_fill::kPriorityMin, generated::led_fill::kPriorityMax));
-static_assert(generated::led_fill::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(generated::led_fill::kZonePixels == local_argb::kMaxLedCount);
 static_assert(fits_byte(generated::led_fill::kColorMin, generated::led_fill::kColorMax));
 static_assert(generated::led_transient::kPriorityDefault ==
               local_argb::internal::EffectPriority::kDefault);
 static_assert(fits_byte(generated::led_transient::kPriorityMin,
                         generated::led_transient::kPriorityMax));
-static_assert(generated::led_transient::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(generated::led_transient::kZonePixels == local_argb::kMaxLedCount);
 static_assert(fits_byte(generated::led_transient::kColorMin, generated::led_transient::kColorMax));
 static_assert(generated::led_solid::kPriorityDefault ==
               local_argb::internal::EffectPriority::kDefault);
 static_assert(fits_byte(generated::led_solid::kPriorityMin, generated::led_solid::kPriorityMax));
-static_assert(generated::led_solid::kZonePixels == local_argb::kDefaultLedCount);
+static_assert(generated::led_solid::kZonePixels == local_argb::kMaxLedCount);
 static_assert(fits_byte(generated::led_solid::kColorMin, generated::led_solid::kColorMax));
 static_assert(static_cast<std::uint64_t>(generated::led_transient::kDurationMsMax) * 1000U ==
               local_argb::internal::kMaxTransientDurationUs);
@@ -376,6 +376,11 @@ template <typename Binding>
         if (const ValidationError error = action_kind_error(config.rules, binding);
             error != ValidationError::None)
           return error;
+        if constexpr (!std::is_same_v<std::decay_t<decltype(binding)>, LedEffectBinding>) {
+          if (const auto error = zone_error(binding.zone, config.pixel_count);
+              error != ValidationError::None)
+            return error;
+        }
         if (has_earlier_binding(config.outputs, index, binding))
           return ValidationError::DuplicateBinding;
         return ValidationError::None;
@@ -399,6 +404,9 @@ template <typename Entry, typename EntryError>
 } // namespace
 
 ValidationResult validate(const ControllerConfig &config) noexcept {
+  if (!in_range(config.pixel_count, generated::local_argb_settings::kPixelCountMin,
+                generated::local_argb_settings::kPixelCountMax))
+    return ValidationResult{ValidationError::InvalidPixelCount, ConfigSection::Sinks, 0};
   if (config.version != kSchemaVersion)
     return ValidationResult{ValidationError::UnsupportedVersion, ConfigSection::Document, 0};
   if (const ValidationResult result =

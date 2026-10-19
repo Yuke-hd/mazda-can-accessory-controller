@@ -80,6 +80,8 @@ wire::ValidationCode to_wire(const persisted::ValidationError value) noexcept {
     return wire::ValidationCode::UnsupportedComparison;
   case persisted::ValidationError::InvalidHysteresis:
     return wire::ValidationCode::InvalidHysteresis;
+  // Keep the frozen wire protocol: the diagnostic path identifies the setting.
+  case persisted::ValidationError::InvalidPixelCount:
   case persisted::ValidationError::InvalidRange:
     return wire::ValidationCode::InvalidRange;
   case persisted::ValidationError::UnknownLedEffect:
@@ -106,6 +108,7 @@ wire::ValidationCode to_wire(const persisted::ValidationError value) noexcept {
 
 wire::ConfigSection to_wire(const persisted::ConfigSection value) noexcept {
   switch (value) {
+  case persisted::ConfigSection::Sinks:
   case persisted::ConfigSection::Document:
     return wire::ConfigSection::Document;
   case persisted::ConfigSection::Actions:

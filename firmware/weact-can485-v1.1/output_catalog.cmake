@@ -4,4 +4,4 @@
 set(OUTPUT_CATALOG_DESCRIPTORS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_actions/output_catalog.yaml")
 set(OUTPUT_CATALOG_BOARD
-    "strip_pixels=100")
+    "strip_max_pixels=300")
