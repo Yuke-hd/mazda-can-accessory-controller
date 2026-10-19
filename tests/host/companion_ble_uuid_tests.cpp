@@ -24,7 +24,7 @@ struct ExpectedUuid {
 };
 
 // The UUID table in ble-protocol.md#uuids, written as the spec prints it.
-constexpr std::array<ExpectedUuid, 8> kSpecUuids{{
+constexpr std::array<ExpectedUuid, 9> kSpecUuids{{
     {CompanionAttribute::Service, "ab490000-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::DeviceInfo, "ab490001-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::Config, "ab490002-09b6-4509-bf8e-2790253baf98"},
@@ -33,6 +33,7 @@ constexpr std::array<ExpectedUuid, 8> kSpecUuids{{
     {CompanionAttribute::Command, "ab490005-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::SignalCatalog, "ab490006-09b6-4509-bf8e-2790253baf98"},
     {CompanionAttribute::ExtensibleLiveSignals, "ab490007-09b6-4509-bf8e-2790253baf98"},
+    {CompanionAttribute::OutputCatalog, "ab490008-09b6-4509-bf8e-2790253baf98"},
 }};
 
 std::uint8_t hex_digit(const char digit) {
@@ -64,7 +65,7 @@ Uuid128 wire_order(const std::string_view text) {
 } // namespace
 
 TEST_CASE("every companion UUID matches the ble-protocol.md table in wire order") {
-  CHECK(companion_ble::kCompanionCharacteristicCount == 7U);
+  CHECK(companion_ble::kCompanionCharacteristicCount == 8U);
   for (const auto &expected : kSpecUuids) {
     CAPTURE(expected.text);
     CHECK(companion_ble::companion_uuid(expected.attribute) == wire_order(expected.text));
@@ -72,7 +73,7 @@ TEST_CASE("every companion UUID matches the ble-protocol.md table in wire order"
 }
 
 TEST_CASE("the companion GATT table matches the frozen properties and security profile") {
-  constexpr std::array<CharacteristicProfile, 7> expected{{
+  constexpr std::array<CharacteristicProfile, 8> expected{{
       {CompanionAttribute::DeviceInfo, true, false, false, true},
       {CompanionAttribute::Config, true, true, false, false},
       {CompanionAttribute::ConfigStatus, true, false, true, false},
@@ -80,6 +81,7 @@ TEST_CASE("the companion GATT table matches the frozen properties and security p
       {CompanionAttribute::Command, false, true, false, false},
       {CompanionAttribute::SignalCatalog, true, true, false, false},
       {CompanionAttribute::ExtensibleLiveSignals, false, false, true, false},
+      {CompanionAttribute::OutputCatalog, true, true, false, false},
   }};
 
   REQUIRE(companion_ble::kCompanionCharacteristicProfiles.size() == expected.size());

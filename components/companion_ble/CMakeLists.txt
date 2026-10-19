@@ -7,7 +7,7 @@ if(COMMAND idf_component_register)
     SRCS "src/gatt_service.cpp" "src/device_info_characteristic.cpp" "src/advertising.cpp"
          "src/companion_ble.cpp" "src/security.cpp" "src/config_characteristics.cpp"
          "src/live_signals_characteristic.cpp" "src/signal_catalog_characteristic.cpp"
-         "src/extensible_live_characteristic.cpp"
+         "src/extensible_live_characteristic.cpp" "src/output_catalog_characteristic.cpp"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "private_include"
     REQUIRES companion_protocol vehicle_signals

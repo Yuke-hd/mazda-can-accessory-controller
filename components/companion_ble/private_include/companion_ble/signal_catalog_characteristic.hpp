@@ -12,12 +12,14 @@ namespace companion_ble::internal {
 // keep the characteristic table static.
 [[nodiscard]] CharacteristicDefinition signal_catalog_characteristic() noexcept;
 
-// Binds the immutable export used by the catalog pages and installs the GAP
-// listener that creates and clears per-connection selector state. The export
+// Binds the immutable export used by the catalog pages. The export
 // must outlive the NimBLE host. This function does not read or subscribe to a
 // provider; the export has already resolved the provider catalog.
 [[nodiscard]] int
 bind_signal_catalog(const companion_protocol::SignalCatalogExport &catalog) noexcept;
+
+void connect_signal_catalog(std::uint16_t connection, std::uint32_t token) noexcept;
+void disconnect_signal_catalog(std::uint16_t connection) noexcept;
 
 // Returns the discovery token for the active connection, or zero for any
 // other connection. Later catalog-backed notifications use the same token so

@@ -742,3 +742,17 @@ else()
   target_compile_options(companion_ble_uuid_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 doctest_discover_tests(companion_ble_uuid_tests)
+
+add_executable(companion_ble_catalog_tests companion_ble_catalog_tests.cpp
+  ${CMAKE_SOURCE_DIR}/components/companion_ble/src/output_catalog_characteristic.cpp
+  ${CMAKE_SOURCE_DIR}/components/companion_ble/src/signal_catalog_characteristic.cpp)
+target_link_libraries(companion_ble_catalog_tests PRIVATE companion_protocol companion_ble_uuids doctest::doctest)
+target_include_directories(companion_ble_catalog_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/tests/support/companion_ble
+  ${CMAKE_SOURCE_DIR}/components/companion_ble/private_include)
+target_compile_features(companion_ble_catalog_tests PRIVATE cxx_std_17)
+target_compile_definitions(companion_ble_catalog_tests PRIVATE
+  OUTPUT_CATALOG_PATH="${OUTPUT_CATALOG_JSON}"
+  OUTPUT_CATALOG_SPEC_PATH="${CMAKE_SOURCE_DIR}/docs/specs/companion/output-catalog.md")
+add_dependencies(companion_ble_catalog_tests output_catalog)
+doctest_discover_tests(companion_ble_catalog_tests)

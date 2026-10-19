@@ -1,7 +1,8 @@
 # Spec: Companion output catalog
 
-Status: **Accepted contract for companion protocol 1.2.** Not implemented. This
-document does not claim firmware, phone, bench or vehicle validation.
+Status: **Companion protocol 1.2 transport implemented.** The firmware embeds
+and serves the generated document. This document does not claim phone, bench
+or vehicle validation.
 
 [ADR-0006](../../decisions/0006-generated-output-catalog.md) records the
 architectural decision and its tradeoffs. This document specifies the
