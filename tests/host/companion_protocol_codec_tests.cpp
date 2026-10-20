@@ -43,76 +43,38 @@ TEST_CASE("crc32 of 123456789 is the CRC-32/ISO-HDLC check value 0xCBF43926") {
 
 TEST_CASE("crc32 of no bytes is zero") { CHECK(crc32(ByteView{}) == 0U); }
 
-TEST_CASE("device info encodes the version 1 layout little-endian") {
-  const auto encoded = encode_device_info(DeviceInfo{0x0102, true, "1.2.3", "weact-can485-v1.1"});
-  REQUIRE(encoded.has_value());
-  const auto bytes = to_vector(*encoded);
-  const std::vector<std::uint8_t> header{1, 0, 0x02, 0x01, 2, 0x01, 0x00, 0x10, 5};
-  REQUIRE(bytes.size() == 9 + 5 + 1 + 17);
-  CHECK(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + 9) == header);
-  CHECK(std::string(bytes.begin() + 9, bytes.begin() + 14) == "1.2.3");
-  CHECK(bytes.at(14) == 17);
-  CHECK(std::string(bytes.begin() + 15, bytes.end()) == "weact-can485-v1.1");
-}
-
-TEST_CASE("device info with an absent extension keeps the exact legacy prefix") {
-  const auto encoded = encode_device_info(DeviceInfo{0x0102, true, "1.2.3", "weact-can485-v1.1"},
-                                          DeviceInfoExtensionStatus::Absent);
-  REQUIRE(encoded.has_value());
-  const auto bytes = to_vector(*encoded);
-  CHECK(bytes.size() == 9 + 5 + 1 + 17);
-  CHECK(bytes[0] == kProtocolMajor);
-  CHECK(bytes[1] == kProtocolMinor);
-  CHECK(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + 9) ==
-        std::vector<std::uint8_t>{1, 0, 0x02, 0x01, 2, 0x01, 0x00, 0x10, 5});
-}
-
-TEST_CASE("device info reports an unusable extension with its capability bit clear") {
-  const DeviceInfo info{0x0102, true, "1.2.3", "weact-can485-v1.1"};
-  const auto absent = encode_device_info(info, DeviceInfoExtensionStatus::Absent);
-  const auto unusable = encode_device_info(info, DeviceInfoExtensionStatus::Unusable);
-  REQUIRE(absent.has_value());
-  REQUIRE(unusable.has_value());
-  const auto legacy_bytes = to_vector(*absent);
-  const auto bytes = to_vector(*unusable);
-  REQUIRE(bytes.size() == legacy_bytes.size() + 2);
-  CHECK(bytes[0] == kProtocolMajor);
-  CHECK(bytes[1] == kExtensibleProtocolMinor);
-  CHECK(std::vector<std::uint8_t>(bytes.begin() + 2, bytes.end() - 2) ==
-        std::vector<std::uint8_t>(legacy_bytes.begin() + 2, legacy_bytes.end()));
-  CHECK(bytes[bytes.size() - 2] == kDeviceInfoExtensionVersion);
-  CHECK(bytes.back() == 0);
-}
-
-TEST_CASE("usable extensible signals append version and capability after legacy strings") {
-  const DeviceInfo info{0x0102, true, "1.2.3", "weact-can485-v1.1"};
-  const auto legacy = encode_device_info(info, DeviceInfoExtensionStatus::Absent);
-  const auto encoded = encode_device_info(info, DeviceInfoExtensionStatus::Usable);
-  REQUIRE(legacy.has_value());
-  REQUIRE(encoded.has_value());
-  const auto bytes = to_vector(*encoded);
-  REQUIRE(bytes.size() == legacy->size() + 2);
-  CHECK(bytes[0] == kProtocolMajor);
-  CHECK(bytes[1] == kExtensibleProtocolMinor);
-  CHECK(std::vector<std::uint8_t>(bytes.begin() + 2, bytes.begin() + 9) ==
-        std::vector<std::uint8_t>{0x02, 0x01, 2, 0x01, 0x00, 0x10, 5});
-  CHECK(std::vector<std::uint8_t>(bytes.begin() + 9, bytes.end() - 2) ==
-        std::vector<std::uint8_t>(legacy->view().begin() + 9, legacy->view().end()));
-  CHECK(bytes[bytes.size() - 2] == kDeviceInfoExtensionVersion);
-  CHECK(bytes.back() == kDeviceInfoExtensionUsableFlag);
+TEST_CASE("protocol 1.2 device info always includes both extension bytes") {
+  for (const auto signal : {DeviceInfoExtensionStatus::Absent, DeviceInfoExtensionStatus::Unusable,
+                            DeviceInfoExtensionStatus::Usable}) {
+    for (const bool output : {false, true}) {
+      const auto encoded = encode_device_info(
+          DeviceInfo{0x0102, true, "1.2.3", "weact-can485-v1.1"}, signal, output);
+      REQUIRE(encoded.has_value());
+      const auto bytes = to_vector(*encoded);
+      const std::vector<std::uint8_t> prefix{1, 2, 0x02, 0x01, 2, 0x01, 0x00, 0x10, 5};
+      REQUIRE(bytes.size() == 9 + 5 + 1 + 17 + 2);
+      CHECK(std::vector<std::uint8_t>(bytes.begin(), bytes.begin() + 9) == prefix);
+      CHECK(std::string(bytes.begin() + 9, bytes.begin() + 14) == "1.2.3");
+      CHECK(bytes[14] == 17);
+      CHECK(std::string(bytes.begin() + 15, bytes.end() - 2) == "weact-can485-v1.1");
+      CHECK(bytes[bytes.size() - 2] == 1);
+      CHECK(bytes.back() ==
+            ((signal == DeviceInfoExtensionStatus::Usable ? 1 : 0) | (output ? 2 : 0)));
+    }
+  }
 }
 
 TEST_CASE("device info flags bit 0 is clear when the pairing window is closed") {
   const auto encoded = encode_device_info(DeviceInfo{1, false, "", ""});
   REQUIRE(encoded.has_value());
-  CHECK(to_vector(*encoded) == std::vector<std::uint8_t>{1, 0, 1, 0, 2, 0, 0x00, 0x10, 0, 0});
+  CHECK(to_vector(*encoded) == std::vector<std::uint8_t>{1, 2, 1, 0, 2, 0, 0x00, 0x10, 0, 0, 1, 0});
 }
 
-TEST_CASE("device info with two 31-byte strings is the 72-byte maximum") {
+TEST_CASE("device info with two 31-byte strings always includes the 74-byte extension") {
   const std::string text(31, 'x');
   const auto encoded = encode_device_info(DeviceInfo{1, false, text, text});
   REQUIRE(encoded.has_value());
-  CHECK(encoded->size() == kLegacyMaxDeviceInfoBytes);
+  CHECK(encoded->size() == kMaxDeviceInfoBytes);
 }
 
 TEST_CASE("usable device info with maximum strings is the 74-byte extension maximum") {

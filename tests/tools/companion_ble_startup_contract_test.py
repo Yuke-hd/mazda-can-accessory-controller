@@ -50,7 +50,7 @@ class CompanionBleStartupContractTests(unittest.TestCase):
         self.assertIn("signal_catalog->available()", start)
         self.assertIn("DeviceInfoExtensionStatus::Usable", start)
         self.assertIn("DeviceInfoExtensionStatus::Unusable", start)
-        self.assertEqual(start.count("encode_device_info(served, extension_status)"), 2)
+        self.assertEqual(start.count("encode_device_info(served, extension_status, output_catalog->available())"), 2)
 
         register = function_body("register_services")
         for characteristic in (
@@ -85,6 +85,37 @@ class CompanionBleStartupContractTests(unittest.TestCase):
         self.assertIn("NimBLE applies Read Blob offsets itself", device_info)
         access_code = re.sub(r"//[^\n]*|/\*.*?\*/", "", access, flags=re.DOTALL)
         self.assertNotRegex(access_code, r"\boffsets?\b")
+
+    def test_discovery_owner_connects_and_resets_both_catalogs(self) -> None:
+        body = function_body("on_discovery_gap_event")
+        self.assertIn("event->connect.status == 0", body)
+        self.assertIn("discovery_connection.connect(connection)", body)
+        self.assertIn("if (token != 0U)", body)
+        self.assertIn("discovery_connection.disconnect(connection)", body)
+        for catalog in ("signal", "output"):
+            self.assertIn(f"internal::connect_{catalog}_catalog(connection, token)", body)
+            self.assertIn(f"internal::disconnect_{catalog}_catalog(connection)", body)
+        register = function_body("register_services")
+        self.assertIn("internal::output_catalog_characteristic()", register)
+        self.assertIn("internal::bind_output_catalog(*output_catalog)", register)
+        self.assertIn("on_discovery_gap_event, nullptr", register)
+        signal_source = (
+            REPOSITORY / "components/companion_ble/src/signal_catalog_characteristic.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("next_token", signal_source)
+        self.assertNotIn("ble_gap_event_listener_register", signal_source)
+
+    def test_output_catalog_embedding_is_binary_and_passed_unchanged(self) -> None:
+        main_root = REPOSITORY / "firmware/weact-can485-v1.1/main"
+        cmake = (main_root / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertIn('EMBED_FILES "${OUTPUT_CATALOG_JSON}"', cmake)
+        self.assertIn("add_dependencies(${COMPONENT_LIB} output_catalog)", cmake)
+        main = (main_root / "main.cpp").read_text(encoding="utf-8")
+        self.assertIn('asm("_binary_output_catalog_json_start")', main)
+        self.assertIn('asm("_binary_output_catalog_json_end")', main)
+        start = function_body_in(main, "start_companion_link")
+        self.assertIn("inputs.output_catalog = {output_catalog_start,", start)
+        self.assertIn("output_catalog_end - output_catalog_start", start)
 
     def test_host_sync_queues_whole_table_service_changed_before_advertising(self) -> None:
         body = function_body("on_host_sync")

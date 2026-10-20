@@ -185,3 +185,10 @@ acceptance. See the [architecture validation procedure](../development/architect
 [host build guidance](../development/supported-build.md), and
 [firmware build guidance](../development/firmware-build.md). Keep host,
 firmware, bench, and vehicle validation claims distinct.
+
+The `main` component embeds the generated `output_catalog.json` as exact binary
+bytes with `EMBED_FILES` and passes its immutable view through
+`companion_ble::ServiceInputs`. The BLE component checks document length only;
+it neither parses output descriptors nor gains a sink or configuration
+implementation dependency. Its host-task connection owner issues one discovery
+token for both catalog selectors and clears both selections on disconnect.

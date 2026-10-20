@@ -10,7 +10,7 @@
 
 namespace companion_ble {
 
-// The `xxxx` field of each companion attribute. Values 0x0008-0xffff are
+// The `xxxx` field of each companion attribute. Values 0x0009-0xffff are
 // reserved for later characteristics.
 enum class CompanionAttribute : std::uint16_t {
   Service = 0x0000,
@@ -21,11 +21,12 @@ enum class CompanionAttribute : std::uint16_t {
   Command = 0x0005,
   SignalCatalog = 0x0006,
   ExtensibleLiveSignals = 0x0007,
+  OutputCatalog = 0x0008,
 };
 
-// Seven characteristics are defined by ble-protocol.md. Keep the service
+// Eight characteristics are defined by ble-protocol.md. Keep the service
 // table's fixed storage and its host regression assertion tied to this count.
-inline constexpr std::size_t kCompanionCharacteristicCount = 7U;
+inline constexpr std::size_t kCompanionCharacteristicCount = 8U;
 
 // Characteristic properties and pairing policy frozen by ble-protocol.md.
 // The GATT binder validates its definitions against this host-tested table.
@@ -46,6 +47,7 @@ inline constexpr std::array<CharacteristicProfile, kCompanionCharacteristicCount
         {CompanionAttribute::Command, false, true, false, false},
         {CompanionAttribute::SignalCatalog, true, true, false, false},
         {CompanionAttribute::ExtensibleLiveSignals, false, false, true, false},
+        {CompanionAttribute::OutputCatalog, true, true, false, false},
     }};
 
 // A 128-bit UUID in BLE wire order (least significant byte first).

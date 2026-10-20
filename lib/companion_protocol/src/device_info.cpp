@@ -14,17 +14,17 @@ bool push_text(EncodedDeviceInfo &value, std::string_view text) noexcept {
 
 } // namespace
 
-std::optional<EncodedDeviceInfo>
-encode_device_info(const DeviceInfo &info, const DeviceInfoExtensionStatus extension) noexcept {
+std::optional<EncodedDeviceInfo> encode_device_info(const DeviceInfo &info,
+                                                    const DeviceInfoExtensionStatus extension,
+                                                    const bool output_catalog_usable) noexcept {
   if (info.firmware_version.size() > kMaxDeviceInfoTextBytes ||
       info.hardware_id.size() > kMaxDeviceInfoTextBytes) {
     return std::nullopt;
   }
   EncodedDeviceInfo value{};
   value.push(kProtocolMajor);
-  const bool extension_present = extension != DeviceInfoExtensionStatus::Absent;
   const bool extension_usable = extension == DeviceInfoExtensionStatus::Usable;
-  value.push(extension_present ? kExtensibleProtocolMinor : kProtocolMinor);
+  value.push(kProtocolMinor);
   value.push_u16(info.config_schema_version);
   value.push(kLiveSignalLayoutVersion);
   value.push(info.pairing_window_open ? kPairingWindowOpenFlag : std::uint8_t{0});
@@ -32,13 +32,11 @@ encode_device_info(const DeviceInfo &info, const DeviceInfoExtensionStatus exten
   if (!push_text(value, info.firmware_version) || !push_text(value, info.hardware_id)) {
     return std::nullopt;
   }
-  if (extension_present) {
-    const std::uint8_t extension_flags =
-        extension_usable ? kDeviceInfoExtensionUsableFlag : std::uint8_t{0};
-    if (!value.push(kDeviceInfoExtensionVersion) || !value.push(extension_flags)) {
-      return std::nullopt;
-    }
-  }
+  const auto extension_flags =
+      static_cast<std::uint8_t>((extension_usable ? kDeviceInfoExtensionUsableFlag : 0U) |
+                                (output_catalog_usable ? kDeviceInfoOutputCatalogUsableFlag : 0U));
+  if (!value.push(kDeviceInfoExtensionVersion) || !value.push(extension_flags))
+    return std::nullopt;
   return value;
 }
 

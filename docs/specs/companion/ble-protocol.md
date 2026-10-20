@@ -1,4 +1,4 @@
-# Companion BLE protocol (major version 1; current minor version 1)
+# Companion BLE protocol (major version 1; current minor version 2)
 
 This document is the authoritative core profile for the Bluetooth Low Energy
 (BLE) link between the controller and the iOS companion app. It defines the
@@ -16,12 +16,11 @@ own companion documents:
   availability encoding and rate cap.
 - [`extensible-live-signals.md`](extensible-live-signals.md): protocol 1.1
   catalog discovery and extensible live-signal packets.
-- [`output-catalog.md`](output-catalog.md): accepted protocol 1.2 output
+- [`output-catalog.md`](output-catalog.md): protocol 1.2 output
   catalog, which describes the output types the controller accepts.
 
-The protocol 1.1 extension is a specification for follow-on implementation.
-The protocol 1.2 output catalog is an accepted contract and is not yet
-implemented.
+The firmware implements protocol 1.2 catalog discovery and extensible live
+signals.
 The existing fixed-layout firmware and app decoders remain supported. This
 extension has not been validated on hardware, on a phone, or in a vehicle.
 
@@ -406,7 +405,7 @@ ab49xxxx-09b6-4509-bf8e-2790253baf98
 | Command | `0005` | `ab490005-09b6-4509-bf8e-2790253baf98` |
 | Signal catalog | `0006` | `ab490006-09b6-4509-bf8e-2790253baf98` |
 | Extensible live signals | `0007` | `ab490007-09b6-4509-bf8e-2790253baf98` |
-| Output catalog (planned, 1.2) | `0008` | `ab490008-09b6-4509-bf8e-2790253baf98` |
+| Output catalog | `0008` | `ab490008-09b6-4509-bf8e-2790253baf98` |
 
 These UUIDs are fixed for every protocol version, so an app can always find the
 device info characteristic and read the protocol version. Values `0009`–`ffff`
@@ -423,7 +422,7 @@ are reserved for later characteristics.
 | Command | Write | Encrypted, bonded | [Command](#command) |
 | Signal catalog | Read, Write | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#catalog-discovery) |
 | Extensible live signals | Notify | Encrypted, bonded | [Extensible live signals](extensible-live-signals.md#extensible-value-packets) |
-| Output catalog (planned, 1.2) | Read, Write | Encrypted, bonded | [Output catalog](output-catalog.md#ble-transport) |
+| Output catalog | Read, Write | Encrypted, bonded | [Output catalog](output-catalog.md#ble-transport) |
 
 "Write" means ATT Write Request (write with response). No characteristic
 supports Write Without Response, so every write is acknowledged and flow
@@ -479,23 +478,23 @@ Device info is a read-only binary value. A read returns the whole value; it is
 longer than a default-MTU read, so the client reads it with ATT Read Blob,
 which CoreBluetooth does automatically.
 
-| Offset | Size | Field | Protocol 1.0 value |
+| Offset | Size | Field | Protocol 1.2 value |
 | ---: | ---: | --- | --- |
 | 0 | 1 | `protocol_major` (u8) | `1` |
-| 1 | 1 | `protocol_minor` (u8) | `0` |
+| 1 | 1 | `protocol_minor` (u8) | `2` |
 | 2 | 2 | `config_schema_version` (u16) | `1` (`kSchemaVersion`) |
 | 4 | 1 | `live_signal_layout_version` (u8) | `2` |
 | 5 | 1 | `flags` (u8) | Bit 0: pairing window open. Other bits are zero. |
 | 6 | 2 | `max_config_bytes` (u16) | `4096` |
 | 8 | 1 + n | `firmware_version` (length-prefixed string) | Application version, at most 31 bytes. |
 | 9 + n | 1 + m | `hardware_id` (length-prefixed string) | `weact-can485-v1.1`, at most 31 bytes. |
-| after `hardware_id` | 1 | `extension_version` (u8) | Protocol 1.1: `1`. |
-| next byte | 1 | `extension_flags` (u8) | Protocol 1.1: bit 0 means catalog and extensible stream are usable. Planned protocol 1.2: bit 1 means the output catalog is usable. Other bits zero. Protocol 1.2 firmware always appends both bytes and reports minor `2`. |
+| after `hardware_id` | 1 | `extension_version` (u8) | `1`. |
+| next byte | 1 | `extension_flags` (u8) | Bit 0 means catalog and extensible stream are usable. Protocol 1.2: bit 1 means the output catalog is usable. Other bits zero. Protocol 1.2 firmware always appends both bytes and reports minor `2`. |
 
 Both strings are at most 31 bytes. For `firmware_version` this matches the
 32-byte, NUL-terminated `esp_app_desc_t` version field; `hardware_id` is a
 protocol constant with the same cap. A protocol 1.0 value is at most 72 bytes;
-protocol 1.1 appends two bytes, for at most 74 bytes.
+protocol 1.1 and 1.2 append two bytes, for at most 74 bytes.
 
 - `protocol_major` and `protocol_minor` stay at offsets 0 and 1 in every
   protocol version.
@@ -507,10 +506,11 @@ protocol 1.1 appends two bytes, for at most 74 bytes.
 - `firmware_version` is the ESP-IDF application version string. It is
   informational; the app must not parse it for compatibility.
 - `hardware_id` identifies the board record. It is informational.
-- Protocol 1.1 appends `extension_version` and `extension_flags` after the
+- Protocol 1.2 always appends `extension_version` and `extension_flags` after the
   complete length-prefixed `hardware_id`. It reports extension version `1`
   even when the extension is unusable; bit 0 is then clear. When the extension
-  is usable, bit 0 is set. Planned protocol 1.2 defines bit 1 for the
+  is usable, bit 0 is set. Protocol 1.2 reports minor `2` independently of
+  the flags and defines bit 1 for the
   [output catalog](output-catalog.md#device-info); all other extension flag
   bits are reserved and zero.
 - `flags` bit 0 is readable before pairing, so any central in range can learn
@@ -615,7 +615,7 @@ format versions are carried by their respective extension payloads:
 | Live-signal layout | The Live signals frame. | The frame layout or signal set changes. |
 | Catalog format | The 0006 catalog document and paging bytes. | Existing catalog framing or field meaning changes incompatibly. |
 | Extensible live format | The 0007 packet and record grammar. | Existing packet framing or field meaning changes incompatibly. |
-| Output catalog format | The 0008 page header and JSON document (planned, 1.2). | Existing document keys, field kinds or page framing change incompatibly. A new output type, field or effect is content and changes no version. |
+| Output catalog format | The 0008 page header and JSON document (1.2). | Existing document keys, field kinds or page framing change incompatibly. A new output type, field or effect is content and changes no version. |
 
 A minor protocol version may add fields at the end of a value, flag bits,
 opcodes, error codes and characteristics. It may not remove, reorder or

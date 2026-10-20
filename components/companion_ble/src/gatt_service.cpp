@@ -30,6 +30,7 @@ std::array<CharacteristicDefinition, kMaxCompanionCharacteristics> registered{
     CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service},
+    CharacteristicDefinition{CompanionAttribute::Service},
     CharacteristicDefinition{CompanionAttribute::Service}};
 
 // The access trampoline of every protected characteristic. It applies the

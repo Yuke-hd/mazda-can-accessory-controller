@@ -59,6 +59,9 @@ struct ServiceInputs {
   // SignalProvider::read() only, from the NimBLE host task, so it must
   // outlive the NimBLE host; the service never subscribes to it.
   const vehicle_signals::SignalProvider *live_signals{nullptr};
+  // Immutable opaque document, 1–16384 bytes when provided. Must outlive the
+  // NimBLE host. Only its bounds are checked; JSON is never parsed here.
+  companion_protocol::ByteView output_catalog{};
 };
 
 // Starts the companion BLE service on its own low-priority startup task and

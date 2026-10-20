@@ -40,7 +40,7 @@ struct CharacteristicDefinition {
   std::uint16_t *value_handle{nullptr};
 };
 
-// The spec defines seven companion characteristics.
+// The spec defines eight companion characteristics.
 inline constexpr std::size_t kMaxCompanionCharacteristics = kCompanionCharacteristicCount;
 
 // Adds the GAP and GATT services and the companion primary service with

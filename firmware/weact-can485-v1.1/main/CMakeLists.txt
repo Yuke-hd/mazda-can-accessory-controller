@@ -22,6 +22,8 @@ idf_component_register(
            controller_config vehicle_can_rx mazda_telemetry freertos vehicle_core esp_timer
            companion_ble companion_config esp_app_format
   PRIV_REQUIRES esp_driver_twai
+  EMBED_FILES "${OUTPUT_CATALOG_JSON}"
   # Flash-cache layout; see docs/development/flash-cache-layout.md.
   LDFRAGMENTS "hot_rodata.lf" "hot_code.lf"
 )
+add_dependencies(${COMPONENT_LIB} output_catalog)

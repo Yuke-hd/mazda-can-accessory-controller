@@ -1,7 +1,6 @@
 #include "companion_ble/signal_catalog_characteristic.hpp"
 
 #include "companion_protocol/signal_catalog_selector.hpp"
-#include "host/ble_gap.h"
 #include "host/ble_gatt.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_mbuf.h"
@@ -14,60 +13,8 @@ namespace {
 
 using companion_protocol::SignalCatalogExport;
 
-constexpr std::uint16_t kNoConnection = BLE_HS_CONN_HANDLE_NONE;
 constexpr std::size_t kSelectorBytes = companion_protocol::kSignalCatalogSelectorBytes;
-
-// UUID 0006 is added to CompanionAttribute by the endpoint registration
-// change. Keeping the numeric value here lets this independently owned
-// characteristic compile before that registration slice is integrated.
-constexpr CompanionAttribute kSignalCatalogAttribute = static_cast<CompanionAttribute>(0x0006U);
-
-struct CatalogState {
-  companion_protocol::SignalCatalogSelector selector{};
-  std::uint16_t connection{kNoConnection};
-  std::uint32_t next_token{0U};
-  ble_gap_event_listener listener{};
-};
-
-CatalogState state{};
-
-std::uint32_t next_connection_token() noexcept {
-  ++state.next_token;
-  if (state.next_token == 0U)
-    ++state.next_token;
-  return state.next_token;
-}
-
-void open_connection(const std::uint16_t connection) noexcept {
-  // The current firmware accepts one connection at a time. An unexpected
-  // second CONNECT must not take over the first link's selector state.
-  if (state.connection != kNoConnection)
-    return;
-  state.connection = connection;
-  state.selector.connect(connection, next_connection_token());
-}
-
-void close_connection(const std::uint16_t connection) noexcept {
-  if (connection != state.connection)
-    return;
-  state.selector.disconnect(connection);
-  state.connection = kNoConnection;
-}
-
-int handle_gap_event(ble_gap_event *const event, void * /*argument*/) {
-  switch (event->type) {
-  case BLE_GAP_EVENT_CONNECT:
-    if (event->connect.status == 0)
-      open_connection(event->connect.conn_handle);
-    break;
-  case BLE_GAP_EVENT_DISCONNECT:
-    close_connection(event->disconnect.conn.conn_handle);
-    break;
-  default:
-    break;
-  }
-  return 0;
-}
+companion_protocol::SignalCatalogSelector selector_state{};
 
 int append(ble_gatt_access_ctxt &context, const companion_protocol::ByteView bytes) noexcept {
   const int rc = os_mbuf_append(context.om, bytes.data(), static_cast<std::uint16_t>(bytes.size()));
@@ -88,7 +35,7 @@ bool read_selector(const ble_gatt_access_ctxt &context,
 int access_signal_catalog(const std::uint16_t connection, std::uint16_t /*attribute*/,
                           ble_gatt_access_ctxt *const context, void * /*argument*/) {
   if (context->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-    const auto page = state.selector.read(connection);
+    const auto page = selector_state.read(connection);
     return page.has_value() ? append(*context, page->view()) : unavailable();
   }
   if (context->op != BLE_GATT_ACCESS_OP_WRITE_CHR)
@@ -98,26 +45,33 @@ int access_signal_catalog(const std::uint16_t connection, std::uint16_t /*attrib
   if (!read_selector(*context, selector))
     return static_cast<int>(companion_protocol::AttError::InvalidAttributeValueLength);
 
-  return static_cast<int>(state.selector.select(connection, selector));
+  return static_cast<int>(selector_state.select(connection, selector));
 }
 
 } // namespace
 
 CharacteristicDefinition signal_catalog_characteristic() noexcept {
-  CharacteristicDefinition definition{kSignalCatalogAttribute};
+  CharacteristicDefinition definition{CompanionAttribute::SignalCatalog};
   definition.flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE;
   definition.access = access_signal_catalog;
   return definition;
 }
 
 int bind_signal_catalog(const SignalCatalogExport &catalog) noexcept {
-  state.selector.bind(catalog);
-  state.connection = kNoConnection;
-  return ble_gap_event_listener_register(&state.listener, handle_gap_event, nullptr);
+  selector_state.bind(catalog);
+  return 0;
+}
+
+void connect_signal_catalog(const std::uint16_t connection, const std::uint32_t token) noexcept {
+  selector_state.connect(connection, token);
+}
+
+void disconnect_signal_catalog(const std::uint16_t connection) noexcept {
+  selector_state.disconnect(connection);
 }
 
 std::uint32_t signal_catalog_token_for_connection(const std::uint16_t connection) noexcept {
-  return state.selector.token_for_connection(connection);
+  return selector_state.token_for_connection(connection);
 }
 
 } // namespace companion_ble::internal

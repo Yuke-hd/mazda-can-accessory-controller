@@ -167,6 +167,9 @@ static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes 
   esp_restart();
 }
 
+extern const std::uint8_t output_catalog_start[] asm("_binary_output_catalog_json_start");
+extern const std::uint8_t output_catalog_end[] asm("_binary_output_catalog_json_end");
+
 // Starts the optional companion BLE link. It runs on its own startup task, so
 // a failure here or later only loses the companion link; CAN, telemetry, the
 // LED renderer and fail-off are already running and are not affected. Not
@@ -193,6 +196,8 @@ __attribute__((noinline)) void start_companion_link() noexcept {
   inputs.config.restart = restart_after_fail_off;
   // The companion only reads the provider through the generic port.
   inputs.live_signals = &signal_provider;
+  inputs.output_catalog = {output_catalog_start,
+                           static_cast<std::size_t>(output_catalog_end - output_catalog_start)};
   if (!companion_ble::start(device_info, inputs))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
 }

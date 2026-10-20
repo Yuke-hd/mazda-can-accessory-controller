@@ -3,14 +3,17 @@
 #include "companion_ble/advertising.hpp"
 #include "companion_ble/config_characteristics.hpp"
 #include "companion_ble/device_info_characteristic.hpp"
+#include "companion_ble/discovery_connection.hpp"
 #include "companion_ble/extensible_live_characteristic.hpp"
 #include "companion_ble/gatt_service.hpp"
 #include "companion_ble/live_signals_characteristic.hpp"
+#include "companion_ble/output_catalog_characteristic.hpp"
 #include "companion_ble/security.hpp"
 #include "companion_ble/signal_catalog_characteristic.hpp"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "host/ble_gap.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -49,7 +52,28 @@ const vehicle_signals::SignalProvider *live_signal_provider{nullptr};
 // The export points into the provider's immutable catalog and must outlive
 // every NimBLE callback that serves discovery or samples the live stream.
 std::optional<companion_protocol::SignalCatalogExport> signal_catalog{};
+std::optional<companion_protocol::OutputCatalogExport> output_catalog{};
 bool config_transfer{false};
+internal::DiscoveryConnection discovery_connection{};
+ble_gap_event_listener discovery_listener{};
+
+int on_discovery_gap_event(ble_gap_event *event, void * /*argument*/) {
+  if (event->type == BLE_GAP_EVENT_CONNECT && event->connect.status == 0) {
+    const auto connection = event->connect.conn_handle;
+    const auto token = discovery_connection.connect(connection);
+    if (token != 0U) {
+      internal::connect_signal_catalog(connection, token);
+      internal::connect_output_catalog(connection, token);
+    }
+  } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
+    const auto connection = event->disconnect.conn.conn_handle;
+    if (discovery_connection.disconnect(connection)) {
+      internal::disconnect_signal_catalog(connection);
+      internal::disconnect_output_catalog(connection);
+    }
+  }
+  return 0;
+}
 
 void host_task(void * /*argument*/) {
   nimble_port_run();
@@ -63,7 +87,7 @@ void on_host_sync() {
     ESP_LOGW(kTag, "no usable BLE identity address (rc=%d)", rc);
     return;
   }
-  // UUIDs 0x0006 and 0x0007 changed the static attribute table. NimBLE keeps
+  // UUID 0x0008 changed the static attribute table. NimBLE keeps
   // this range for bonded peers and indicates it when they next connect.
   ble_svc_gatt_changed(1U, std::numeric_limits<std::uint16_t>::max());
   internal::start_advertising();
@@ -79,17 +103,25 @@ int register_services() noexcept {
                  internal::config_characteristic(), internal::config_status_characteristic(),
                  internal::command_characteristic(), internal::live_signals_characteristic(),
                  internal::signal_catalog_characteristic(),
-                 internal::extensible_live_signals_characteristic()})
+                 internal::extensible_live_signals_characteristic(),
+                 internal::output_catalog_characteristic()})
           : internal::register_companion_service(
                 {internal::device_info_characteristic(served_device_info),
                  internal::live_signals_characteristic(), internal::signal_catalog_characteristic(),
-                 internal::extensible_live_signals_characteristic()});
+                 internal::extensible_live_signals_characteristic(),
+                 internal::output_catalog_characteristic()});
   if (rc != 0)
     return rc;
   rc = ble_svc_gap_device_name_set(kDeviceName);
   if (rc != 0)
     return rc;
   rc = internal::bind_signal_catalog(*signal_catalog);
+  if (rc != 0)
+    return rc;
+  rc = internal::bind_output_catalog(*output_catalog);
+  if (rc != 0)
+    return rc;
+  rc = ble_gap_event_listener_register(&discovery_listener, on_discovery_gap_event, nullptr);
   if (rc != 0)
     return rc;
   rc = internal::bind_live_signals(*live_signal_provider);
@@ -145,12 +177,15 @@ bool start(const companion_protocol::DeviceInfo &device_info,
   companion_protocol::DeviceInfo served = device_info;
   served.pairing_window_open = false;
   signal_catalog.emplace(inputs.live_signals->catalog());
+  output_catalog.emplace(inputs.output_catalog);
   const auto extension_status = signal_catalog->available()
                                     ? companion_protocol::DeviceInfoExtensionStatus::Usable
                                     : companion_protocol::DeviceInfoExtensionStatus::Unusable;
-  const auto closed = companion_protocol::encode_device_info(served, extension_status);
+  const auto closed =
+      companion_protocol::encode_device_info(served, extension_status, output_catalog->available());
   served.pairing_window_open = true;
-  const auto open = companion_protocol::encode_device_info(served, extension_status);
+  const auto open =
+      companion_protocol::encode_device_info(served, extension_status, output_catalog->available());
   if (!closed.has_value() || !open.has_value()) {
     ESP_LOGW(kTag, "Device info string longer than %u bytes",
              static_cast<unsigned>(companion_protocol::kMaxDeviceInfoTextBytes));
