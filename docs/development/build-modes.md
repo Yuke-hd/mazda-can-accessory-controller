@@ -129,10 +129,10 @@ downgrade hazards are in [Firmware builds](firmware-build.md#partition-layout).
 For a firmware build against a local core checkout, set
 `VEHICLE_CAN_CORE_SOURCE_DIR` (cache path in the firmware `CMakeLists.txt`).
 
-The build pins the hot telemetry functions to IRAM and fails if a pinned symbol
-did not reach IRAM (`tools/check_iram_placement.py`), and it requires 80 MHz DIO
-flash. See [Flash-cache layout](flash-cache-layout.md) before changing hot
-functions or IRAM-consuming options.
+The build pins the hot telemetry and CAN receive functions to IRAM and fails
+if a pinned symbol did not reach IRAM (`tools/check_iram_placement.py`), and it
+requires 80 MHz DIO flash. See [Flash-cache layout](flash-cache-layout.md)
+before changing hot functions or IRAM-consuming options.
 
 ### 5.1 Firmware diagnostic builds
 

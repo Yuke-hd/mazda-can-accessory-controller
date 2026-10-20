@@ -90,8 +90,8 @@ project(weact_can485_v11_vehicle_listen_only)
 # shared flash cache made telemetry throughput depend on how unrelated Kconfig
 # options shifted the flash layout. Compile the project's own components with
 # -O2; main/hot_rodata.lf and main/hot_code.lf move their rodata to DRAM and
-# the hot telemetry functions to IRAM. These options apply to this firmware
-# target only; host builds of lib/ and tests are unaffected.
+# the hot telemetry and CAN receive functions to IRAM. These options apply to
+# this firmware target only; host builds of lib/ and tests are unaffected.
 # This -O2 comes after the menuconfig optimisation level and overrides it for
 # these components. To debug them at -Og or -O0 (for example under GDB),
 # remove -O2 here temporarily; do not ship or vehicle-test such a build.

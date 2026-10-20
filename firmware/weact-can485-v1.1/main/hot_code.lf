@@ -1,4 +1,4 @@
-# Place the hot VehicleTelemetryService functions in IRAM.
+# Place the per-frame telemetry and CAN receive functions in IRAM.
 #
 # These functions run for every received CAN frame. Executing them from IRAM
 # keeps them out of the shared flash cache (see hot_rodata.lf), so the
@@ -43,3 +43,40 @@ entries:
     vehicle_telemetry:_ZN5mazda8internal23VehicleTelemetryService7processERKN12vehicle_core11RawCanFrameE (noflash)
     vehicle_telemetry:_ZThn4_N5mazda8internal23VehicleTelemetryService14on_diagnosticsERKN17vehicle_telemetry20TransportDiagnosticsE (noflash)
     vehicle_telemetry:_ZZN5mazda8internal23VehicleTelemetryService21publish_notificationsERKNS_12VehicleStateERKNS_11DiagnosticsEySt8optionalImEbbENKUlDpRKT_E_clIJNS0_22NotificationDescriptorINS_16SelectorPositionELt1EEENSG_INS_10ActualGearELt2EEENSG_INS_9TurnStateELt3EEENSG_IbLt4EEENSG_IbLt5EEENSG_IbLt6EEENSG_IbLt7EEENSG_IbLt8EEENSG_IbLt9EEENSG_IbLt10EEENSG_IbLt11EEENSG_IbLt12EEENSG_IbLt13EEENSG_IbLt14EEENSG_IbLt15EEENSG_INS_18FrontWiperPositionELt16EEENSG_IbLt17EEEEEEDaSD_ (noflash)
+
+# The CAN receive path. `receive_task` owns the TWAI poll, frame copy, and
+# custom SPSC ring push; `can_bus::receive` waits for a queued frame and pops
+# it for the consumer. `CanBusSource::receive` is the vehicle_telemetry adapter
+# between the runtime worker and can_bus. Every one of these functions runs for
+# each received frame.
+[mapping:hot_code_can_bus]
+archive: libcan_bus.a
+entries:
+    can_bus:_ZN7can_bus12_GLOBAL__N_112receive_taskEPv (noflash)
+    can_bus:_ZN7can_bus7receiveERN12vehicle_core11RawCanFrameEm (noflash)
+
+[mapping:hot_code_vehicle_telemetry_can_rx]
+archive: libvehicle_telemetry.a
+entries:
+    can_bus_source:_ZN17vehicle_telemetry12CanBusSource7receiveERN12vehicle_core11RawCanFrameEm (noflash)
+
+# The TWAI task API and HAL parser called by `receive_task` and
+# `can_bus::receive`. The wrappers forward to their `_v2` implementation, so
+# both names are required. Leaving these in flash would keep a cache-sensitive
+# call chain inside the otherwise IRAM-resident receive loop.
+[mapping:hot_code_twai_driver]
+archive: libdriver.a
+entries:
+    twai:twai_receive (noflash)
+    twai:twai_receive_v2 (noflash)
+    twai:twai_read_alerts (noflash)
+    twai:twai_read_alerts_v2 (noflash)
+    twai:twai_get_status_info (noflash)
+    twai:twai_get_status_info_v2 (noflash)
+
+[mapping:hot_code_twai_hal]
+archive: libhal.a
+entries:
+    twai_hal_v1:twai_hal_parse_frame (noflash)
+    twai_hal_v1:twai_hal_get_tec (noflash)
+    twai_hal_v1:twai_hal_get_rec (noflash)
