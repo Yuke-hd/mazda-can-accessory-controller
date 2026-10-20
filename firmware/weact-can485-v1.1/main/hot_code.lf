@@ -78,5 +78,8 @@ entries:
 archive: libhal.a
 entries:
     twai_hal_v1:twai_hal_parse_frame (noflash)
-    twai_hal_v1:twai_hal_get_tec (noflash)
-    twai_hal_v1:twai_hal_get_rec (noflash)
+
+[mapping:hot_code_vehicle_core_can_rx]
+archive: libvehicle_core.a
+entries:
+    vehicle_core:_ZNK12vehicle_core11RawCanFrame8is_validEv (noflash)
