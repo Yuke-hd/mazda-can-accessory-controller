@@ -474,6 +474,8 @@ COMPANION_PROTOCOL_HEADERS = (
     "companion_protocol/live_signals.hpp",
     "companion_protocol/pairing_window.hpp",
     "companion_protocol/read_back.hpp",
+    "companion_protocol/output_catalog_export.hpp",
+    "companion_protocol/output_catalog_selector.hpp",
     "companion_protocol/signal_catalog_export.hpp",
     "companion_protocol/signal_catalog_selector.hpp",
     "companion_protocol/user_key_debouncer.hpp",
