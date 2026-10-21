@@ -63,6 +63,12 @@ std::optional<FillFraction> commanded_level(const action_engine::ActionCommand &
 
 } // namespace
 
+void LedActionSink::clear() noexcept {
+  bindings_.clear();
+  fills_.clear();
+  transients_.clear();
+}
+
 void LedActionSink::execute(const action_engine::ActionCommand &command) noexcept {
   const std::uint32_t epoch = lighting_->transient_epoch();
   const auto active = on_off_level(command.kind);

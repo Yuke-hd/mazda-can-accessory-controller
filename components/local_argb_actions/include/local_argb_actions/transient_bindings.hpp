@@ -27,6 +27,8 @@ public:
   [[nodiscard]] local_argb::internal::LightingTransientStarts
   latest(std::uint32_t epoch) const noexcept;
   void discard_starts() noexcept;
+  // Removes every binding and retained start.
+  void clear() noexcept;
 
 private:
   struct Binding {

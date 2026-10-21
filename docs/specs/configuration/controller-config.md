@@ -321,6 +321,17 @@ so they remain with the runtime apply step and keep their existing
 - a signal whose capabilities do not support the rule type;
 - rule or binding capacity (for example, 8 effect, 8 fill and 8 transient bindings).
 
+Capacity remains an apply-time error rather than a validation error. If a
+parsed persisted override fails while applying, the controller logs the
+`PersistedOverride` failure, clears the partially bound engine and LED sink,
+and applies the embedded factory configuration from that clean state. The
+factory model replaces the override in the active in-memory configuration for
+the current boot; the persisted override remains stored unchanged and is
+retried on the next boot. A successful fallback renders the normal factory
+profile. If the factory model cannot be parsed or applied, startup stays
+failed off to black and does not start CAN. A failure applying an already
+selected factory configuration is logged as a `FactoryDefault` failure.
+
 ## Versioning
 
 - Every document states `version`. The runtime loader rejects any version

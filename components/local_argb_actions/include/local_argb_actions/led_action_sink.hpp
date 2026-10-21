@@ -79,6 +79,10 @@ public:
     return transients_.bind(action, effect, pixel_count);
   }
 
+  // Removes every effect, fill and transient binding. The composition root
+  // calls this while the engine is detached before replacing a failed
+  // configuration; it publishes nothing.
+  void clear() noexcept;
   void execute(const action_engine::ActionCommand &command) noexcept override;
 
 private:

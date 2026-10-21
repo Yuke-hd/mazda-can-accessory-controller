@@ -60,6 +60,11 @@ local_argb::internal::LightingFills FillBindings::lit() const noexcept {
   return fills;
 }
 
+void FillBindings::clear() noexcept {
+  bindings_ = {};
+  count_ = 0;
+}
+
 bool FillBindings::contains(const action_engine::ActionId action,
                             const local_argb::internal::LedZone &zone) const noexcept {
   for (std::size_t index = 0; index < count_; ++index) {
