@@ -103,7 +103,7 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
         return GeneratorRun(result, catalog, header)
 
     def generate_weact(self, output: str = "out") -> GeneratorRun:
-        return self.generate([LED_DESCRIPTOR], ["strip_pixels=100"], output)
+        return self.generate([LED_DESCRIPTOR], ["strip_max_pixels=300"], output)
 
     def assert_rejected(self, run: GeneratorRun, *fragments: str) -> None:
         self.assertNotEqual(run.returncode, 0, "generator accepted invalid input")
@@ -118,7 +118,7 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
         run = self.generate_weact()
         self.assertEqual(run.returncode, 0, run.stderr)
         expected = reference_catalog()
-        self.assertEqual(len(expected), 1518)
+        self.assertEqual(len(expected), 1747)
         self.assertEqual(run.catalog.read_bytes(), expected)
 
     def test_weact_header_layout(self) -> None:
@@ -136,7 +136,8 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
         )
         self.assertIn(
             "namespace led_transient {\n"
-            "inline constexpr std::int32_t kZonePixels = 100;\n"
+            "inline constexpr std::int32_t kZonePixels = 300;\n"
+            'inline constexpr std::string_view kZonePixelsSetting = "pixel_count";\n'
             "inline constexpr std::array<std::string_view, 3> kZoneDirections{\n"
             '    "start_to_end", "end_to_start", "center_out"};\n'
             "inline constexpr std::int32_t kColorMin = 0;\n"
@@ -173,7 +174,7 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
             "#include <controller_config/generated/output_limits.hpp>\n"
             "namespace generated = controller_config::generated;\n"
             "static_assert(generated::kOutputTypeNames.size() == 4);\n"
-            "static_assert(generated::led_fill::kZonePixels == 100);\n"
+            "static_assert(generated::led_fill::kZonePixels == 300);\n"
             "static_assert(generated::led_effect::kPriorityDefault == 100);\n"
             "static_assert(generated::led_solid::kRuleTypes[1] == \"sampled_state\");\n"
             "int main() { return 0; }\n",
@@ -263,10 +264,10 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
 
     def test_unresolved_board_reference_is_rejected(self) -> None:
         run = self.generate([LED_DESCRIPTOR])
-        self.assert_rejected(run, "output_catalog.yaml", "outputs[1].fields[1].pixels", "strip_pixels")
+        self.assert_rejected(run, "output_catalog.yaml", "settings[0].max", "strip_max_pixels")
 
     def test_unused_board_value_is_rejected(self) -> None:
-        run = self.generate([LED_DESCRIPTOR], ["strip_pixels=100", "relay_count=2"])
+        run = self.generate([LED_DESCRIPTOR], ["strip_max_pixels=300", "relay_count=2"])
         self.assert_rejected(run, "relay_count")
 
     def test_malformed_board_values_are_rejected(self) -> None:
@@ -276,8 +277,8 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
                 self.assert_rejected(self.generate([LED_DESCRIPTOR], [value]), "--board")
 
     def test_duplicate_board_value_is_rejected(self) -> None:
-        run = self.generate([LED_DESCRIPTOR], ["strip_pixels=100", "strip_pixels=100"])
-        self.assert_rejected(run, "--board", "strip_pixels")
+        run = self.generate([LED_DESCRIPTOR], ["strip_max_pixels=300", "strip_max_pixels=300"])
+        self.assert_rejected(run, "--board", "strip_max_pixels")
 
     def test_existing_outputs_are_untouched_on_error(self) -> None:
         good = self.generate_weact()
@@ -298,7 +299,7 @@ class OutputCatalogGeneratorTests(unittest.TestCase):
         descriptor = self.write_descriptor("future.yaml", match.group(1))
         run = self.generate([descriptor], ["strip_max_pixels=300"])
         self.assertEqual(run.returncode, 0, run.stderr)
-        expected = reference_catalog(1)
+        expected = reference_catalog()
         self.assertEqual(len(expected), 1747)
         self.assertEqual(run.catalog.read_bytes(), expected)
 
@@ -657,7 +658,7 @@ class OutputCatalogBuildIntegrationTests(unittest.TestCase):
         self.board_file = self.source / "board.cmake"
         self.board_file.write_text(
             f'set(OUTPUT_CATALOG_DESCRIPTORS "{self.descriptor.as_posix()}")\n'
-            'set(OUTPUT_CATALOG_BOARD "strip_pixels=100")\n',
+            'set(OUTPUT_CATALOG_BOARD "strip_max_pixels=300")\n',
             encoding="utf-8",
         )
         (self.source / "CMakeLists.txt").write_text(f"""
@@ -694,15 +695,15 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/paths.txt"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         catalog, header = self.outputs()
         self.assertEqual(catalog.read_bytes(), reference_catalog())
-        self.assertIn("kZonePixels = 100;", header.read_text(encoding="utf-8"))
+        self.assertIn("kZonePixels = 300;", header.read_text(encoding="utf-8"))
 
         self.board_file.write_text(
-            self.board_file.read_text(encoding="utf-8").replace("strip_pixels=100", "strip_pixels=60"),
+            self.board_file.read_text(encoding="utf-8").replace("strip_max_pixels=300", "strip_max_pixels=200"),
             encoding="utf-8")
         result = self.run_cmake("--build", str(self.build))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('"pixels":60', catalog.read_text(encoding="utf-8"))
-        self.assertIn("kZonePixels = 60;", header.read_text(encoding="utf-8"))
+        self.assertIn('"pixels":200', catalog.read_text(encoding="utf-8"))
+        self.assertIn("kZonePixels = 200;", header.read_text(encoding="utf-8"))
 
         self.descriptor.write_text(
             self.descriptor.read_text(encoding="utf-8").replace("max: 5000", "max: 4000"), encoding="utf-8")
@@ -733,7 +734,7 @@ file(WRITE "${{CMAKE_CURRENT_BINARY_DIR}}/board.txt"
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         descriptors, board = (self.build / "board.txt").read_text(encoding="utf-8").splitlines()
         self.assertEqual(Path(descriptors).resolve(), LED_DESCRIPTOR.resolve())
-        self.assertEqual(board, "strip_pixels=100")
+        self.assertEqual(board, "strip_max_pixels=300")
 
 
 class GeneratedFilesAreNotCheckedInTests(unittest.TestCase):

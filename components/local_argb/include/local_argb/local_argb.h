@@ -52,7 +52,7 @@ inline constexpr vehicle_core::Microseconds kRestartFailOffWaitUs =
 using ProgressProbe = std::uint32_t (*)(const void *context) noexcept;
 
 // ESP-IDF runtime. start() sends an explicit black RMT frame before returning.
-bool start() noexcept;
+bool start(std::size_t pixel_count = kDefaultLedCount) noexcept;
 void fail_off() noexcept;
 // Watches one progress count from the renderer supervisor after start(). If
 // the count stops changing for kProgressStallFailOffUs, the strip fails off

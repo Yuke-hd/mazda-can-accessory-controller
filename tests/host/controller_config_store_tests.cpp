@@ -447,3 +447,18 @@ TEST_CASE("the NVS adapter restores an override when clearing fails after immedi
   REQUIRE(boot.ok());
   CHECK(boot.source == ConfigurationSource::PersistedOverride);
 }
+
+TEST_CASE("invalid strip settings and shortened zones preserve the saved override") {
+  FakeBackend backend;
+  ConfigStore store{backend};
+  const auto prior =
+      store.save_override(R"({"version":1,"sinks":{"local_argb":{"pixel_count":144}}})");
+  REQUIRE(prior.ok());
+  for (
+      const auto *candidate :
+      {R"({"version":1,"sinks":{"local_argb":{"pixel_count":301}}})",
+       R"({"version":1,"sinks":{"local_argb":{"pixel_count":100}},"actions":[{"name":"a"}],"outputs":[{"type":"led_fill","action":"a","zone":{"start":100,"length":1,"direction":"start_to_end"},"color":{"red":1,"green":0,"blue":0}}]})"}) {
+    CHECK(store.save_override(candidate).status == SaveOverrideResult::Status::InvalidCandidate);
+    CHECK(backend.stored == prior.canonical_json);
+  }
+}

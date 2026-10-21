@@ -37,11 +37,13 @@ void check_error(const persisted::ControllerConfig &config, persisted::Validatio
 
 class PixelSink final : public local_argb::PixelFrameSink {
 public:
-  bool write(const local_argb::PixelFrame &value, std::size_t) noexcept override {
+  bool write(const local_argb::PixelFrame &value, std::size_t length) noexcept override {
     frame = value;
+    last_length = length;
     return true;
   }
   local_argb::PixelFrame frame{};
+  std::size_t last_length{0};
 };
 class RendererSink final : public local_argb::internal::LightingSink {
 public:
@@ -273,5 +275,46 @@ TEST_CASE("JSON transient failures retain diagnostics for each invalid binding f
     CHECK(result.diagnostic->schema_error == field.error);
     CHECK(result.diagnostic->index == 0);
     CHECK_FALSE(result.diagnostic->message.empty());
+  }
+}
+
+TEST_CASE("configured end zones apply and render through every zone binding kind") {
+  for (const int count : {100, 144, 300}) {
+    for (const auto *type : {"led_fill", "led_solid", "led_transient"}) {
+      CAPTURE(count);
+      CAPTURE(type);
+      test_support::FakeSignalProvider provider{vehicle_signals::SignalCatalogView{}};
+      PixelSink pixels;
+      local_argb::internal::RendererController renderer{pixels};
+      REQUIRE(renderer.configure_pixel_count(count));
+      REQUIRE(renderer.start());
+      RendererSink lighting{renderer};
+      test_support::FakeClock clock;
+      clock.set(1000);
+      local_argb_actions::LedActionSink leds{lighting, clock};
+      action_engine::ActionEngine engine{provider};
+      const auto document =
+          std::string("{\"version\":1,\"sinks\":{\"local_argb\":{\"pixel_count\":") +
+          std::to_string(count) + "}},\"actions\":[{\"name\":\"a\"}],\"outputs\":[{\"type\":\"" +
+          type + "\",\"action\":\"a\",\"zone\":{\"start\":" + std::to_string(count - 1) +
+          ",\"length\":1,\"direction\":\"start_to_end\"},\"color\":{\"red\":16,\"green\":0,"
+          "\"blue\":0}" +
+          (std::string(type) == "led_transient" ? ",\"duration_ms\":800" : "") + "}]}";
+      const auto loaded = persisted::parse_controller_config(document);
+      REQUIRE(loaded.ok());
+      REQUIRE(persisted::apply_controller_config(*loaded.configuration, leds, engine).ok());
+      leds.execute({action_engine::ActionId{1}, std::string(type) == "led_transient"
+                                                    ? action_engine::ActionCommandKind::Trigger
+                                                    : action_engine::ActionCommandKind::Activate});
+      CHECK(pixels.frame[count - 1] == local_argb::Rgb{16, 0, 0});
+      CHECK(pixels.last_length == static_cast<std::size_t>(count));
+      auto invalid_document = document;
+      invalid_document.replace(invalid_document.find("\"length\":1"), 10, "\"length\":2");
+      CHECK_FALSE(persisted::parse_controller_config(invalid_document).ok());
+      CHECK(pixels.frame[count - 1] == local_argb::Rgb{16, 0, 0});
+      REQUIRE(renderer.apply({}, 1001));
+      CHECK(pixels.frame == local_argb::kBlackFrame);
+      CHECK(pixels.last_length == local_argb::kMaxLedCount);
+    }
   }
 }

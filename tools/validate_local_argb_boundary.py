@@ -199,8 +199,9 @@ def _fail_off_failures(structure: str) -> List[str]:
     by `local_argb::fail_off();`. A stopped facade publishes no Unavailable
     notice and a detached engine sends no Deactivate, so every stop or detach
     must also fail off on its success path. The rule fails closed: if either
-    start call is missing from the startup sequence, the returns cannot be
-    checked.
+    startup helper is missing from the startup sequence, the returns cannot
+    be checked. The helper must start the configured renderer before applying
+    bindings; its caller fails off on any helper failure.
     """
 
     failures: List[str] = []
@@ -208,15 +209,15 @@ def _fail_off_failures(structure: str) -> List[str]:
     if body is None:
         failures.append(f"{STARTUP_SEQUENCE}() is missing from vehicle integration")
     else:
-        argb_start = body.find("local_argb::start()")
+        argb_start = body.find("configure_engine_lighting(")
         telemetry_start = body.find("telemetry.start()")
-        for index, call in ((argb_start, "local_argb::start()"), (telemetry_start, "telemetry.start()")):
+        for index, call in ((argb_start, "configure_engine_lighting()"), (telemetry_start, "telemetry.start()")):
             if index < 0:
                 failures.append(
                     f"{call} is not called in {STARTUP_SEQUENCE}; setup returns cannot be checked"
                 )
         if argb_start >= 0 and telemetry_start >= 0:
-            region_start = _statement_end(body, argb_start)
+            region_start = argb_start
             region_end = _statement_end(body, telemetry_start)
             for match in re.finditer(r"\breturn\b", body[region_start:region_end]):
                 position = region_start + match.start()
@@ -557,6 +558,13 @@ def main() -> int:
         failures.append(
             "canonical boot configuration loader is missing from configure_engine_lighting"
         )
+    configured_start = "local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))"
+    start_index = configure_body.find(configured_start)
+    apply_index = configure_body.find("controller_config::persisted::apply_controller_config(")
+    if start_index < 0 or apply_index < 0 or start_index > apply_index:
+        failures.append("configured local ARGB startup must precede configuration application")
+    if "local_argb::start();" not in configure_body:
+        failures.append("unusable boot configuration must attempt startup black")
     for call, label in (
         ("configure_engine_lighting(", "configure_engine_lighting()"),
         ("engine.attach()", "engine.attach()"),
@@ -565,17 +573,16 @@ def main() -> int:
         if call not in sequence_body:
             failures.append(f"{label} is not called in {STARTUP_SEQUENCE}")
     for earlier, later, label in (
-        ("local_argb::start()", "engine.attach()",
+        ("configure_engine_lighting(", "engine.attach()",
          "local ARGB startup does not precede engine attachment"),
-        ("local_argb::start()", "configure_engine_lighting(",
-         "local ARGB startup does not precede boot configuration loading"),
+
         ("configure_engine_lighting(", "engine.attach()",
          "lighting profile application does not precede engine attachment"),
         ("engine.attach()", "telemetry.start()",
          "engine attachment does not precede telemetry/CAN startup"),
-        ("local_argb::start()", "telemetry.start()",
+        ("configure_engine_lighting(", "telemetry.start()",
          "local ARGB startup does not precede telemetry/CAN startup"),
-        ("local_argb::start()", "local_argb::watch_progress(",
+        ("configure_engine_lighting(", "local_argb::watch_progress(",
          "local ARGB startup does not precede the dispatcher progress watch"),
         ("local_argb::watch_progress(", "telemetry.start()",
          "dispatcher progress watch does not precede telemetry/CAN startup"),

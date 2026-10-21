@@ -4,16 +4,16 @@
 
 namespace local_argb_actions {
 
-BindingStatus
-TransientBindings::bind(const action_engine::ActionId action,
-                        const local_argb::internal::LightingTransient &effect) noexcept {
+BindingStatus TransientBindings::bind(const action_engine::ActionId action,
+                                      const local_argb::internal::LightingTransient &effect,
+                                      const std::size_t pixel_count) noexcept {
   if (!action.valid())
     return BindingStatus::InvalidAction;
   const auto &zone = effect.zone;
   if (effect.duration_us == 0 ||
       effect.duration_us > local_argb::internal::kMaxTransientDurationUs || zone.length == 0 ||
-      zone.start >= local_argb::kDefaultLedCount ||
-      zone.length > local_argb::kDefaultLedCount - zone.start ||
+      pixel_count < local_argb::kDefaultLedCount || pixel_count > local_argb::kMaxLedCount ||
+      zone.start >= pixel_count || zone.length > pixel_count - zone.start ||
       (zone.direction != local_argb::internal::FillDirection::StartToEnd &&
        zone.direction != local_argb::internal::FillDirection::EndToStart &&
        zone.direction != local_argb::internal::FillDirection::CenterOut))

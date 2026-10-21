@@ -330,9 +330,9 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         for label, call, helper, message in (
             (
                 "renderer start",
-                "if (!local_argb::start()) {",
+                "if (!local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))) {",
                 "bool start_renderer() noexcept { return local_argb::start(); }\n",
-                "local_argb::start() is not called in start_vehicle_io",
+                "configured local ARGB startup must precede configuration application",
             ),
             (
                 "telemetry start",
@@ -464,17 +464,12 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         self.assert_rejected("canonical boot configuration loader is missing")
 
-    def test_boot_configuration_load_before_renderer_start_is_rejected(self) -> None:
-        self.edit(
-            MAIN,
-            "  if (!local_argb::start()) {",
-            "  if (!configure_engine_lighting(config_backend.get())) {\n"
-            "    local_argb::fail_off();\n"
-            "    return;\n"
-            "  }\n"
-            "  if (!local_argb::start()) {",
-        )
-        self.assert_rejected("local ARGB startup does not precede boot configuration loading")
+    def test_apply_configuration_before_renderer_start_is_rejected(self) -> None:
+        # A stray application call before startup must not be accepted.
+        self.edit(MAIN, "  active_configuration = std::move(*selected.configuration);",
+                  "  controller_config::persisted::apply_controller_config();\n"
+                  "  active_configuration = std::move(*selected.configuration);")
+        self.assert_rejected("configured local ARGB startup must precede configuration application")
 
     def test_direct_turn_rule_in_main_is_rejected(self) -> None:
         self.edit(

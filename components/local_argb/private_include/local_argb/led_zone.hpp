@@ -19,13 +19,14 @@ enum class ZoneValidity : std::uint8_t {
   // length == 0; an empty zone is rejected rather than silently drawing
   // nothing so configuration mistakes are visible.
   EmptyZone,
-  // The zone does not fit inside [0, kDefaultLedCount).
+  // The zone does not fit inside [0, pixel_count).
   OutOfRange,
   // The direction value is not one of the declared enumerators.
   UnknownDirection,
 };
 
-[[nodiscard]] ZoneValidity validate_zone(const LedZone &zone) noexcept;
+[[nodiscard]] ZoneValidity validate_zone(const LedZone &zone,
+                                         std::size_t pixel_count = kMaxLedCount) noexcept;
 
 // Lights `fraction` of `zone` in `color`, treating the fraction as brightness.
 // The lit amount L = length * fraction is kept as an exact rational. A run

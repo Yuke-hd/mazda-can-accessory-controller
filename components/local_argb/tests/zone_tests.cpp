@@ -13,6 +13,7 @@ namespace {
 using local_argb::kBlack;
 using local_argb::kBlackFrame;
 using local_argb::kDefaultLedCount;
+using local_argb::kMaxLedCount;
 using local_argb::PixelFrame;
 using local_argb::Rgb;
 using local_argb::internal::fill_zone;
@@ -45,6 +46,12 @@ PixelFrame filled(const LedZone zone, const FillFraction fraction) {
 }
 
 void test_zone_can_cover_any_contiguous_subset_of_the_strip() {
+  for (const std::size_t count : {100U, 144U, 300U}) {
+    const LedZone last{count - 1, 1, FillDirection::StartToEnd};
+    assert(validate_zone(last, count) == ZoneValidity::Valid);
+    assert(validate_zone({count, 1, FillDirection::StartToEnd}, count) == ZoneValidity::OutOfRange);
+    assert(filled(last, FillFraction::full())[count - 1] == kColor);
+  }
   assert(validate_zone({0, kDefaultLedCount, FillDirection::StartToEnd}) == ZoneValidity::Valid);
   assert(validate_zone({0, 1, FillDirection::EndToStart}) == ZoneValidity::Valid);
   assert(validate_zone({kDefaultLedCount - 1, 1, FillDirection::CenterOut}) == ZoneValidity::Valid);
@@ -64,8 +71,8 @@ void test_invalid_zones_report_reason_and_leave_frame_untouched() {
   const PixelFrame before = frame;
 
   const LedZone empty{10, 0, FillDirection::StartToEnd};
-  const LedZone start_past_end{kDefaultLedCount, 1, FillDirection::StartToEnd};
-  const LedZone overruns_end{kDefaultLedCount - 2, 3, FillDirection::EndToStart};
+  const LedZone start_past_end{kMaxLedCount, 1, FillDirection::StartToEnd};
+  const LedZone overruns_end{kMaxLedCount - 2, 3, FillDirection::EndToStart};
   const LedZone wrapping_length{1, static_cast<std::size_t>(-1), FillDirection::CenterOut};
   const LedZone unknown_direction{0, 4, static_cast<FillDirection>(0x7f)};
 

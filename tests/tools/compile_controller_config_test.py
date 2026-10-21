@@ -30,7 +30,7 @@ def generate_catalog(directory: Path) -> Path:
     catalog = directory / "output_catalog.json"
     subprocess.run([sys.executable, str(REPOSITORY / "tools/generate_output_catalog.py"),
                     "--descriptor", str(REPOSITORY / "components/local_argb_actions/output_catalog.yaml"),
-                    "--board", "strip_pixels=100", "--catalog", str(catalog),
+                    "--board", "strip_max_pixels=300", "--catalog", str(catalog),
                     "--limits-header", str(directory / "output_limits.hpp")], check=True,
                    capture_output=True, text=True)
     return catalog
@@ -1325,10 +1325,25 @@ class OutputCatalogCompilerTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIsNone(payload)
 
+    def test_weact_strip_length_and_zone_boundaries(self) -> None:
+        for count in (100, 144, 300):
+            for extra in (0, 1):
+                output = {"type": "led_fill", "action": "a",
+                          "zone": {"start": count - 1 + extra, "length": 1,
+                                   "direction": "start_to_end"},
+                          "color": {"red": 1, "green": 0, "blue": 0}}
+                result, payload = self.compile_output(output, sinks={"local_argb": {"pixel_count": count}})
+                self.assertEqual(result.returncode, 0 if extra == 0 else 2, result.stderr)
+        for count in (99, 301):
+            result, payload = self.compile_output({"type": "led_effect", "action": "a", "effect": "brake"},
+                                                 sinks={"local_argb": {"pixel_count": count}})
+            self.assertEqual(result.returncode, 2, result.stderr)
+
     def test_changed_zone_color_direction_and_duration_limits(self) -> None:
         descriptor = self.catalog["outputs"][2]
         fields = {field["name"]: field for field in descriptor["fields"]}
         fields["zone"].update(pixels=120, directions=["custom_direction"])
+        fields["zone"].pop("pixels_setting")
         fields["color"].update(min=2, max=10)
         fields["duration_ms"].update(min=4, max=6)
         output = {"type": "led_transient", "action": "a", "duration_ms": 5,

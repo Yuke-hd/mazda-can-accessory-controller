@@ -93,13 +93,14 @@ void light_center_out(PixelFrame &frame, const LedZone &zone, const std::uint64_
 
 } // namespace
 
-ZoneValidity validate_zone(const LedZone &zone) noexcept {
+ZoneValidity validate_zone(const LedZone &zone, const std::size_t pixel_count) noexcept {
   if (!is_known_direction(zone.direction))
     return ZoneValidity::UnknownDirection;
   if (zone.length == 0)
     return ZoneValidity::EmptyZone;
   // Written as a subtraction so a huge length cannot wrap start + length.
-  if (zone.start >= kDefaultLedCount || zone.length > kDefaultLedCount - zone.start)
+  if (pixel_count > kMaxLedCount || zone.start >= pixel_count ||
+      zone.length > pixel_count - zone.start)
     return ZoneValidity::OutOfRange;
   return ZoneValidity::Valid;
 }
@@ -111,7 +112,7 @@ ZoneValidity fill_zone(PixelFrame &frame, const LedZone &zone, const FillFractio
     return validity;
 
   // L = length * fraction pixels, kept exact as lit_amount / unit. length <=
-  // kDefaultLedCount and the numerator is below 2^32, so the product fits in 64 bits.
+  // kMaxLedCount and the numerator is below 2^32, so the product fits in 64 bits.
   const auto lit_amount = static_cast<std::uint64_t>(zone.length) * fraction.numerator();
   const std::uint64_t unit = fraction.denominator();
   switch (zone.direction) {

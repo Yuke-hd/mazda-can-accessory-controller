@@ -27,8 +27,12 @@ onboard status pixel through the RMT backend at 10 MHz with DMA disabled. Both
 outputs use WS2812 with GRB channel order. The component pins `led_strip`
 version 3.0.3.
 
-Board initialization first drives both data pins low. `local_argb::start()`
-then sends and refreshes an explicit black frame on both outputs before it
+Board initialization first drives both data pins low. Firmware loads and validates
+the boot configuration, then calls `local_argb::start(pixel_count)` with the
+configured length (default 100). The length is fixed before worker creation and
+cannot change during operation; a configuration commit persists then restarts.
+An unusable boot document still attempts startup black with the default length.
+Startup sends and refreshes an explicit black frame on both outputs before it
 creates the worker or returns success. It retries startup black twice after the
 initial attempt; if the driver cannot clear the pixels or the worker cannot be
 created, startup fails and firmware must not start CAN. Holding a data pin low

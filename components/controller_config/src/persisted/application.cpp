@@ -82,8 +82,10 @@ bind_output(const OutputBinding &output, const ControllerConfig &config,
           const auto duration =
               static_cast<vehicle_core::Microseconds>(binding.duration_ms) * 1000U;
           return leds.bind(
-              *id, local_argb::internal::LightingTransient{zone(binding.zone), color(binding.color),
-                                                           priority(binding.priority), duration});
+              *id,
+              local_argb::internal::LightingTransient{zone(binding.zone), color(binding.color),
+                                                      priority(binding.priority), duration},
+              static_cast<std::size_t>(config.pixel_count));
         }
       },
       output);
