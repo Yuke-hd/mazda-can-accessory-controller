@@ -43,6 +43,17 @@ ConfigStatus ActionEngine::add_sink(ActionSink &sink) noexcept {
   return sinks_.add(sink);
 }
 
+ConfigStatus ActionEngine::clear() noexcept {
+  if (attached_) {
+    return ConfigStatus::InvalidState;
+  }
+  const std::lock_guard<std::mutex> lock{evaluation_};
+  sinks_.clear();
+  rules_.clear();
+  polled_rules_.clear();
+  return ConfigStatus::Ok;
+}
+
 ConfigStatus ActionEngine::add_state_rule(const StateRuleConfig &config) noexcept {
   const auto resolution =
       resolve_rule(config.condition, config.action, config.freshness, RuleOutput::Level);

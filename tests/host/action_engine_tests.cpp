@@ -325,6 +325,29 @@ TEST_CASE("the seventeenth rule and the fifth sink exceed capacity") {
   CHECK(engine.detach() == SignalStatus::Ok);
 }
 
+TEST_CASE("clear removes sinks and rules only while detached and permits reuse") {
+  FakeSignalProvider provider{kView};
+  ActionEngine engine{provider};
+  RecordingActionSink old_sink{};
+  RecordingActionSink new_sink{};
+
+  REQUIRE(engine.add_sink(old_sink) == ConfigStatus::Ok);
+  REQUIRE(engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+  REQUIRE(engine.attach() == SignalStatus::Ok);
+  CHECK(engine.clear() == ConfigStatus::InvalidState);
+  REQUIRE(engine.detach() == SignalStatus::Ok);
+
+  REQUIRE(engine.clear() == ConfigStatus::Ok);
+  REQUIRE(engine.add_sink(new_sink) == ConfigStatus::Ok);
+  REQUIRE(engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+  REQUIRE(engine.attach() == SignalStatus::Ok);
+  provider.start();
+
+  (void)provider.publish(door(true));
+  CHECK(old_sink.commands().empty());
+  CHECK(new_sink.commands() == Commands{activate(kCourtesyLight)});
+}
+
 TEST_CASE("sinks and rules are configured only while the engine is detached") {
   Bench bench{};
   REQUIRE(bench.engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);

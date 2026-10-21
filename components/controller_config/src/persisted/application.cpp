@@ -163,4 +163,32 @@ ApplyStatus apply_controller_config(const ControllerConfig &config,
   return status;
 }
 
+PersistedOverrideApplyResult apply_persisted_override_with_factory_fallback(
+    ControllerConfig &configuration, const std::string_view factory_json,
+    local_argb_actions::LedActionSink &leds, action_engine::ActionEngine &engine) noexcept {
+  PersistedOverrideApplyResult result{};
+  result.override_status = apply_controller_config(configuration, leds, engine);
+  if (result.override_status.ok()) {
+    return result;
+  }
+
+  result.fell_back = true;
+  leds.clear();
+  (void)engine.clear();
+
+  auto factory = parse_controller_config(factory_json);
+  if (!factory.ok()) {
+    result.factory_diagnostic = std::move(factory.diagnostic);
+    return result;
+  }
+
+  configuration = std::move(*factory.configuration);
+  result.factory_status = apply_controller_config(configuration, leds, engine);
+  if (!result.factory_status.ok()) {
+    leds.clear();
+    (void)engine.clear();
+  }
+  return result;
+}
+
 } // namespace controller_config::persisted

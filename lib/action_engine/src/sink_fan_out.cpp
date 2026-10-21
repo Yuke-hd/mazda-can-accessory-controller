@@ -13,6 +13,11 @@ ConfigStatus SinkFanOut::add(ActionSink &sink) noexcept {
   return ConfigStatus::Ok;
 }
 
+void SinkFanOut::clear() noexcept {
+  sinks_ = {};
+  count_ = 0;
+}
+
 void SinkFanOut::execute(const ActionCommand &command) noexcept {
   for (std::size_t index = 0; index < count_; ++index) {
     sinks_[index]->execute(command);

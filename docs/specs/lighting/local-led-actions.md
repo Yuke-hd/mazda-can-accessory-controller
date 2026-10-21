@@ -89,6 +89,9 @@ Bind every action before the engine attaches. `LedEffect` names strip regions,
 not vehicle sides. A production profile maps vehicle signals to regions for
 the physical installation; the current mapping is shown in the
 [production configuration](../configuration/controller-config.md#production-lighting-profile).
+`clear()` removes every effect, fill and transient binding without publishing
+to the renderer. The composition root uses it while the engine is detached
+when replacing a configuration that failed during apply.
 
 ## Commands
 

@@ -35,6 +35,24 @@ persisted::ControllerConfig loaded_factory_config() {
   return *loaded.configuration;
 }
 
+std::string loaded_factory_json() {
+  std::ifstream file{CONTROLLER_CONFIG_FACTORY_JSON_PATH, std::ios::binary};
+  REQUIRE(file.is_open());
+  return {std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
+persisted::ControllerConfig over_capacity_config() {
+  persisted::ControllerConfig config{};
+  for (std::size_t index = 0; index < local_argb_actions::LedActionSink::kMaxFillBindings + 1;
+       ++index) {
+    const std::string action = "override_" + std::to_string(index);
+    config.actions.push_back(persisted::Action{action});
+    config.outputs.push_back(persisted::LedSolidBinding{
+        action, {static_cast<persisted::Integer>(index), 1}, {16, 0, 0}, 100});
+  }
+  return config;
+}
+
 void check_condition(const persisted::Condition &actual, const persisted::Condition &expected) {
   CHECK(actual.signal_key == expected.signal_key);
   CHECK(actual.comparison == expected.comparison);
@@ -303,6 +321,50 @@ TEST_CASE("applying generated factory YAML reproduces the controller setup") {
   CHECK(status.sink_registered);
   CHECK(status.binding == local_argb_actions::BindingStatus::Ok);
   CHECK(status.engine == ConfigStatus::Ok);
+}
+
+TEST_CASE("override apply failure falls back to a clean factory configuration") {
+  Controller controller{};
+  auto configuration = over_capacity_config();
+  REQUIRE(persisted::validate(configuration).ok());
+  const std::string factory_json = loaded_factory_json();
+
+  const auto result = persisted::apply_persisted_override_with_factory_fallback(
+      configuration, factory_json, controller.leds, controller.engine);
+
+  REQUIRE(result.fell_back);
+  CHECK_FALSE(result.override_status.ok());
+  CHECK(result.override_status.stage == persisted::ApplyStage::OutputBinding);
+  CHECK(result.override_status.binding == local_argb_actions::BindingStatus::CapacityExceeded);
+  CHECK_FALSE(result.factory_diagnostic.has_value());
+  REQUIRE(result.factory_status.ok());
+  CHECK(result.ok());
+  check_config(configuration, loaded_factory_config());
+
+  REQUIRE(controller.engine.attach() == vehicle_signals::SignalStatus::Ok);
+  controller.provider.start();
+  REQUIRE(controller.provider.publish(turn(1)) == 1);
+  REQUIRE_FALSE(controller.lighting.commands.empty());
+  CHECK(controller.lighting.commands.back().right_turn);
+}
+
+TEST_CASE("override failure still fails safely when the factory configuration cannot apply") {
+  Controller controller{};
+  auto configuration = over_capacity_config();
+  REQUIRE(persisted::validate(configuration).ok());
+  const auto fallback = over_capacity_config();
+  const std::string factory_json = persisted::serialize_controller_config(fallback);
+
+  const auto result = persisted::apply_persisted_override_with_factory_fallback(
+      configuration, factory_json, controller.leds, controller.engine);
+
+  REQUIRE(result.fell_back);
+  CHECK_FALSE(result.override_status.ok());
+  CHECK_FALSE(result.factory_status.ok());
+  CHECK(result.factory_status.stage == persisted::ApplyStage::OutputBinding);
+  CHECK(result.factory_status.binding == local_argb_actions::BindingStatus::CapacityExceeded);
+  CHECK_FALSE(result.factory_diagnostic.has_value());
+  CHECK_FALSE(result.ok());
 }
 
 TEST_CASE("generated factory YAML keeps mirrored turn and RPM behavior with fail-off") {
