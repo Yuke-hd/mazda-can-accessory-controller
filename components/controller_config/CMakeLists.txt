@@ -17,12 +17,13 @@ if(COMMAND idf_component_register)
                               "src/persisted/validation.cpp" "src/persisted/json_loader.cpp"
                               "src/persisted/application.cpp" "src/persisted/config_store.cpp"
                               "src/persisted/nvs_config_store.cpp" "src/factory_default.cpp"
-                         INCLUDE_DIRS "include"
+                         INCLUDE_DIRS "include" "${OUTPUT_CATALOG_INCLUDE_DIR}"
                          REQUIRES action_engine local_argb_actions vehicle_core nvs_flash
                          PRIV_REQUIRES json
                          EMBED_TXTFILES "${CONTROLLER_CONFIG_FACTORY_JSON}")
   target_include_directories(${COMPONENT_LIB} PRIVATE
                              "${CMAKE_CURRENT_LIST_DIR}/private_include")
+  add_dependencies(${COMPONENT_LIB} output_catalog)
   target_compile_definitions(${COMPONENT_LIB} PRIVATE CONTROLLER_CONFIG_FACTORY_DEFAULT_EMBEDDED=1)
   if(TARGET controller_config_factory_json)
     add_dependencies(${COMPONENT_LIB} controller_config_factory_json)
@@ -77,7 +78,9 @@ add_library(controller_config STATIC
   src/persisted/nvs_config_store.cpp
   src/factory_default.cpp
 )
-target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(controller_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  "${OUTPUT_CATALOG_INCLUDE_DIR}")
+add_dependencies(controller_config output_catalog)
 target_include_directories(controller_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private_include)
 target_include_directories(controller_config PRIVATE "${_controller_config_cjson_source_dir}")
 target_link_libraries(controller_config PRIVATE controller_config_cjson)

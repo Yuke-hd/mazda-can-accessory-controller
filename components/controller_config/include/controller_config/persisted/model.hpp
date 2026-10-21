@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "action_engine/rule_config.hpp"
+#include "controller_config/generated/output_limits.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/lighting_zone.hpp"
 #include "local_argb_actions/effect_bindings.hpp"
@@ -121,13 +122,13 @@ struct Rgb {
 };
 
 // The LED adapter's default effect priority (local_argb::internal::EffectPriority).
-inline constexpr Integer kDefaultPriority = local_argb::internal::EffectPriority::kDefault;
+inline constexpr Integer kDefaultPriority = generated::led_effect::kPriorityDefault;
 
 // Binds a named action to a discrete local LED effect.
 struct LedEffectBinding {
   std::string action{};
   local_argb_actions::LedEffect effect{local_argb_actions::LedEffect::LeftTurn};
-  Integer priority{kDefaultPriority};
+  Integer priority{generated::led_effect::kPriorityDefault};
 };
 
 // Binds a named action to a level-driven local LED fill.
@@ -135,15 +136,11 @@ struct LedFillBinding {
   std::string action{};
   LedZone zone{};
   Rgb color{};
-  Integer priority{kDefaultPriority};
+  Integer priority{generated::led_fill::kPriorityDefault};
 };
 
 // Persisted milliseconds share the renderer contract's bounded lifetime.
-static_assert(local_argb::internal::kMaxTransientDurationUs >= 1000 &&
-                  local_argb::internal::kMaxTransientDurationUs % 1000 == 0,
-              "Transient duration maximum must be at least one whole millisecond");
-inline constexpr Integer kMaxTransientDurationMs =
-    static_cast<Integer>(local_argb::internal::kMaxTransientDurationUs / 1000);
+inline constexpr Integer kMaxTransientDurationMs = generated::led_transient::kDurationMsMax;
 
 // Binds Trigger to a solid local LED zone for a finite duration in milliseconds.
 struct LedTransientBinding {
@@ -151,7 +148,7 @@ struct LedTransientBinding {
   LedZone zone{};
   Rgb color{};
   Integer duration_ms{0};
-  Integer priority{kDefaultPriority};
+  Integer priority{generated::led_transient::kPriorityDefault};
 };
 
 // Binds a state action to a solid local LED zone: Activate lights the whole
@@ -161,7 +158,7 @@ struct LedSolidBinding {
   std::string action{};
   LedZone zone{};
   Rgb color{};
-  Integer priority{kDefaultPriority};
+  Integer priority{generated::led_solid::kPriorityDefault};
 };
 
 using OutputBinding =

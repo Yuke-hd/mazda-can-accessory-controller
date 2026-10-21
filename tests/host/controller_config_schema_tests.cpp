@@ -9,8 +9,11 @@
 #include "controller_config/rpm_level_fill.hpp"
 #include "controller_config/rpm_threshold.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -637,3 +640,61 @@ TEST_CASE("validation reports the first error in document order") {
 }
 
 } // namespace
+
+namespace {
+
+template <typename Enum, std::size_t Count>
+void check_catalog_names(const std::array<std::string_view, Count> &expected) {
+  std::set<std::string_view> actual;
+  // All persisted output enums use uint8_t storage. Scan its entire domain to
+  // catch extra hand-written names as well as missing or misspelled names.
+  for (unsigned int raw = 0; raw <= std::numeric_limits<std::uint8_t>::max(); ++raw) {
+    const auto value = static_cast<Enum>(raw);
+    if (const auto name = persisted::name_of(value)) {
+      actual.insert(*name);
+      CHECK(persisted::parse_name<Enum>(*name) == value);
+    }
+  }
+  CHECK(actual == std::set<std::string_view>(expected.begin(), expected.end()));
+  for (const auto name : expected)
+    CHECK(persisted::parse_name<Enum>(name).has_value());
+}
+
+} // namespace
+
+TEST_CASE("persisted output names exactly match the generated catalog") {
+  namespace catalog = controller_config::generated;
+  check_catalog_names<persisted::OutputType>(catalog::kOutputTypeNames);
+  check_catalog_names<LedEffect>(catalog::led_effect::kEffectValues);
+  check_catalog_names<FillDirection>(catalog::led_fill::kZoneDirections);
+  check_catalog_names<FillDirection>(catalog::led_transient::kZoneDirections);
+  check_catalog_names<FillDirection>(catalog::led_solid::kZoneDirections);
+}
+
+TEST_CASE("generated solid rule types exactly match validator acceptance") {
+  const auto &allowed = controller_config::generated::led_solid::kRuleTypes;
+  const auto condition = state_rule("light", persisted::BooleanOperand{true}).condition;
+  const std::array<persisted::Rule, 4> rules{
+      state_rule("light", persisted::BooleanOperand{true}), rpm_above("light", 1000.0F),
+      persisted::EventRule{"light", condition}, rpm_range("light", {0.0F, 6000.0F})};
+  std::set<std::string_view> accepted;
+  for (const auto &rule : rules) {
+    auto config = with_actions({"light"});
+    config.rules.push_back(rule);
+    const auto name = persisted::name_of(persisted::type_of(rule));
+    REQUIRE(name.has_value());
+    // First prove the rule is valid, so a different rejection cannot mask a
+    // missing or overly permissive output compatibility check.
+    REQUIRE(persisted::validate(config).ok());
+    config.outputs.push_back(
+        persisted::LedSolidBinding{"light", {0, 1, FillDirection::StartToEnd}, {0, 0, 0}});
+    const auto result = persisted::validate(config);
+    const bool expected = std::find(allowed.begin(), allowed.end(), *name) != allowed.end();
+    CHECK(result.ok() == expected);
+    if (result.ok())
+      accepted.insert(*name);
+    else
+      CHECK(result.error == ValidationError::IncompatibleActionKind);
+  }
+  CHECK(accepted == std::set<std::string_view>(allowed.begin(), allowed.end()));
+}

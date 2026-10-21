@@ -260,7 +260,8 @@ void set_error(ConfigDiagnostic &error, const Category category, const Code code
     parsed = std::from_chars(token.data(), token.data() + token.size(), output);
   if (token.empty() || parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
     set_error(error, Category::Structural, Code::InvalidValue, std::string(path),
-              "duration_ms must use an integer token in 1.." +
+              "duration_ms must use an integer token in " +
+                  std::to_string(generated::led_transient::kDurationMsMin) + ".." +
                   std::to_string(kMaxTransientDurationMs),
               ValidationError::InvalidDuration);
     return false;
@@ -616,13 +617,17 @@ template <typename Entry, typename Parser>
   case ValidationError::ZoneOutOfRange:
     return "LED zone must fit within the strip";
   case ValidationError::InvalidColor:
-    return "RGB channels must be in 0..255";
+    return "RGB channels must be in " + std::to_string(generated::led_fill::kColorMin) + ".." +
+           std::to_string(generated::led_fill::kColorMax);
   case ValidationError::InvalidPriority:
-    return "priority must be in 0..255";
+    return "priority must be in " + std::to_string(generated::led_effect::kPriorityMin) + ".." +
+           std::to_string(generated::led_effect::kPriorityMax);
   case ValidationError::DuplicateBinding:
     return "output binding target must be unique";
   case ValidationError::InvalidDuration:
-    return "transient duration_ms must be in 1.." + std::to_string(kMaxTransientDurationMs);
+    return "transient duration_ms must be in " +
+           std::to_string(generated::led_transient::kDurationMsMin) + ".." +
+           std::to_string(kMaxTransientDurationMs);
   case ValidationError::IncompatibleActionKind:
     return "led_solid action must be driven by a state or sampled_state rule";
   case ValidationError::None:
