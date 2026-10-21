@@ -165,7 +165,13 @@ idf.py -DCONTROLLER_CONFIG_DEFAULT_YAML=/path/to/profile.yaml build
 To compile a profile to canonical JSON without building firmware:
 
 ```sh
-python3 tools/compile_controller_config.py config/default.yaml /tmp/controller-config-v1.json
+python3 tools/generate_output_catalog.py \
+  --descriptor components/local_argb_actions/output_catalog.yaml \
+  --board strip_pixels=100 \
+  --catalog /tmp/controller-output-catalog.json \
+  --limits-header /tmp/controller-output-limits.hpp
+python3 tools/compile_controller_config.py config/default.yaml /tmp/controller-config-v1.json \
+  --output-catalog /tmp/controller-output-catalog.json
 ```
 
 See the [controller config spec](../specs/configuration/controller-config.md).

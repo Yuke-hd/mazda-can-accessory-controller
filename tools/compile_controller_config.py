@@ -25,19 +25,13 @@ except ModuleNotFoundError:  # pragma: no cover - exercised through the CLI
 
 
 VERSION = 1
-PIXEL_COUNT = 100
 DEFAULT_FRESHNESS = "fresh"
-DEFAULT_PRIORITY = 100
 MAX_JSON_BYTES = 16 * 1024
 # The persisted C++ model stores numeric fields as float. Reject values that
 # the runtime model would convert to infinity even when Python can represent
 # them as a finite double.
 FLOAT_MAX = 3.4028234663852886e38
 SIGNAL_CATALOG_PATH = Path(__file__).with_name("controller_signal_catalog.json")
-DURATION_CONTRACT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "components/local_argb_sink_contract/include/local_argb/lighting_sink.hpp"
-)
 SIGNAL_TYPES = {"boolean", "number", "enum"}
 RULE_CAPABILITIES = {
     "state": "notify",
@@ -56,14 +50,6 @@ ENUMS = {
         "Event": "event",
         "range": "range",
         "Range": "range",
-        "led_effect": "led_effect",
-        "LedEffect": "led_effect",
-        "led_fill": "led_fill",
-        "LedFill": "led_fill",
-        "led_transient": "led_transient",
-        "LedTransient": "led_transient",
-        "led_solid": "led_solid",
-        "LedSolid": "led_solid",
     },
     "comparison": {
         "equal": "equal",
@@ -91,22 +77,6 @@ ENUMS = {
         "becomes_false": "becomes_false",
         "BecomesFalse": "becomes_false",
     },
-    "effect": {
-        "left_turn": "left_turn",
-        "LeftTurn": "left_turn",
-        "right_turn": "right_turn",
-        "RightTurn": "right_turn",
-        "brake": "brake",
-        "Brake": "brake",
-    },
-    "direction": {
-        "start_to_end": "start_to_end",
-        "StartToEnd": "start_to_end",
-        "end_to_start": "end_to_start",
-        "EndToStart": "end_to_start",
-        "center_out": "center_out",
-        "CenterOut": "center_out",
-    },
 }
 
 
@@ -117,21 +87,6 @@ class CompileError(ValueError):
         super().__init__(message)
         self.path = path
         self.message = message
-
-
-def _max_transient_duration_ms() -> int:
-    """Read the sole lifetime authority from the repository's sink contract."""
-    try:
-        contract = DURATION_CONTRACT_PATH.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
-        raise CompileError("$", f"cannot read transient duration contract: {error}") from error
-    match = re.search(r"\bkMaxTransientDurationUs\s*=\s*([0-9][0-9']*)\s*;", contract)
-    if match is None:
-        raise CompileError("$", "transient duration contract must define its maximum as an integer literal")
-    maximum_us = int(match.group(1).replace("'", ""))
-    if maximum_us < 1000 or maximum_us % 1000:
-        raise CompileError("$", "transient duration contract maximum must be positive whole milliseconds")
-    return maximum_us // 1000
 
 
 class _YamlDurationScalar(str):
@@ -222,7 +177,7 @@ def _integer(value: Any, path: str, description: str = "integer") -> int:
     return int(value)
 
 
-def _normalize_duration(value: Any, path: str) -> int:
+def _normalize_duration(value: Any, path: str, field: Mapping[str, Any]) -> int:
     if isinstance(value, _YamlDurationScalar):
         try:
             exact = Decimal(value.replace("_", ""))
@@ -236,9 +191,9 @@ def _normalize_duration(value: Any, path: str) -> int:
     # Check before int conversion to avoid allocating huge exponent values.
     # This bound stays exact in JSON's double parser and fits uint64_t after
     # the runtime millisecond-to-microsecond conversion.
-    maximum_ms = _max_transient_duration_ms()
-    if not 1 <= duration <= maximum_ms:
-        raise CompileError(path, f"duration_ms must be in 1..{maximum_ms}")
+    minimum_ms, maximum_ms = field["min"], field["max"]
+    if not minimum_ms <= duration <= maximum_ms:
+        raise CompileError(path, f"duration_ms must be in {minimum_ms}..{maximum_ms}")
     return int(duration)
 
 
@@ -500,28 +455,73 @@ def _normalize_rule(value: Any, path: str, actions: set[str]) -> tuple[dict[str,
     return normalized, rule_type != "event"
 
 
-def _normalize_zone(value: Any, path: str) -> dict[str, Any]:
+def _catalog_enum(value: Any, path: str, kind: str, names: Sequence[str]) -> str:
+    name = _string(value, path)
+    for canonical in names:
+        if name in (canonical, "".join(part.capitalize() for part in canonical.split("_"))):
+            return canonical
+    raise CompileError(path, f"unsupported {kind} '{name}'")
+
+
+def load_output_catalog(path: Path) -> Mapping[str, Any]:
+    """Read the generated catalog; descriptor validation belongs to its generator."""
+    try:
+        root = _mapping(json.loads(path.read_text(encoding="utf-8")), "output_catalog")
+        _fields(root, "output_catalog", ("outputs",), ("sinks",))
+        _sequence(root["outputs"], "output_catalog.outputs")
+        return root
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise CompileError("output_catalog", f"cannot read output catalog: {error}") from error
+
+
+def _bounded_integer(value: Any, path: str, field: Mapping[str, Any], description: str) -> int:
+    number = _integer(value, path, description)
+    if not field["min"] <= number <= field["max"]:
+        raise CompileError(path, f"{description} must be in {field['min']}..{field['max']}")
+    return number
+
+
+def _normalize_zone(value: Any, path: str, field: Mapping[str, Any],
+                    settings: Mapping[str, int]) -> dict[str, Any]:
     zone = _mapping(value, path)
     _fields(zone, path, ("start", "length", "direction"))
     start = _integer(zone["start"], _path(path, "start"), "zone start")
     length = _integer(zone["length"], _path(path, "length"), "zone length")
-    direction = _enum(zone["direction"], _path(path, "direction"), "direction")
-    if start < 0 or length <= 0 or start >= PIXEL_COUNT or length > PIXEL_COUNT - start:
+    direction = _catalog_enum(zone["direction"], _path(path, "direction"),
+                              "direction", field["directions"])
+    pixels = field["pixels"]
+    if "pixels_setting" in field:
+        pixels = min(pixels, settings[field["pixels_setting"]])
+    if start < 0 or length <= 0 or start >= pixels or length > pixels - start:
         raise CompileError(path, "LED zone must be non-empty and fit within the strip")
     return {"start": start, "length": length, "direction": direction}
 
 
-def _normalize_color(value: Any, path: str) -> dict[str, int]:
+def _normalize_color(value: Any, path: str, field: Mapping[str, Any]) -> dict[str, int]:
     color = _mapping(value, path)
     _fields(color, path, ("red", "green", "blue"))
-    channels: dict[str, int] = {}
-    for channel in ("red", "green", "blue"):
-        channel_path = _path(path, channel)
-        channel_value = _integer(color[channel], channel_path, "RGB channel")
-        if not 0 <= channel_value <= 255:
-            raise CompileError(channel_path, "RGB channel must be in 0..255")
-        channels[channel] = channel_value
-    return channels
+    return {channel: _bounded_integer(color[channel], _path(path, channel), field, "RGB channel")
+            for channel in ("red", "green", "blue")}
+
+
+def _normalize_sinks(value: Any, catalog: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    sinks = _mapping(value, "sinks")
+    descriptors = {entry["sink"]: entry["settings"] for entry in catalog.get("sinks", [])}
+    _fields(sinks, "sinks", (), descriptors)
+    normalized: dict[str, Any] = {}
+    resolved: dict[str, Any] = {}
+    for sink, fields in descriptors.items():
+        path = _path("sinks", sink)
+        raw = _mapping(sinks.get(sink, {}), path)
+        _fields(raw, path, (), (field["name"] for field in fields))
+        resolved[sink] = {
+            field["name"]: _bounded_integer(raw.get(field["name"], field["default"]),
+                _path(path, field["name"]), field, field["name"])
+            for field in fields
+        }
+        if sink in sinks:
+            normalized[sink] = {name: resolved[sink][name] for name in raw}
+    return normalized, resolved
 
 
 def _output_targets(output: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
@@ -532,8 +532,10 @@ def _output_targets(output: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
     """
     output_type = output["type"]
     action = output["action"]
-    if output_type == "led_effect":
+    if "effect" in output:
         return ((output_type, action, output["effect"]),)
+    if "zone" not in output:
+        return ((output_type, action),)
     zone = output["zone"]
     placement = (action, zone["start"], zone["length"])
     fill_slot = ("fill_slot",) + placement + (zone["direction"],)
@@ -544,45 +546,59 @@ def _output_targets(output: dict[str, Any]) -> tuple[tuple[Any, ...], ...]:
     return ((output_type,) + placement,)
 
 
-def _normalize_output(value: Any, path: str, actions: set[str], non_state_actions: set[str]) -> dict[str, Any]:
+def _normalize_output(value: Any, path: str, actions: set[str], rules: Sequence[Mapping[str, Any]],
+                      catalog: Mapping[str, Any], settings: Mapping[str, Any]) -> dict[str, Any]:
     output = _mapping(value, path)
-    _fields(output, path, ("type", "action"), ("effect", "zone", "color", "priority", "duration_ms"))
-    output_type = _enum(output["type"], _path(path, "type"), "type")
-    if output_type not in {"led_effect", "led_fill", "led_transient", "led_solid"}:
-        raise CompileError(_path(path, "type"), f"unsupported output type '{output_type}'")
-    action = _non_blank_string(output["action"], _path(path, "action"), "action reference")
-    if action not in actions:
-        raise CompileError(_path(path, "action"), f"action '{action}' is not declared")
-    priority = _integer(output.get("priority", DEFAULT_PRIORITY), _path(path, "priority"), "priority")
-    if not 0 <= priority <= 255:
-        raise CompileError(_path(path, "priority"), "priority must be in 0..255")
-
-    if output_type == "led_effect":
-        _fields(output, path, ("type", "action", "effect"), ("priority",))
-        effect = _enum(output["effect"], _path(path, "effect"), "effect")
-        return {"type": output_type, "action": action, "effect": effect, "priority": priority}
-
-    required = ("type", "action", "zone", "color")
-    if output_type == "led_transient":
-        required += ("duration_ms",)
-    _fields(output, path, required, ("priority",))
-    zone = _normalize_zone(output["zone"], _path(path, "zone"))
-    color = _normalize_color(output["color"], _path(path, "color"))
-    normalized = {"type": output_type, "action": action, "zone": zone, "color": color, "priority": priority}
-    if output_type == "led_transient":
-        duration_path = _path(path, "duration_ms")
-        normalized["duration_ms"] = _normalize_duration(output["duration_ms"], duration_path)
-    if output_type == "led_solid" and action in non_state_actions:
-        raise CompileError(
-            _path(path, "action"), "led_solid action must be driven by a state or sampled_state rule"
-        )
+    if "type" not in output:
+        raise CompileError(_path(path, "type"), "required field is missing")
+    descriptors = {entry["type"]: entry for entry in catalog["outputs"]}
+    try:
+        output_type = _catalog_enum(output["type"], _path(path, "type"), "type", list(descriptors))
+    except CompileError:
+        if isinstance(output["type"], str) and output["type"] in ENUMS["type"]:
+            raise CompileError(_path(path, "type"), f"unsupported output type '{output['type']}'") from None
+        raise
+    descriptor = descriptors[output_type]
+    fields = descriptor["fields"]
+    _fields(output, path, ("type", *(field["name"] for field in fields if field["required"])),
+            (field["name"] for field in fields if not field["required"]))
+    normalized: dict[str, Any] = {"type": output_type}
+    # Preserve the established diagnostic order: action, optional integers, then payload.
+    ordered_fields = sorted(fields, key=lambda field: (
+        0 if field["kind"] == "action" else
+        1 if field["kind"] == "integer" and not field["required"] else 2))
+    for field in ordered_fields:
+        name, kind = field["name"], field["kind"]
+        field_path = _path(path, name)
+        raw = output[name] if name in output else field["default"]
+        if kind == "action":
+            result = _non_blank_string(raw, field_path, "action reference")
+            if result not in actions:
+                raise CompileError(field_path, f"action '{result}' is not declared")
+            if "rule_types" in descriptor and any(
+                rule["action"] == result and rule["type"] not in descriptor["rule_types"] for rule in rules
+            ):
+                allowed = " or ".join(descriptor["rule_types"])
+                raise CompileError(field_path, f"{output_type} action must be driven by a {allowed} rule")
+        elif kind == "integer":
+            result = (_normalize_duration(raw, field_path, field) if name == "duration_ms" else
+                      _bounded_integer(raw, field_path, field, name))
+        elif kind == "enum":
+            result = _catalog_enum(raw, field_path, name, field["values"])
+        elif kind == "zone":
+            result = _normalize_zone(raw, field_path, field, settings.get(descriptor["sink"], {}))
+        elif kind == "rgb":
+            result = _normalize_color(raw, field_path, field)
+        else:
+            raise CompileError(field_path, f"unsupported catalog field kind '{kind}'")
+        normalized[name] = result
     return normalized
 
 
-def normalize_document(document: Any) -> dict[str, Any]:
+def normalize_document(document: Any, output_catalog: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and normalize a loaded YAML document to persisted JSON data."""
     root = _mapping(document, "$")
-    _fields(root, "", ("version",), ("actions", "rules", "outputs"))
+    _fields(root, "", ("version",), ("actions", "rules", "outputs", "sinks"))
     version = _integer(root["version"], "version", "version")
     if version != VERSION:
         raise CompileError("version", f"unsupported configuration version {version}; expected {VERSION}")
@@ -591,7 +607,6 @@ def normalize_document(document: Any) -> dict[str, Any]:
     signal_catalog = _load_signal_catalog()
     rules: list[dict[str, Any]] = []
     level_actions: set[str] = set()
-    non_state_actions: set[str] = set()
     for index, raw_rule in enumerate(_sequence(root.get("rules", []), "rules")):
         path = _index("rules", index)
         rule, is_level = _normalize_rule(raw_rule, path, action_names)
@@ -600,22 +615,24 @@ def normalize_document(document: Any) -> dict[str, Any]:
             raise CompileError(_path(path, "action"), "an action may have only one level rule")
         if is_level:
             level_actions.add(rule["action"])
-        if rule["type"] in {"range", "event"}:
-            non_state_actions.add(rule["action"])
         rules.append(rule)
 
+    sinks, settings = _normalize_sinks(root.get("sinks", {}), output_catalog)
     outputs: list[dict[str, Any]] = []
     output_targets: set[tuple[Any, ...]] = set()
     for index, raw_output in enumerate(_sequence(root.get("outputs", []), "outputs")):
         path = _index("outputs", index)
-        output = _normalize_output(raw_output, path, action_names, non_state_actions)
+        output = _normalize_output(raw_output, path, action_names, rules, output_catalog, settings)
         targets = _output_targets(output)
         if any(target in output_targets for target in targets):
             raise CompileError(path, "output binding target must be unique")
         output_targets.update(targets)
         outputs.append(output)
 
-    return {"version": version, "actions": actions, "rules": rules, "outputs": outputs}
+    normalized = {"version": version, "actions": actions, "rules": rules, "outputs": outputs}
+    if "sinks" in root:
+        normalized["sinks"] = sinks
+    return normalized
 
 
 def _yaml_loader() -> Any:
@@ -691,10 +708,10 @@ def load_yaml(path: Path) -> Any:
         raise CompileError("$", f"malformed YAML{location}: {detail}") from error
 
 
-def compile_file(input_path: Path, output_path: Path) -> None:
+def compile_file(input_path: Path, output_path: Path, output_catalog_path: Path) -> None:
     try:
         document = load_yaml(input_path)
-        normalized = normalize_document(document)
+        normalized = normalize_document(document, load_output_catalog(output_catalog_path))
     except RecursionError as error:
         raise CompileError("$", "configuration nesting exceeds the supported depth") from error
     payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
@@ -710,9 +727,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="authoring YAML configuration")
     parser.add_argument("output", type=Path, help="canonical JSON output")
+    parser.add_argument("--output-catalog", type=Path, required=True, help="generated output catalog JSON")
     args = parser.parse_args(argv)
     try:
-        compile_file(args.input, args.output)
+        compile_file(args.input, args.output, args.output_catalog)
     except CompileError as error:
         print(f"ERROR: {args.input}: {error.path}: {error.message}", file=sys.stderr)
         return 2

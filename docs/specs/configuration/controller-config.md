@@ -381,9 +381,15 @@ Install the host-only dependency and compile a profile with:
 
 ```sh
 python3 -m pip install --user -r tools/requirements.txt
+python3 tools/generate_output_catalog.py \
+  --descriptor components/local_argb_actions/output_catalog.yaml \
+  --board strip_pixels=100 \
+  --catalog /tmp/controller-output-catalog.json \
+  --limits-header /tmp/controller-output-limits.hpp
 python3 tools/compile_controller_config.py \
   config/default.yaml \
-  /tmp/controller-config-v1.json
+  /tmp/controller-config-v1.json \
+  --output-catalog /tmp/controller-output-catalog.json
 ```
 
 The generated JSON can be inspected or passed to host tooling. It remains

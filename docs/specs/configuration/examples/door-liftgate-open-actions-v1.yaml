@@ -1,10 +1,12 @@
 # Reviewed example: door and liftgate open actions (#149).
 # Not part of the factory profile; factory enablement is deferred by owner
 # decision. The actions declare no LED outputs.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/door-liftgate-open-actions-v1.yaml \
-#     /tmp/door-liftgate-open-actions-v1.json
+#     /tmp/door-liftgate-open-actions-v1.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:

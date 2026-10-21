@@ -1,10 +1,12 @@
 # Reviewed example: physical indicator-lamp state actions (#151).
 # Not part of the factory profile (config/default.yaml) and binds no LED
 # output; a composition that wants these actions adds its own bindings.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/indicator-lamp-actions.yaml \
-#     /tmp/indicator-lamp-actions.json
+#     /tmp/indicator-lamp-actions.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 # Lamp state, distinct from vehicle.turn_state and vehicle.turn_request.*.

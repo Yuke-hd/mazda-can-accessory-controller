@@ -3,10 +3,12 @@
 # outputs; a sink or a later output binding decides what each action means.
 # The catalog's `unknown` choice has no action: unknown or invalid gear values
 # match no rule, so every gear action stays off.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/actual-gear-actions-v1.yaml \
-#     /tmp/actual-gear-actions-v1.json
+#     /tmp/actual-gear-actions-v1.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:

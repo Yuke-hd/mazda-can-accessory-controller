@@ -1,9 +1,11 @@
 # Reviewed example: vehicle lock-state actions. Not part of the factory
 # profile (config/default.yaml); merge these entries into a profile to use them.
+# Generate the output catalog first; see docs/specs/configuration/controller-config.md#yaml-compiler.
 # Compile with:
 #   python3 tools/compile_controller_config.py \
 #     docs/specs/configuration/examples/lock-state-actions-v1.yaml \
-#     /tmp/lock-state-actions-v1.json
+#     /tmp/lock-state-actions-v1.json \
+#     --output-catalog /tmp/controller-output-catalog.json
 version: 1
 
 actions:
