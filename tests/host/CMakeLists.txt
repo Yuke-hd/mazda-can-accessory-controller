@@ -615,6 +615,7 @@ doctest_discover_tests(companion_config_tests)
 # and the action engine's resolvers against the real Mazda catalog.
 add_executable(controller_config_json_check controller_config_json_check.cpp)
 target_include_directories(controller_config_json_check PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools
   ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
   ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
 )
@@ -622,7 +623,8 @@ target_link_libraries(controller_config_json_check PRIVATE controller_config maz
 target_compile_features(controller_config_json_check PRIVATE cxx_std_17)
 add_test(NAME controller_config_yaml_loader
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/controller_config_yaml_tests.py
-          --loader $<TARGET_FILE:controller_config_json_check>)
+          --loader $<TARGET_FILE:controller_config_json_check>
+          --catalog-exporter $<TARGET_FILE:export_controller_signal_catalog>)
 
 add_executable(controller_config_transient_tests controller_config_transient_tests.cpp)
 target_include_directories(controller_config_transient_tests PRIVATE
