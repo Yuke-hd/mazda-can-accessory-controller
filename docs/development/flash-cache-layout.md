@@ -29,7 +29,7 @@ All of this is unconditional for `firmware/weact-can485-v1.1`. Host builds of
 | `hot_code.lf` | `firmware/weact-can485-v1.1/main/` | `noflash` places the per-frame `VehicleTelemetryService` functions in IRAM by exact mangled symbol. |
 | Clone-free flags | `firmware/weact-can485-v1.1/CMakeLists.txt` | `mazda_telemetry` uses `-fno-ipa-sra -fno-ipa-cp-clone -fno-partial-inlining -fno-ipa-cp`. ldgen symbol entries cannot contain the `$` of GCC clone names (`.isra`, `.constprop`, `.part`), so the hot functions must keep their plain symbols. |
 | 80 MHz DIO flash | `firmware/weact-can485-v1.1/sdkconfig.defaults` | `CONFIG_ESPTOOLPY_FLASHFREQ_80M` doubles the flash clock from the 40 MHz default, roughly halving the refill time of the cache misses that remain for code and data still in flash. The mode stays DIO. The firmware configure step fails if a stale `sdkconfig` does not select 80 MHz DIO. |
-| `tools/check_iram_placement.py` | POST_BUILD step of the application ELF | Fails the build if any `hot_code.lf` symbol is missing from the ELF or lies outside `.iram0.text`. ldgen silently ignores a symbol entry that matches nothing. |
+| `tools/check_iram_placement.py` | POST_BUILD step of the application ELF | Fails the build if any `hot_code.lf` symbol is missing from the ELF or lies outside `.iram0.text`. It also checks compiler-emitted local functions and helpers under explicitly named parents. ldgen silently ignores a symbol entry that matches nothing. |
 
 Because the checker is part of the ELF build, `idf.py build` (including the CI
 firmware job) enforces it. To run it by hand:
@@ -80,6 +80,19 @@ entries:
 
 Keep the list to functions on the per-frame path. Every entry consumes IRAM.
 
+The two notification tuple traversals are forced inline into the stable
+`publish_notifications` entry for ESP32. Adding a descriptor therefore does
+not require replacing a tuple-wide lambda symbol in this fragment. The checker
+discovers local code through the fragment's `# check-local-code:` demangled
+parent identity, including helpers instantiated with a local lambda type.
+Raw and demangled `nm --no-sort` records are paired in ELF symbol-table order
+and their addresses/types must agree. This avoids context-dependent ABI
+substitutions in helper names. A missing parent or mismatched table fails the
+check. If a compiler change outlines such code into flash, the placement gate
+fails with its actual raw symbol name;
+keep the traversal inline rather than adding the complete tuple name back.
+Host descriptor-extension tests still exercise the same traversal behavior.
+
 ## IRAM and DRAM headroom
 
 ESP32 static IRAM is the binding constraint. Measured in bytes with
@@ -89,10 +102,20 @@ for fresh builds of this layout with 80 MHz DIO flash
 
 | Build | `SDKCONFIG_DEFAULTS` | IRAM used / free | DRAM used / free |
 | --- | --- | --- | --- |
-| Production | `sdkconfig.defaults` | 124,911 / 6,161 | 81,204 / 43,376 |
-| Worst-case profiling | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 129,695 / 1,377 | 89,444 / 35,136 |
+| Production | `sdkconfig.defaults` | 123,431 / 7,641 | 83,796 / 40,784 |
+| Worst-case profiling | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 128,103 / 2,969 | 92,044 / 32,536 |
 | Synthetic benchmark | `sdkconfig.defaults;sdkconfig.runtime-stats-synthetic.defaults` | 73,587 / 57,485 | 60,732 / 63,848 |
 
-The worst-case profiling build leaves about 1.3 KiB of IRAM. Before adding
+The production and profiling rows were rebuilt for #320 with ESP-IDF 5.5.4
+and Xtensa GCC 14.2.0 against the #319 baseline (`654c57b`) using identical
+sdkconfig settings. The direct fold saves 1,480 production IRAM bytes and
+1,516 profiling IRAM bytes; DRAM is unchanged. Total image sizes are 715,457
+and 737,605 bytes respectively, compared with baseline 716,909 and 739,109
+bytes. Both variants pass all 23 stable symbol entries plus local-code
+discovery. The synthetic-benchmark row is an earlier measurement and was not
+rerun for this change. These are software build estimates, not runtime or
+vehicle measurements.
+
+The worst-case profiling build leaves about 2.9 KiB of IRAM. Before adding
 symbols to `hot_code.lf` or enabling Kconfig options that place code in IRAM,
 rebuild that configuration and confirm it still links.

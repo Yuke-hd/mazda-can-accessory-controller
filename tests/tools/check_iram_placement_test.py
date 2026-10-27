@@ -65,14 +65,40 @@ class IramPlacementCheckerTests(unittest.TestCase):
         self.assertIn("_Z4warmv", failures[0])
         self.assertEqual(failures[1], "missing from ELF: _Z4gonev")
 
-    def run_main(self, fragment: str) -> tuple:
-        outputs = {"-h": OBJDUMP, "--defined-only": NM}
+    def test_local_code_resolves_actual_gcc_helper_substitutions(self) -> None:
+        # GCC 14 outlined this helper in the first candidate. Its NS0_ ABI
+        # substitutions differ from the fragment parent's NS_ spelling.
+        raw = '4013e47c t _ZSt13__invoke_implIvZN5mazda8internal23VehicleTelemetryService21publish_notificationsERKNS0_12VehicleStateERKNS0_11DiagnosticsEySt8optionalImEbbEUlDpRKT_E_JRKNS1_22NotificationDescriptorINS0_16SelectorPositionELt1EEERKNSG_INS0_10ActualGearELt2EEERKNSG_INS0_9TurnStateELt3EEERKNSG_IbLt4EEERKNSG_IbLt5EEERKNSG_IbLt6EEERKNSG_IbLt7EEERKNSG_IbLt8EEERKNSG_IbLt9EEERKNSG_IbLt10EEERKNSG_IbLt11EEERKNSG_IbLt12EEERKNSG_IbLt13EEERKNSG_IbLt14EEERKNSG_IbLt15EEERKNSG_INS0_18FrontWiperPositionELt16EEERKNSG_IbLt17EEEEET_St14__invoke_otherOT0_DpOT1_'
+        demangled = '4013e47c t void std::__invoke_impl<void, mazda::internal::VehicleTelemetryService::publish_notifications(mazda::VehicleState const&, mazda::Diagnostics const&, unsigned long long, std::optional<unsigned long>, bool, bool)::{lambda((auto:1 const&)...)#1}, mazda::internal::NotificationDescriptor<mazda::SelectorPosition, (unsigned short)1> const&, mazda::internal::NotificationDescriptor<mazda::ActualGear, (unsigned short)2> const&, mazda::internal::NotificationDescriptor<mazda::TurnState, (unsigned short)3> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)4> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)5> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)6> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)7> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)8> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)9> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)10> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)11> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)12> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)13> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)14> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)15> const&, mazda::internal::NotificationDescriptor<mazda::FrontWiperPosition, (unsigned short)16> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)17> const&>(std::__invoke_other, mazda::internal::VehicleTelemetryService::publish_notifications(mazda::VehicleState const&, mazda::Diagnostics const&, unsigned long long, std::optional<unsigned long>, bool, bool)::{lambda((auto:1 const&)...)#1}&&, mazda::internal::NotificationDescriptor<mazda::SelectorPosition, (unsigned short)1> const&, mazda::internal::NotificationDescriptor<mazda::ActualGear, (unsigned short)2> const&, mazda::internal::NotificationDescriptor<mazda::TurnState, (unsigned short)3> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)4> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)5> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)6> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)7> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)8> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)9> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)10> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)11> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)12> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)13> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)14> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)15> const&, mazda::internal::NotificationDescriptor<mazda::FrontWiperPosition, (unsigned short)16> const&, mazda::internal::NotificationDescriptor<bool, (unsigned short)17> const&)'
+        parent = "mazda::internal::VehicleTelemetryService::publish_notifications("
+        self.assertEqual(check_iram_placement.local_code_symbols(raw, demangled, [parent]),
+                         [raw.split(maxsplit=2)[2]])
+
+    def test_local_code_ignores_static_data_and_checks_table_alignment(self) -> None:
+        raw = "40080500 T _Z3hotv\n3ffb0010 b _ZZ3hotvE4data\n"
+        names = "40080500 T hot()\n3ffb0010 b hot()::data\n"
+        self.assertEqual(check_iram_placement.local_code_symbols(raw, names, ["hot()"]),
+                         ["_Z3hotv"])
+        with self.assertRaisesRegex(ValueError, "do not align"):
+            check_iram_placement.local_code_symbols(raw, names.replace("40080500", "40080501"), ["hot()"])
+        with self.assertRaisesRegex(ValueError, "parent not found"):
+            check_iram_placement.local_code_symbols(raw, names, ["missing()"])
+
+    def test_local_parent_comments_are_explicit(self) -> None:
+        self.assertEqual(check_iram_placement.parse_local_code_parents(
+            "# check-local-code: ns::hot(\n# other: ns::cold(\n"), ["ns::hot("])
+
+    def run_main(self, fragment: str, nm: str = NM, demangled: str = "") -> tuple:
+        def run_output(command):
+            if command[1] == "-h":
+                return OBJDUMP
+            return demangled if "--demangle" in command else nm
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hot.lf"
             path.write_text(fragment, encoding="utf-8")
             output = io.StringIO()
             with patch.object(
-                check_iram_placement, "_run", side_effect=lambda command: outputs[command[1]]
+                check_iram_placement, "_run", side_effect=run_output
             ), redirect_stdout(output), redirect_stderr(output):
                 result = check_iram_placement.main(
                     ["--fragment", str(path), "--elf", "app.elf"]
@@ -94,6 +120,20 @@ class IramPlacementCheckerTests(unittest.TestCase):
         result, output = self.run_main("[mapping:m]\narchive: a\nentries:\n    * (noflash)\n")
         self.assertEqual(result, 1)
         self.assertIn("no symbol entries", output)
+
+    def test_main_checks_new_tuple_lambda_without_an_exact_fragment_entry(self) -> None:
+        fragment = "# check-local-code: hot()\n[mapping:m]\narchive: a\nentries:\n    o:_Z3hotv (noflash)\n"
+        name = "_ZZ3hotvENKUlDpRKT_E_clIJnew_descriptor_tupleEEEDaS2_"
+        base_names = NM.replace("_Z3hotv", "hot()").replace("_Z4warmv", "warm()")
+        for address, expected in (("400d2000", 1), ("40080600", 0)):
+            with self.subTest(address=address):
+                result, output = self.run_main(
+                    fragment, NM + f"{address} t {name}\n",
+                    base_names + f"{address} t void invoke<hot()::{{lambda(new tuple)}}>()\n")
+                self.assertEqual(result, expected)
+                self.assertIn("2 symbols", output)
+                if expected:
+                    self.assertIn(name, output)
 
 
 if __name__ == "__main__":
