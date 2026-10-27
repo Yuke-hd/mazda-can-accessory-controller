@@ -1,0 +1,16 @@
+[
+  {
+    "name": "empty",
+    "compatibility_preimage": "{\"bindings\":[],\"format\":\"vehicle-profile-compatibility-v1\",\"profile_id\":\"golden\",\"selected_bus\":\"can\",\"semantic_policy_revision\":\"s1\"}\n",
+    "artifact_preimage": "{\"format\":\"vehicle-profile-artifact-v1\",\"generator_revision\":\"g1\",\"profile\":{\"bindings\":[],\"diagnostics\":[{\"affected\":\"profile\",\"category\":\"all_features_disabled\",\"reason\":\"Synthetic empty profile\",\"sources\":[]}],\"format\":\"vehicle-signal-profile\",\"messages\":[],\"profile_id\":\"golden\",\"recognition_rule_revision\":\"r1\",\"selected_bus\":\"can\",\"semantic_policy_revision\":\"s1\",\"sources\":[],\"version\":1},\"validation\":{\"evidence\":[],\"freshness_policies\":[],\"handlers\":[],\"invalid_value_policies\":[],\"limits\":{},\"profile_revisions\":[[\"golden\",\"s1\",\"r1\"]],\"unit_conversions\":[],\"units\":[]}}\n",
+    "compatibility_identity": "040af0da9a23acca5c2d34ba20067a47c789d3b4b7820f7402ec046646f01f4a",
+    "artifact_identity": "bdf04ebc8d3b710ea74155ee72682611aaafe7c6b934fa64950c50ce026a621c"
+  },
+  {
+    "name": "native",
+    "compatibility_preimage": "{\"bindings\":[{\"capabilities\":[\"read\"],\"choices\":[],\"evidence\":{\"confidence\":\"Reference\",\"eligibility\":\"source_only\",\"ref\":\"review\"},\"freshness\":null,\"inputs\":[],\"key\":\"vehicle.ready\",\"kind\":\"native\",\"policy\":{\"handler\":\"ready\",\"invalid_value\":\"unavailable\",\"revision\":\"h1\"},\"type\":\"boolean\",\"unit\":\"\"}],\"format\":\"vehicle-profile-compatibility-v1\",\"profile_id\":\"golden\",\"selected_bus\":\"can\",\"semantic_policy_revision\":\"s1\"}\n",
+    "artifact_preimage": "{\"format\":\"vehicle-profile-artifact-v1\",\"generator_revision\":\"g1\",\"profile\":{\"bindings\":[{\"capabilities\":[\"read\"],\"choices\":[],\"evidence\":{\"confidence\":\"Reference\",\"eligibility\":\"source_only\",\"ref\":\"review\"},\"freshness\":null,\"inputs\":[],\"key\":\"vehicle.ready\",\"kind\":\"native\",\"policy\":{\"handler\":\"ready\",\"invalid_value\":\"unavailable\",\"revision\":\"h1\"},\"runtime_id\":7,\"type\":\"boolean\",\"unit\":\"\"}],\"diagnostics\":[],\"format\":\"vehicle-signal-profile\",\"messages\":[],\"profile_id\":\"golden\",\"recognition_rule_revision\":\"r1\",\"selected_bus\":\"can\",\"semantic_policy_revision\":\"s1\",\"sources\":[],\"version\":1},\"validation\":{\"evidence\":[[\"review\",\"Reference\",\"source_only\"]],\"freshness_policies\":[],\"handlers\":[[\"ready\",\"h1\",[\"golden\"],\"boolean\",\"\",0,0]],\"invalid_value_policies\":[\"unavailable\"],\"limits\":{},\"profile_revisions\":[[\"golden\",\"s1\",\"r1\"]],\"unit_conversions\":[],\"units\":[\"\"]}}\n",
+    "compatibility_identity": "676171d800002faac791ecee0a06df48ebf806a3b0d59c416bff851da2e84a97",
+    "artifact_identity": "002e7f7593603bfcdc17141c5bcf3ab0895c2a2c26400df0b19b1c99ca57a5e4"
+  }
+]
