@@ -1,0 +1,7 @@
+{
+  "compiler_catalog": {"version": 1, "signals": {}},
+  "metadata_lines": [],
+  "capability_report": {"version": 1, "profile_id": "synthetic.desert", "all_features_disabled": true,
+    "catalog_document_bytes": 3, "signals": [],
+    "diagnostics": [{"category": "all_features_disabled", "affected": "factory", "sources": [], "reason": "This independently authored empty profile exposes no controller inputs."}]}
+}
