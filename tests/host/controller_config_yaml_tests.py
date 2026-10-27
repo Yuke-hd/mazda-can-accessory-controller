@@ -24,6 +24,7 @@ from compile_controller_config_test import (
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--loader", type=Path, required=True)
+    parser.add_argument("--catalog-exporter", type=Path, required=True)
     args = parser.parse_args()
 
     class CanonicalLoaderTests(ControllerConfigCompilerTests):
@@ -70,6 +71,22 @@ def main() -> int:
                 json.loads(result.stdout),
                 json.loads(SIGNAL_CATALOG.read_text(encoding="utf-8"))["signals"],
             )
+
+        def test_standalone_exporter_matches_loader_catalog(self) -> None:
+            exported = subprocess.run(
+                [str(args.catalog_exporter)], capture_output=True, check=False
+            )
+            repeated = subprocess.run(
+                [str(args.catalog_exporter)], capture_output=True, check=False
+            )
+            loaded = subprocess.run(
+                [str(args.loader), "--catalog"], capture_output=True, check=False
+            )
+            self.assertEqual(exported.returncode, 0, exported.stderr)
+            self.assertEqual(repeated.returncode, 0, repeated.stderr)
+            self.assertEqual(loaded.returncode, 0, loaded.stderr)
+            self.assertEqual(exported.stdout, repeated.stdout)
+            self.assertEqual(exported.stdout, loaded.stdout)
 
         def test_actual_gear_example_loads_in_canonical_cpp_loader(self) -> None:
             example = (

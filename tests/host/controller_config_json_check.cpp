@@ -1,5 +1,4 @@
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <iterator>
 #include <string>
@@ -9,43 +8,12 @@
 #include "action_engine/condition.hpp"
 #include "action_engine/range_rule.hpp"
 #include "controller_config/persisted/json_loader.hpp"
+#include "controller_signal_catalog_writer.hpp"
 #include "mazda/signal_catalog.hpp"
 
 namespace persisted = controller_config::persisted;
 
 namespace {
-void print_catalog() {
-  std::cout << '{';
-  bool first = true;
-  for (const auto &signal : mazda::internal::signal_catalog()) {
-    if (!first)
-      std::cout << ',';
-    first = false;
-    const auto type = signal.type == vehicle_signals::SignalType::Boolean  ? "boolean"
-                      : signal.type == vehicle_signals::SignalType::Number ? "number"
-                                                                           : "enum";
-    std::cout << std::quoted(std::string(signal.key)) << ":{\"type\":" << std::quoted(type)
-              << ",\"capabilities\":[";
-    const bool read = signal.capabilities.has(vehicle_signals::SignalCapability::Read);
-    if (read)
-      std::cout << "\"read\"";
-    if (signal.capabilities.has(vehicle_signals::SignalCapability::Notify))
-      std::cout << (read ? ",\"notify\"" : "\"notify\"");
-    std::cout << ']';
-    if (signal.type == vehicle_signals::SignalType::Enum) {
-      std::cout << ",\"choices\":[";
-      for (std::size_t index = 0; index < signal.choice_count; ++index) {
-        if (index != 0)
-          std::cout << ',';
-        std::cout << std::quoted(std::string(signal.choices[index].key));
-      }
-      std::cout << ']';
-    }
-    std::cout << '}';
-  }
-  std::cout << "}\n";
-}
-
 [[nodiscard]] action_engine::RuleOperand operand(const persisted::Operand &value) {
   return std::visit(
       [](const auto &item) {
@@ -89,7 +57,7 @@ int main(const int argc, const char *const argv[]) {
   if (argc != 2)
     return 2;
   if (std::string_view(argv[1]) == "--catalog") {
-    print_catalog();
+    controller_signal_catalog::write(std::cout, mazda::internal::signal_catalog());
     return 0;
   }
   std::ifstream input(argv[1], std::ios::binary);
