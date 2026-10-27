@@ -83,6 +83,8 @@ void VehicleState::refresh(const vehicle_core::MonotonicTimestamp now) noexcept 
   right_indicator_lamp.refresh(now);
   wiper_low.refresh(now);
   front_wiper.refresh(now);
+  blind_spot_left.refresh(now);
+  blind_spot_right.refresh(now);
   turn_state.refresh(now);
   hazard_request.refresh(now);
   left_turn_request.refresh(now);
@@ -110,6 +112,8 @@ void VehicleState::apply_freshness_policy(const VehicleFreshnessPolicy &policy) 
   right_indicator_lamp.set_freshness_timeout(policy.right_indicator_lamp_timeout_us);
   wiper_low.set_freshness_timeout(policy.wiper_low_timeout_us);
   front_wiper.set_freshness_timeout(policy.front_wiper_timeout_us);
+  blind_spot_left.set_freshness_timeout(policy.blind_spot_left_timeout_us);
+  blind_spot_right.set_freshness_timeout(policy.blind_spot_right_timeout_us);
   turn_state.set_freshness_timeout(policy.turn_state_timeout_us);
   hazard_request.set_freshness_timeout(policy.hazard_request_timeout_us);
   left_turn_request.set_freshness_timeout(policy.left_turn_request_timeout_us);

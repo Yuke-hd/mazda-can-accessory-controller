@@ -558,6 +558,28 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertIn("notify", result.stderr)
         self.assertIsNone(output_path)
 
+    def test_blind_spot_enum_rules_compile_with_stable_choices(self) -> None:
+        for side in ("left", "right"):
+            with self.subTest(side=side):
+                source = f"""
+                version: 1
+                actions: [{{name: alert}}]
+                rules:
+                  - type: state
+                    action: alert
+                    signal_key: vehicle.blind_spot.{side}
+                    comparison: equal
+                    operand: {{choice: warning}}
+                outputs: []
+                """
+                result, output = self.run_compiler(source)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIsNotNone(output)
+                self.assertEqual(json.loads(output.decode("utf-8"))["rules"][0]["operand"],
+                                 {"choice": "warning"})
+                rejected, _ = self.run_compiler(source.replace("choice: warning", "choice: reserved"))
+                self.assertNotEqual(rejected.returncode, 0)
+
     def test_unknown_signal_choice_fails(self) -> None:
         source = """
         version: 1

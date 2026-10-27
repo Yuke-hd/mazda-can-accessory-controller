@@ -89,10 +89,11 @@ for fresh builds of this layout with 80 MHz DIO flash
 
 | Build | `SDKCONFIG_DEFAULTS` | IRAM used / free | DRAM used / free |
 | --- | --- | --- | --- |
-| Production | `sdkconfig.defaults` | 124,911 / 6,161 | 81,204 / 43,376 |
-| Worst-case profiling | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 129,695 / 1,377 | 89,444 / 35,136 |
-| Synthetic benchmark | `sdkconfig.defaults;sdkconfig.runtime-stats-synthetic.defaults` | 73,587 / 57,485 | 60,732 / 63,848 |
+| Production (#307, 2026-10-27) | `sdkconfig.defaults` | 126,067 / 5,005 | 85,084 / 39,496 |
+| Worst-case profiling (#307, 2026-10-27) | `sdkconfig.defaults;sdkconfig.runtime-stats.defaults` plus `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` and `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | 130,747 / 325 | 93,324 / 31,256 |
+| Synthetic benchmark (prior baseline) | `sdkconfig.defaults;sdkconfig.runtime-stats-synthetic.defaults` | 73,587 / 57,485 | 60,732 / 63,848 |
 
-The worst-case profiling build leaves about 1.3 KiB of IRAM. Before adding
+The current worst-case profiling build leaves 325 bytes of IRAM. These are
+compile/link measurements, not runtime, bench, or vehicle validation. Before adding
 symbols to `hot_code.lf` or enabling Kconfig options that place code in IRAM,
 rebuild that configuration and confirm it still links.

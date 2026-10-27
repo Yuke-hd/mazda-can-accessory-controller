@@ -64,6 +64,8 @@ inline constexpr std::uint16_t kRightLampNotificationChannel = 14;
 inline constexpr std::uint16_t kWiperLowNotificationChannel = 15;
 inline constexpr std::uint16_t kFrontWiperNotificationChannel = 16;
 inline constexpr std::uint16_t kBrakeNotificationChannel = 17;
+inline constexpr std::uint16_t kBlindSpotLeftNotificationChannel = 18;
+inline constexpr std::uint16_t kBlindSpotRightNotificationChannel = 19;
 
 using SelectorNotificationChannel =
     vehicle_core::NotificationChannel<SelectorPosition, kSelectorNotificationChannel>;
@@ -99,12 +101,16 @@ using FrontWiperNotificationChannel =
     vehicle_core::NotificationChannel<FrontWiperPosition, kFrontWiperNotificationChannel>;
 
 using BrakeNotificationChannel = vehicle_core::NotificationChannel<bool, kBrakeNotificationChannel>;
+using BlindSpotLeftNotificationChannel =
+    vehicle_core::NotificationChannel<BlindSpotStatus, kBlindSpotLeftNotificationChannel>;
+using BlindSpotRightNotificationChannel =
+    vehicle_core::NotificationChannel<BlindSpotStatus, kBlindSpotRightNotificationChannel>;
 
 #if !defined(ESP_PLATFORM)
 // Host-only extension seam. The channel is deliberately private and has no
 // corresponding public facade callback; it proves a new fixed channel can be
 // added by extending the descriptor tuple alone.
-inline constexpr std::uint16_t kTestFrontWiperNotificationChannel = 18;
+inline constexpr std::uint16_t kTestFrontWiperNotificationChannel = 20;
 using TestFrontWiperNotificationChannel =
     vehicle_core::NotificationChannel<FrontWiperPosition, kTestFrontWiperNotificationChannel>;
 #endif
@@ -208,7 +214,9 @@ using NotificationDescriptorTuple =
                NotificationDescriptor<bool, kRightLampNotificationChannel>,
                NotificationDescriptor<bool, kWiperLowNotificationChannel>,
                NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
-               NotificationDescriptor<bool, kBrakeNotificationChannel>>;
+               NotificationDescriptor<bool, kBrakeNotificationChannel>,
+               NotificationDescriptor<BlindSpotStatus, kBlindSpotLeftNotificationChannel>,
+               NotificationDescriptor<BlindSpotStatus, kBlindSpotRightNotificationChannel>>;
 #else
 using NotificationDescriptorTuple =
     std::tuple<NotificationDescriptor<SelectorPosition, kSelectorNotificationChannel>,
@@ -228,6 +236,8 @@ using NotificationDescriptorTuple =
                NotificationDescriptor<bool, kWiperLowNotificationChannel>,
                NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
                NotificationDescriptor<bool, kBrakeNotificationChannel>,
+               NotificationDescriptor<BlindSpotStatus, kBlindSpotLeftNotificationChannel>,
+               NotificationDescriptor<BlindSpotStatus, kBlindSpotRightNotificationChannel>,
                NotificationDescriptor<FrontWiperPosition, kTestFrontWiperNotificationChannel>>;
 #endif
 
@@ -420,6 +430,10 @@ public:
                                                         void *context) noexcept;
 
   [[nodiscard]] SubscriptionToken subscribe_brake(Callback<bool> callback, void *context) noexcept;
+  [[nodiscard]] SubscriptionToken subscribe_blind_spot_left(Callback<BlindSpotStatus> callback,
+                                                            void *context) noexcept;
+  [[nodiscard]] SubscriptionToken subscribe_blind_spot_right(Callback<BlindSpotStatus> callback,
+                                                             void *context) noexcept;
 
   // Typed unsubscribe. It removes only typed registrations; a token that
   // matches a generic registration is InvalidSubscription.
@@ -593,6 +607,8 @@ private:
   WiperLowNotificationChannel wiper_low_channel_{};
   FrontWiperNotificationChannel front_wiper_channel_{};
   BrakeNotificationChannel brake_channel_{};
+  BlindSpotLeftNotificationChannel blind_spot_left_channel_{};
+  BlindSpotRightNotificationChannel blind_spot_right_channel_{};
 #if !defined(ESP_PLATFORM)
   TestFrontWiperNotificationChannel test_front_wiper_channel_{};
 #endif

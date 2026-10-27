@@ -207,3 +207,27 @@ stable public channel, decoder/DBC bit coordinates, numeric fields, and the
 explicit source-name/interpretation exception recorded above; an actual
 channel or coordinate/numeric mismatch fails. It does not promote evidence
 based on synthetic tests or runtime availability.
+
+## Blind-spot candidates: BSM (`0x477`)
+
+`blind_spot_left` and `blind_spot_right` are **Reference** Read + Notify enum
+candidates from the MIT-licensed opendbc Mazda DBC at
+`95f3d52f474b677c28fc8f10fef3f2f0386aff92` (see
+[provenance](opendbc-provenance.md#blind-spot-status-candidates)). No vehicle,
+market, bus-visibility, fault-status, or freshness-timing validation is claimed.
+The owner will test on the 2019 CX-5 before merge; synthetic vectors only test
+software consistency. Expected periods and default freshness remain unset.
+
+Source `LEFT_BS_STATUS` is `13|2@0+`, and `RIGHT_BS_STATUS` is `15|2@0+`;
+both use scale 1 and offset 0. Raw 0 means clear, 1 detected, and 2 detected
+with turn-indicator warning. Raw 3 has no source label and invalidates only
+its side. The decoder conservatively invalidates both while `BSM_OFF`
+(`0|1@0+`) is asserted; this disabled policy is not a confirmed vehicle
+behavior. Invalid readings can retain the last accepted value, but their
+availability is Unavailable and default rules fail off. A newer valid frame
+is required for recovery. No factory lighting action or unverified-freshness
+opt-in is added. Rear cross-traffic and parking detection remain separate.
+
+Before the first accepted value, invalid/disabled observations retain NoData;
+after a value has been accepted, invalidation reports Unavailable while
+retaining that historical value. Both states fail off.

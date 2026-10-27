@@ -159,6 +159,38 @@ TurnState normalize_turn(const bool hazard, const bool left, const bool right) n
 
 } // namespace
 
+DecodeStatus decode_blind_spot(const vehicle_core::RawCanFrame &frame, VehicleState &state,
+                               vehicle_core::DecoderObservation *observation,
+                               vehicle_core::HealthObservation *health) noexcept {
+  MAZDA_OBSERVE_DECODER_CALL(kBlindSpotId);
+  const auto classification = classify_frame(frame, kBlindSpotId, observation);
+  if (classification != DecodeStatus::Decoded) {
+    if (classification == DecodeStatus::Malformed)
+      record_malformed(frame, kBlindSpotId, state);
+    finish_health(state, kBlindSpotId, vehicle_core::SignalHealth::Unavailable, health);
+    return classification;
+  }
+
+  const auto message_result = record_healthy(frame, kBlindSpotId, state);
+  if (message_result == MessageObservationResult::Accepted) {
+    const bool disabled = (frame.data[0] & 1U) != 0;
+    const auto update = [&](auto &signal, const std::uint8_t raw) {
+      if (disabled || raw == 3)
+        return invalidate_signal(signal, frame.timestamp_us);
+      return signal.update(static_cast<BlindSpotStatus>(raw + 1), frame.timestamp_us);
+    };
+    const bool left_updated = update(state.blind_spot_left, (frame.data[1] >> 4U) & 3U);
+    const bool right_updated = update(state.blind_spot_right, (frame.data[1] >> 6U) & 3U);
+    if ((left_updated || right_updated) && frame.timestamp_us > state.timestamp_us)
+      state.timestamp_us = frame.timestamp_us;
+  }
+  const auto signal_health = state.blind_spot_left.is_valid() && state.blind_spot_right.is_valid()
+                                 ? vehicle_core::SignalHealth::Available
+                                 : vehicle_core::SignalHealth::Unavailable;
+  finish_health(state, kBlindSpotId, signal_health, health);
+  return finish_observation(DecodeStatus::Decoded, observation);
+}
+
 DecodeStatus decode_engine_data(const vehicle_core::RawCanFrame &frame, VehicleState &state,
                                 vehicle_core::DecoderObservation *observation,
                                 vehicle_core::HealthObservation *health) noexcept {
@@ -507,6 +539,8 @@ DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
   // Acceleration has always had its own first-pass path so malformed 0x078
   // observations fault the acceleration record instead.
   if (!frame.is_valid()) {
+    if (frame.identifier == kBlindSpotId)
+      return decode_blind_spot(frame, state, observation, health);
     if (frame.identifier == kAccelerationId)
       return decode_acceleration(frame, state, observation, health);
     return decode_engine_data(frame, state, observation, health);
@@ -517,6 +551,8 @@ DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
   // Preserve that optional health contract without probing unrelated owners.
   if (frame.identifier_format != vehicle_core::CanIdentifierFormat::Standard ||
       frame.remote_request) {
+    if (frame.identifier == kBlindSpotId)
+      return decode_blind_spot(frame, state, observation, health);
     if (frame.identifier == kAccelerationId)
       return decode_acceleration(frame, state, observation, health);
     initialize_observation(frame, observation);
@@ -537,6 +573,8 @@ DecodeStatus decode(const vehicle_core::RawCanFrame &frame, VehicleState &state,
     return decode_turn_switch(frame, state, edge, observation, health);
   case kBrakePedalId:
     return decode_brake_pedal(frame, state, observation, health);
+  case kBlindSpotId:
+    return decode_blind_spot(frame, state, observation, health);
   case kAccelerationId:
     return decode_acceleration(frame, state, observation, health);
   default:

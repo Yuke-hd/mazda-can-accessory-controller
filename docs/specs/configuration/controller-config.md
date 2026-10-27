@@ -359,6 +359,12 @@ same unit as JSON `null`.
 candidates are unavailable without clamping; its default freshness timeout is
 unset, so a valid reading remains `FreshnessUnverified`.
 
+`vehicle.blind_spot.left` and `vehicle.blind_spot.right` are Enum Read + Notify
+signals with choices `unknown`, `clear`, `detected`, and `warning`. They can
+be used in enum state/event rules. Both remain Reference candidates with unset
+default freshness, so the default `fresh` requirement excludes their unverified
+observations. No new factory rule or unverified-freshness opt-in is added.
+
 `vehicle.brake_pressed` is a Boolean Read + Notify signal. It can be used
 with Boolean equality or inequality conditions in `state`, `event` and
 `sampled_state` rules; numeric ranges and enum choices are invalid. Compiling

@@ -86,6 +86,11 @@ public:
   [[nodiscard]] Result<Subscription> on_brake_pressed_changed(Callback<bool> callback,
                                                               void *context) noexcept;
 
+  [[nodiscard]] Result<Subscription> on_blind_spot_left_changed(Callback<BlindSpotStatus> callback,
+                                                                void *context) noexcept;
+  [[nodiscard]] Result<Subscription> on_blind_spot_right_changed(Callback<BlindSpotStatus> callback,
+                                                                 void *context) noexcept;
+
   [[nodiscard]] StatusResult unsubscribe(Subscription subscription) noexcept;
   [[nodiscard]] Diagnostics diagnostics() const noexcept;
   // Temporary bounded evidence for the opt-in CAN freshness diagnostic
@@ -117,9 +122,9 @@ private:
   // the host's headroom so service growth fails the host build first. See
   // docs/development/facade-storage-budget.md before changing either value.
 #if defined(ESP_PLATFORM)
-  static constexpr std::size_t kImplementationStorageBytes = 28U * 1024U;
+  static constexpr std::size_t kImplementationStorageBytes = 29U * 1024U;
 #else
-  static constexpr std::size_t kImplementationStorageBytes = 32U * 1024U;
+  static constexpr std::size_t kImplementationStorageBytes = 33U * 1024U;
 #endif
   static constexpr std::size_t kImplementationStorageAlignment = alignof(std::max_align_t);
   alignas(kImplementationStorageAlignment) std::byte

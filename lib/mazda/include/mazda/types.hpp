@@ -33,6 +33,8 @@ enum class ActualGear : std::uint8_t {
   Shifting,
 };
 
+enum class BlindSpotStatus : std::uint8_t { Unknown, Clear, Detected, Warning };
+
 enum class FrontWiperPosition : std::uint8_t { Unknown, Off, On, High, Intermittent };
 
 enum class TurnState : std::uint8_t { Unknown, Off, Left, Right, Hazard };

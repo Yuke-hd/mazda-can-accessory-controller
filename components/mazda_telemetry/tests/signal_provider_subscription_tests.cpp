@@ -232,13 +232,14 @@ struct Harness final {
   mazda::MazdaSignalProvider provider{telemetry};
 };
 
-constexpr std::array<SignalId, 17> kNotifyIds{
+constexpr std::array<SignalId, 19> kNotifyIds{
     ids::kTurnState,          ids::kHazardRequest,     ids::kTurnRequestLeft,
     ids::kTurnRequestRight,   ids::kIndicatorLampLeft, ids::kIndicatorLampRight,
     ids::kSelectorPosition,   ids::kActualGear,        ids::kLiftgateOpen,
     ids::kDoorRearRight,      ids::kDoorRearLeft,      ids::kDoorFrontLeftRhd,
     ids::kDoorFrontRightRhd,  ids::kDoorsUnlocked,     ids::kWiperLow,
-    ids::kWiperFrontPosition, ids::kBrakePressed};
+    ids::kWiperFrontPosition, ids::kBrakePressed,      ids::kBlindSpotLeft,
+    ids::kBlindSpotRight};
 
 // Waits until `target` is true and every other id of the same message is
 // false, so each boolean is proven to route to its own typed channel.
@@ -301,6 +302,13 @@ void test_every_notify_signal_routes_to_its_typed_channel() {
   }
 
   using namespace mazda::candidate;
+  EXPECT(harness.inject(kBlindSpotId, 9, {0, 0x90, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_flag([&] {
+    return recorder.latest_value_is(ids::kBlindSpotLeft,
+                                    enum_value(mazda::BlindSpotStatus::Detected)) &&
+           recorder.latest_value_is(ids::kBlindSpotRight,
+                                    enum_value(mazda::BlindSpotStatus::Warning));
+  }));
   // TRANSMISSION: selector Drive (raw 4) and actual gear Second (raw 2).
   EXPECT(harness.inject(kTransmissionId, 10, {0x04, 0, 0, 0, 0x04, 0, 0, 0}));
   EXPECT(wait_for_flag([&] {
@@ -413,7 +421,7 @@ void test_request_failures_are_distinct() {
          SignalStatus::UnsupportedCapability);
   EXPECT(provider.subscribe(SignalId{}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
-  EXPECT(provider.subscribe(SignalId{24}, &record_notice, &context).status ==
+  EXPECT(provider.subscribe(SignalId{26}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);
   EXPECT(provider.subscribe(SignalId{0xffffU}, &record_notice, &context).status ==
          SignalStatus::InvalidSignal);

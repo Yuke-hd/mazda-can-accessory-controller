@@ -20,6 +20,7 @@ constexpr std::uint32_t kTurnSwitchId = 0x091;
 constexpr std::uint32_t kBlinkInfoId = 0x09a;
 constexpr std::uint32_t kAccelerationId = 0x078;
 constexpr std::uint32_t kBrakePedalId = 0x165;
+constexpr std::uint32_t kBlindSpotId = 0x477;
 constexpr std::uint8_t kCandidateDlc = 8;
 
 struct CandidateMessageDefinition {
@@ -138,6 +139,50 @@ inline constexpr CandidateMessageDefinition kBrakePedalDefinition{"BRAKE_PEDAL",
                                                                   std::nullopt,
                                                                   false,
                                                                   kCaptureConfirmedProvenance};
+
+// Upstream candidates only; vehicle compatibility and timing are unverified.
+inline constexpr const char *kBlindSpotEvidenceProvenance =
+    "docs/protocol/signal-evidence.md; docs/protocol/opendbc-provenance.md; "
+    "opendbc mazda_2017.dbc at 95f3d52f474b677c28fc8f10fef3f2f0386aff92; MIT";
+inline constexpr CandidateMessageDefinition kBlindSpotDefinition{"BSM",
+                                                                 kBlindSpotId,
+                                                                 kCandidateDlc,
+                                                                 std::nullopt,
+                                                                 std::nullopt,
+                                                                 true,
+                                                                 kBlindSpotEvidenceProvenance};
+inline constexpr CandidateSignalDefinition kBlindSpotLeftDefinition{
+    "LEFT_BS_STATUS",
+    kBlindSpotId,
+    12,
+    2,
+    1.0F,
+    0.0F,
+    vehicle_core::SignalUnit::None,
+    0.0F,
+    3.0F,
+    "raw 3 unspecified; BSM_OFF makes both signals unavailable",
+    13,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    "0=clear; 1=detected; 2=warning; 3=unknown",
+    kBlindSpotEvidenceProvenance,
+    EvidenceConfidence::Reference};
+inline constexpr CandidateSignalDefinition kBlindSpotRightDefinition{
+    "RIGHT_BS_STATUS",
+    kBlindSpotId,
+    14,
+    2,
+    1.0F,
+    0.0F,
+    vehicle_core::SignalUnit::None,
+    0.0F,
+    3.0F,
+    "raw 3 unspecified; BSM_OFF makes both signals unavailable",
+    15,
+    CandidateSignalDefinition::ByteOrder::Motorola,
+    "0=clear; 1=detected; 2=warning; 3=unknown",
+    kBlindSpotEvidenceProvenance,
+    EvidenceConfidence::Reference};
 
 // Source X/Y are exposed as longitudinal/lateral candidates only. The axis
 // and sign interpretation remains Reference; #186 establishes no timing.

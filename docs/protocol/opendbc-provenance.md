@@ -73,3 +73,17 @@ normalized before local evidence exists.
 The original MCAN-10 capture-derived inventory and its superseded blanket
 confidence wording remain in the
 [historical signal definition review](../work-items/signal-definition-review.md).
+
+## Blind-spot status candidates
+
+The same pinned MIT-licensed source, re-inspected on 2026-10-27, defines
+[`BSM` (1143 / `0x477`), DLC 8](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L695-L708):
+`LEFT_BS_STATUS` at `13|2@0+` and `RIGHT_BS_STATUS` at `15|2@0+`, each
+unsigned, scale 1, offset 0, declared range 0..3, no unit. The
+[source value labels](https://github.com/commaai/opendbc/blob/95f3d52f474b677c28fc8f10fef3f2f0386aff92/opendbc/dbc/mazda_2017.dbc#L790-L791)
+identify 0 as no object, 1 as detected, and 2 as detected with blinker warning.
+Raw 3 is unspecified. `BSM_OFF` is `0|1@0+`, unsigned, scale 1, offset 0,
+range 0..1. All remain unverified for the Australian 2019 CX-5 target.
+No expected period or freshness timeout is established. Compiled definitions,
+decoder and synthetic tests are derived from these coordinates; they do not
+establish observed/confirmed status. No upstream DBC is vendored.

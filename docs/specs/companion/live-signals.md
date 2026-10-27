@@ -357,3 +357,7 @@ least cover:
 - Freshness timeouts for any signal, including brake.
 - A per-signal subscription mask or a configurable rate.
 - Raw CAN, diagnostic or logging streams.
+
+Blind-spot enums `vehicle.blind_spot.left` and `vehicle.blind_spot.right` are
+exposed through the discoverable extensible catalog/stream only. They do not
+add slots or change bytes/version in the legacy fixed layouts above.

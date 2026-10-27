@@ -166,3 +166,34 @@ evidence confidence is recorded in
 The reviewed source DBC is committed at [`mazda_custom.dbc`](mazda_custom.dbc).
 Raw captures remain private and outside the repository. Only reviewed signal
 definitions and synthetic test vectors are represented in the decoder and tests.
+
+## Blind-spot candidate contract
+
+The Reference-only [pinned BSM source](opendbc-provenance.md#blind-spot-status-candidates)
+uses standard classic CAN `0x477`, DLC 8. Left raw status is
+`(data[1] >> 4) & 3` (`13|2@0+`); right is `(data[1] >> 6) & 3`
+(`15|2@0+`). Both use unsigned scale 1, offset 0, declared range 0..3,
+no engineering unit. Public enum choices are `unknown`, `clear`, `detected`,
+`warning`; valid raw 0..2 map to the last three choices. Raw 3 invalidates
+its side, and `data[0] & 1` (`BSM_OFF`) conservatively invalidates both.
+Timing stays unset and confidence Reference. This is not a parking-obstacle
+or rear cross-traffic signal. No runtime external DBC import is introduced.
+
+Synthetic golden vectors (bytes after the listed prefix are zero):
+
+| Payload prefix | Left | Right | Availability |
+| --- | --- | --- | --- |
+| `00 00` | clear | clear | freshness unverified |
+| `00 90` | detected | warning | freshness unverified |
+| `00 60` | warning | detected | freshness unverified |
+| `00 B0` | retain previous value | warning | left unavailable; right unverified |
+| `01 90` | retain previous value | retain previous value | both unavailable |
+
+Wrong DLC faults only the BSM message; extended/RTR frames are ignored.
+Older/equal conflicting frames cannot replace accepted state, and malformed
+recovery requires a newer valid observation. Host regressions exercise these
+contracts and all sixteen raw status combinations using synthetic payloads.
+
+Before the first accepted value, invalid/disabled observations retain NoData;
+after a value has been accepted, invalidation reports Unavailable while
+retaining that historical value. Both states fail off.

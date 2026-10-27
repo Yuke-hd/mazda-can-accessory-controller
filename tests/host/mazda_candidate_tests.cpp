@@ -61,7 +61,9 @@ bool same_state(const mazda::VehicleState &left, const mazda::VehicleState &righ
       !same_signal(left.left_indicator_lamp, right.left_indicator_lamp) ||
       !same_signal(left.right_indicator_lamp, right.right_indicator_lamp) ||
       !same_signal(left.wiper_low, right.wiper_low) ||
-      !same_signal(left.front_wiper, right.front_wiper))
+      !same_signal(left.front_wiper, right.front_wiper) ||
+      !same_signal(left.blind_spot_left, right.blind_spot_left) ||
+      !same_signal(left.blind_spot_right, right.blind_spot_right))
     return false;
 
   for (std::size_t index = 0; index < left.message_health.size(); ++index) {
@@ -1079,4 +1081,85 @@ TEST_CASE("0x078 attempt health distinguishes conflicts duplicates and newer fau
   CHECK(health.last_frame_us == 201);
   CHECK(health.last_accepted_us == 201);
   CHECK_FALSE(health.fault_timestamp_us.has_value());
+}
+
+TEST_CASE("blind spot candidates decode independent statuses without establishing freshness") {
+  mazda::VehicleState state{};
+  CHECK(mazda::candidate::decode(frame(0x477, 10, {0, 0x90}), state) ==
+        mazda::candidate::DecodeStatus::Decoded);
+  CHECK(state.blind_spot_left.value == mazda::BlindSpotStatus::Detected);
+  CHECK(state.blind_spot_right.value == mazda::BlindSpotStatus::Warning);
+  CHECK(state.status_at(state.blind_spot_left, 0x477, 10) ==
+        mazda::Availability::FreshnessUnverified);
+}
+
+TEST_CASE("blind spot status combinations isolate reserved values and disabled recovery") {
+  using namespace mazda;
+  for (std::uint8_t left = 0; left < 4; ++left) {
+    for (std::uint8_t right = 0; right < 4; ++right) {
+      VehicleState state{};
+      const auto bits = static_cast<std::uint8_t>((left << 4U) | (right << 6U) | 0x0fU);
+      REQUIRE(candidate::decode(frame(0x477, 10, {0xfe, bits, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}),
+                                state) == candidate::DecodeStatus::Decoded);
+      CHECK(state.blind_spot_left.is_valid() == (left != 3));
+      CHECK(state.blind_spot_right.is_valid() == (right != 3));
+      if (left != 3)
+        CHECK(state.blind_spot_left.value == static_cast<BlindSpotStatus>(left + 1));
+      if (right != 3)
+        CHECK(state.blind_spot_right.value == static_cast<BlindSpotStatus>(right + 1));
+    }
+  }
+  VehicleState state{};
+  REQUIRE(candidate::decode(frame(0x477, 10, {0, 0x90}), state) ==
+          candidate::DecodeStatus::Decoded);
+  REQUIRE(candidate::decode(frame(0x477, 20, {1, 0x90}), state) ==
+          candidate::DecodeStatus::Decoded);
+  CHECK(state.status_at(state.blind_spot_left, 0x477, 20) == Availability::Unavailable);
+  CHECK(state.status_at(state.blind_spot_right, 0x477, 20) == Availability::Unavailable);
+  CHECK(state.blind_spot_left.value == BlindSpotStatus::Detected);
+  REQUIRE(candidate::decode(frame(0x477, 20, {0, 0}), state) == candidate::DecodeStatus::Decoded);
+  CHECK_FALSE(state.blind_spot_left.is_valid());
+  REQUIRE(candidate::decode(frame(0x477, 21, {0, 0}), state) == candidate::DecodeStatus::Decoded);
+  CHECK(state.blind_spot_left.value == BlindSpotStatus::Clear);
+  CHECK(state.blind_spot_left.is_valid());
+  REQUIRE(candidate::decode(frame(0x477, 22, {0, 0x30}), state) ==
+          candidate::DecodeStatus::Decoded);
+  CHECK_FALSE(state.blind_spot_left.is_valid());
+  CHECK(state.blind_spot_right.is_valid());
+}
+
+TEST_CASE("blind spot routing rejects malformed and unordered frames without overwriting values") {
+  using namespace mazda;
+  VehicleState state{};
+  REQUIRE(candidate::decode(frame(0x477, 10, {0, 0x90}), state) ==
+          candidate::DecodeStatus::Decoded);
+  const auto accepted = state;
+  auto extended = frame(0x477, 11, {0, 0});
+  extended.identifier_format = vehicle_core::CanIdentifierFormat::Extended;
+  CHECK(candidate::decode(extended, state) == candidate::DecodeStatus::Ignored);
+  CHECK(same_state(state, accepted));
+  auto remote = frame(0x477, 12, {0, 0});
+  remote.remote_request = true;
+  CHECK(candidate::decode(remote, state) == candidate::DecodeStatus::Ignored);
+  CHECK(same_state(state, accepted));
+  for (const auto timestamp : {9U, 10U}) {
+    CHECK(candidate::decode(frame(0x477, timestamp, {0, 0}), state) ==
+          candidate::DecodeStatus::Decoded);
+    CHECK(same_state(state, accepted));
+  }
+  CHECK(candidate::decode(frame(0x477, 10, {0, 0x90}), state) == candidate::DecodeStatus::Decoded);
+  CHECK(same_state(state, accepted));
+  CHECK(candidate::decode(frame(0x477, 20, {0, 0}, 7), state) ==
+        candidate::DecodeStatus::Malformed);
+  CHECK(state.blind_spot_left.value == BlindSpotStatus::Detected);
+  CHECK(state.status_at(state.blind_spot_left, 0x477, 20) == Availability::Unavailable);
+  CHECK(candidate::decode(frame(0x477, 20, {0, 0}), state) == candidate::DecodeStatus::Decoded);
+  CHECK(state.status_at(state.blind_spot_left, 0x477, 20) == Availability::Unavailable);
+  CHECK(candidate::decode(frame(0x477, 21, {0, 0}), state) == candidate::DecodeStatus::Decoded);
+  CHECK(state.status_at(state.blind_spot_left, 0x477, 21) == Availability::FreshnessUnverified);
+  VehicleFreshnessPolicy policy{};
+  policy.blind_spot_left_timeout_us = 10;
+  const auto timed = state.snapshot(32, policy);
+  CHECK(timed.status_at(timed.blind_spot_left, 0x477, 32) == Availability::Stale);
+  CHECK(timed.status_at(timed.blind_spot_right, 0x477, 32) == Availability::FreshnessUnverified);
 }
