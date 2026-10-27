@@ -88,6 +88,24 @@ target_include_directories(export_controller_signal_catalog PRIVATE
 target_link_libraries(export_controller_signal_catalog PRIVATE mazda vehicle_signals)
 target_compile_features(export_controller_signal_catalog PRIVATE cxx_std_17)
 
+# The checked-in manifest bootstraps firmware configuration. These host-only
+# operations update/check it explicitly, without executing a target binary.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+foreach(_catalog_operation regenerate check)
+  set(_catalog_arguments)
+  if(_catalog_operation STREQUAL "check")
+    list(APPEND _catalog_arguments --check)
+  endif()
+  add_custom_target(${_catalog_operation}_controller_signal_catalog
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_controller_signal_catalog.py"
+            --exporter $<TARGET_FILE:export_controller_signal_catalog>
+            ${_catalog_arguments}
+    DEPENDS export_controller_signal_catalog
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_controller_signal_catalog.py"
+    VERBATIM)
+endforeach()
+
 if(MAZDA_BUILD_HOST_TESTS)
   enable_testing()
   add_subdirectory(tests/support)

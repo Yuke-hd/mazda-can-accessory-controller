@@ -56,6 +56,8 @@ jobs:
         run: cmake -S . -B build/host -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_ENABLE_TELEMETRY_PROFILING=ON -DMAZDA_ENABLE_DECODER_CALL_PROBING=ON -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build host tests
         run: cmake --build build/host --parallel
+      - name: Check generated controller signal catalog
+        run: cmake --build build/host --target check_controller_signal_catalog
       - name: Run host tests
         run: ctest --test-dir build/host --output-on-failure
   host-sanitizers:
