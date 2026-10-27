@@ -1,9 +1,11 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "companion_protocol/extensible_live_signals.hpp"
 #include "companion_protocol/live_signal_layout.hpp"
 #include "companion_protocol/live_signal_stream.hpp"
 #include "companion_protocol/live_signals.hpp"
+#include "companion_protocol/signal_catalog_export.hpp"
 
 // Test harness only: the private seam binds the facade's production service to
 // an injected clock, host acquisition source and lighting sink, so generated
@@ -246,4 +248,38 @@ TEST_CASE("production acceleration arrives as signed SI values with provider ava
   CHECK(nibble(stopped, 20) == kUnavailable);
   CHECK(stopped[24] == 0);
   CHECK(stopped[26] == 0);
+}
+
+TEST_CASE("blind spot statuses discover and stream without changing the legacy layout") {
+  Harness harness;
+  REQUIRE(harness.telemetry.start().ok());
+  const LiveSignalSampler legacy{harness.provider};
+  const auto before = legacy.sample(true).frame(0);
+  const companion_protocol::SignalCatalogExport catalog{harness.provider.catalog()};
+  REQUIRE(catalog.available());
+  CHECK(catalog.signal_count() == 25);
+  const auto *left = harness.provider.catalog().find("vehicle.blind_spot.left");
+  const auto *right = harness.provider.catalog().find("vehicle.blind_spot.right");
+  REQUIRE(left != nullptr);
+  REQUIRE(right != nullptr);
+  CHECK(catalog.provider_id_for_handle(24) == left->id);
+  CHECK(catalog.provider_id_for_handle(25) == right->id);
+  harness.inject(candidate::kBlindSpotId, 1'000, {0, 0x90, 0, 0, 0, 0, 0, 0});
+  REQUIRE(wait_for([&] {
+    const auto reading = harness.provider.read(right->id);
+    return reading.ok() && reading.value->value.has_value();
+  }));
+  const companion_protocol::ExtensibleLiveSignalSampler sampler{harness.provider, catalog};
+  const auto packet = sampler.sample_range(1, 0, true, 247, 24, 2);
+  REQUIRE(packet.size() == 22); // header + two enum records
+  CHECK(packet[9] == 24);
+  CHECK(packet[16] == 25);
+  CHECK(packet[12] == (kValuePresent | kFreshnessUnverified));
+  CHECK(packet[19] == (kValuePresent | kFreshnessUnverified));
+  CHECK(packet[13] == *catalog.wire_choice_handle(
+                          24, static_cast<std::uint16_t>(mazda::BlindSpotStatus::Detected)));
+  CHECK(packet[20] == *catalog.wire_choice_handle(
+                          25, static_cast<std::uint16_t>(mazda::BlindSpotStatus::Warning)));
+  CHECK(legacy.sample(true).frame(0) == before);
+  REQUIRE(harness.telemetry.stop().ok());
 }

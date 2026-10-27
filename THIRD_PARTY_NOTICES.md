@@ -17,7 +17,8 @@ not relicense third-party material.
 - **Source paths used:**
   `opendbc/dbc/mazda_2017.dbc`, `opendbc/car/mazda/carstate.py`,
   `opendbc/car/mazda/values.py`, and `docs/CARS.md` at that commit.
-- **Role:** candidate Mazda signal definitions and decoder-reference material;
+- **Role:** candidate Mazda signal definitions and decoder-reference material,
+  including the BSM status extraction re-inspected on 2026-10-27;
   see [the opendbc provenance and candidate matrix](docs/protocol/opendbc-provenance.md).
 - **Current status:** the evidence matrix is an opendbc-derived field
   extraction distributed as project documentation. No full opendbc source tree

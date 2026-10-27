@@ -376,6 +376,18 @@ const NotificationDescriptorTuple &VehicleTelemetryService::notification_descrip
          &VehicleState::brake_pressed,
          candidate::kBrakePedalId,
          candidate::kBrakePressedDefinition.confidence},
+        {signal_ids::kBlindSpotLeft,
+         "blind_spot_left",
+         &VehicleTelemetryService::blind_spot_left_channel_,
+         &VehicleState::blind_spot_left,
+         candidate::kBlindSpotId,
+         candidate::kBlindSpotLeftDefinition.confidence},
+        {signal_ids::kBlindSpotRight,
+         "blind_spot_right",
+         &VehicleTelemetryService::blind_spot_right_channel_,
+         &VehicleState::blind_spot_right,
+         candidate::kBlindSpotId,
+         candidate::kBlindSpotRightDefinition.confidence},
 #if !defined(ESP_PLATFORM)
     {
       vehicle_signals::SignalId{}, "test_front_wiper",
@@ -1575,6 +1587,8 @@ MAZDA_SUBSCRIBE_METHOD(subscribe_right_lamp, 13, Callback<bool>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_wiper_low, 14, Callback<bool>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_front_wiper, 15, Callback<FrontWiperPosition>)
 MAZDA_SUBSCRIBE_METHOD(subscribe_brake, 16, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_blind_spot_left, 17, Callback<BlindSpotStatus>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_blind_spot_right, 18, Callback<BlindSpotStatus>)
 
 #undef MAZDA_SUBSCRIBE_METHOD
 
@@ -1807,6 +1821,10 @@ MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_front_wiper_changed, subscribe_front_wiper,
                                  Callback<FrontWiperPosition>)
 
 MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_brake_pressed_changed, subscribe_brake, Callback<bool>)
+MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_blind_spot_left_changed, subscribe_blind_spot_left,
+                                 Callback<BlindSpotStatus>)
+MAZDA_PUBLIC_SUBSCRIPTION_METHOD(on_blind_spot_right_changed, subscribe_blind_spot_right,
+                                 Callback<BlindSpotStatus>)
 
 #undef MAZDA_PUBLIC_SUBSCRIPTION_METHOD
 

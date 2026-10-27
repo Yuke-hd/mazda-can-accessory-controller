@@ -76,19 +76,21 @@ constexpr std::string_view kLockedKeys[] = {
     "vehicle.acceleration.lateral",
     "vehicle.accelerator_pedal_position",
     "vehicle.brake_pressure",
+    "vehicle.blind_spot.left",
+    "vehicle.blind_spot.right",
 };
 
 constexpr SignalCatalogView kCatalog{kSignalCatalog};
 
 static_assert(kCatalog.well_formed());
-static_assert(kCatalog.size() == 23);
-static_assert(kSignalCatalogSize == 23);
+static_assert(kCatalog.size() == 25);
+static_assert(kSignalCatalogSize == 25);
 static_assert(std::size(kLockedKeys) == kSignalCatalogSize);
 
 constexpr bool ids_nonzero_unique_and_sequential() noexcept {
   for (std::size_t index = 0; index < kCatalog.size(); ++index) {
     const SignalId id = kCatalog.at(index)->id;
-    // Ids are assigned 1..23 in locked-key order.
+    // Ids are assigned 1..25 in locked-key order.
     if (!id.valid() || id.value() != index + 1)
       return false;
     for (std::size_t other = index + 1; other < kCatalog.size(); ++other) {
@@ -200,7 +202,7 @@ constexpr bool others_are_read_notify() noexcept {
       return false;
     ++count;
   }
-  return count == 17;
+  return count == 19;
 }
 static_assert(others_are_read_notify());
 
@@ -313,6 +315,20 @@ constexpr std::string_view expected_key(const FrontWiperPosition value) noexcept
   return {};
 }
 
+constexpr std::string_view expected_key(const mazda::BlindSpotStatus value) noexcept {
+  switch (value) {
+  case mazda::BlindSpotStatus::Unknown:
+    return "unknown";
+  case mazda::BlindSpotStatus::Clear:
+    return "clear";
+  case mazda::BlindSpotStatus::Detected:
+    return "detected";
+  case mazda::BlindSpotStatus::Warning:
+    return "warning";
+  }
+  return {};
+}
+
 template <typename T> constexpr SignalType expected_type() noexcept {
   if constexpr (std::is_same_v<T, bool>)
     return SignalType::Boolean;
@@ -331,6 +347,8 @@ template <typename T> constexpr const SignalEnumChoice *expected_choices() noexc
     return internal::kActualGearChoices;
   else if constexpr (std::is_same_v<T, FrontWiperPosition>)
     return internal::kFrontWiperPositionChoices;
+  else if constexpr (std::is_same_v<T, mazda::BlindSpotStatus>)
+    return internal::kBlindSpotChoices;
   else
     return nullptr;
 }
@@ -358,6 +376,8 @@ static_assert(choices_cover_enum<TurnState>(*kCatalog.find(ids::kTurnState)));
 static_assert(choices_cover_enum<SelectorPosition>(*kCatalog.find(ids::kSelectorPosition)));
 static_assert(choices_cover_enum<ActualGear>(*kCatalog.find(ids::kActualGear)));
 static_assert(choices_cover_enum<FrontWiperPosition>(*kCatalog.find(ids::kWiperFrontPosition)));
+static_assert(choices_cover_enum<mazda::BlindSpotStatus>(*kCatalog.find(ids::kBlindSpotLeft)));
+static_assert(choices_cover_enum<mazda::BlindSpotStatus>(*kCatalog.find(ids::kBlindSpotRight)));
 
 constexpr bool enum_choices_unique() noexcept {
   std::size_t enum_rows = 0;
@@ -376,7 +396,7 @@ constexpr bool enum_choices_unique() noexcept {
       }
     }
   }
-  return enum_rows == 4;
+  return enum_rows == 6;
 }
 static_assert(enum_choices_unique());
 
@@ -416,6 +436,8 @@ constexpr ExpectedBinding kExpectedBindings[] = {
     {ids::kAccelerationLongitudinal, candidate::kAccelerationId, kPolling},
     {ids::kAccelerationLateral, candidate::kAccelerationId, kPolling},
     {ids::kBrakePressure, candidate::kAccelerationId, kPolling},
+    {ids::kBlindSpotLeft, candidate::kBlindSpotId, internal::kBlindSpotLeftNotificationChannel},
+    {ids::kBlindSpotRight, candidate::kBlindSpotId, internal::kBlindSpotRightNotificationChannel},
 };
 static_assert(std::size(kExpectedBindings) == kSignalCatalogSize);
 
@@ -460,6 +482,11 @@ constexpr ExpectedMember<FrontWiperPosition> kFrontWiperMembers[] = {
     {ids::kWiperFrontPosition, &VehicleState::front_wiper},
 };
 
+constexpr ExpectedMember<mazda::BlindSpotStatus> kBlindSpotMembers[] = {
+    {ids::kBlindSpotLeft, &VehicleState::blind_spot_left},
+    {ids::kBlindSpotRight, &VehicleState::blind_spot_right},
+};
+
 template <typename T, std::size_t N>
 vehicle_core::Signal<T> VehicleState::*find_member(const ExpectedMember<T> (&members)[N],
                                                    const SignalId id) noexcept {
@@ -483,6 +510,8 @@ template <typename T> vehicle_core::Signal<T> VehicleState::*expected_member(con
     return find_member(kSelectorMembers, id);
   else if constexpr (std::is_same_v<T, ActualGear>)
     return find_member(kActualGearMembers, id);
+  else if constexpr (std::is_same_v<T, mazda::BlindSpotStatus>)
+    return find_member(kBlindSpotMembers, id);
   else
     return find_member(kFrontWiperMembers, id);
 }
@@ -576,15 +605,15 @@ void check_descriptor_bindings() {
           kCatalog.at(index)->key);
   }
   check(tally.polling_rows == 6, "six catalog rows are bound to polling descriptors");
-  check(tally.notification_rows == 17, "seventeen catalog rows are bound to notification channels");
+  check(tally.notification_rows == 19, "nineteen catalog rows are bound to notification channels");
 
-  // The host build carries one test polling descriptor and test channel 18.
+  // The host build carries one test polling descriptor and test channel 20.
   check(tally.host_only == 2, "host-only descriptors are present and excluded");
   check(!std::get<2>(polling).id.valid(), "host test polling descriptor has no signal id");
-  using TestDescriptor = std::tuple_element_t<17, internal::NotificationDescriptorTuple>;
+  using TestDescriptor = std::tuple_element_t<19, internal::NotificationDescriptorTuple>;
   static_assert(TestDescriptor::Channel::channel_id() ==
                 internal::kTestFrontWiperNotificationChannel);
-  check(!std::get<17>(notifications).id.valid(), "host test channel descriptor has no signal id");
+  check(!std::get<19>(notifications).id.valid(), "host test channel descriptor has no signal id");
 }
 
 // Explicit separation checks for the easily confused signals.

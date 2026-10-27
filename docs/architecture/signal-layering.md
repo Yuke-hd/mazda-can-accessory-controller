@@ -32,7 +32,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 
 ## Brake signal contract
 
-The Mazda generic catalog contains twenty-three signals. `vehicle.brake_pressed`
+The Mazda generic catalog contains twenty-five signals. `vehicle.brake_pressed`
 is a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
@@ -113,3 +113,17 @@ publication path in `tests/host/signal_consumer_tests.cpp`. It compares key-
 based reads and notifications with the typed API, including enum values and
 malformed-frame, transport-silence, and transport-fault behavior. A catalog
 sweep covers the Mazda provider's rows.
+
+## Blind-spot signal contract
+
+`vehicle.blind_spot.left` and `vehicle.blind_spot.right` append runtime IDs
+24 and 25. Both are Enum Read + Notify signals with stable choices `unknown`,
+`clear`, `detected`, `warning`, sharing bounded typed/generic notification
+channels. Confidence is Reference and default freshness is unset; valid values
+are FreshnessUnverified. Reserved and disabled states are unavailable;
+[signal evidence](../protocol/signal-evidence.md#blind-spot-candidates-bsm-0x477)
+records the conservative policy. No LED work occurs in telemetry.
+
+Before the first accepted value, invalid/disabled observations retain NoData;
+after a value has been accepted, invalidation reports Unavailable while
+retaining that historical value. Both states fail off.

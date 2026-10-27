@@ -44,6 +44,8 @@ struct VehicleFreshnessPolicy {
   std::optional<vehicle_core::Microseconds> right_indicator_lamp_timeout_us{};
   std::optional<vehicle_core::Microseconds> wiper_low_timeout_us{};
   std::optional<vehicle_core::Microseconds> front_wiper_timeout_us{};
+  std::optional<vehicle_core::Microseconds> blind_spot_left_timeout_us{};
+  std::optional<vehicle_core::Microseconds> blind_spot_right_timeout_us{};
 };
 
 } // namespace mazda

@@ -120,3 +120,8 @@ generated from synthetic fixtures.
 
 `tests/host/can_replay_cli_tests.cpp` covers the CLI flags. These tests are
 software evidence only.
+
+The notified enum catalog also includes `vehicle.blind_spot.left` and
+`vehicle.blind_spot.right`: JSONL values use `clear`, `detected`, or `warning`
+when accepted, with Reference confidence and unverified freshness by default.
+Reserved/disabled observations are unavailable and may retain the last value.

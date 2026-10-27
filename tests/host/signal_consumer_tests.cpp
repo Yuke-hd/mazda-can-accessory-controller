@@ -501,7 +501,7 @@ TEST_CASE("turn request and lamp stay distinct with enum and malformed-frame par
 }
 
 TEST_CASE("every catalog row works end to end through the public provider") {
-  constexpr std::size_t kRows = 23;
+  constexpr std::size_t kRows = 25;
   Harness harness{};
   auto &provider = harness.provider;
   const auto catalog = provider.catalog();
@@ -529,7 +529,7 @@ TEST_CASE("every catalog row works end to end through the public provider") {
              row.key == "vehicle.brake_pressure"));
     }
   }
-  CHECK(notify_rows == 17);
+  CHECK(notify_rows == 19);
 
   REQUIRE(harness.telemetry.start().ok());
   for (const auto &row : catalog) {
@@ -546,6 +546,7 @@ TEST_CASE("every catalog row works end to end through the public provider") {
   harness.inject(candidate::kTurnSwitchId, 1'000, kTurnLeft);
   harness.inject(candidate::kBlinkInfoId, 1'000, kBlinkRightLampWiperLow);
   harness.inject(candidate::kDoorsId, 1'000, kDoorsAllOpen);
+  harness.inject(candidate::kBlindSpotId, 1'000, {0, 0x90, 0, 0, 0, 0, 0, 0});
   harness.inject(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0});
   harness.inject(candidate::kAccelerationId, 1'000, {0x27, 0x11, 0x38, 0x80, 0xc3, 0x50, 0, 0});
 

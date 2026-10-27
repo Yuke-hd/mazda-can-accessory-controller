@@ -53,6 +53,14 @@
     "vehicle.acceleration.longitudinal": {"type": "number", "capabilities": ["read"]},
     "vehicle.acceleration.lateral": {"type": "number", "capabilities": ["read"]},
     "vehicle.accelerator_pedal_position": {"type": "number", "capabilities": ["read"]},
-    "vehicle.brake_pressure": {"type": "number", "capabilities": ["read"]}
+    "vehicle.brake_pressure": {"type": "number", "capabilities": ["read"]},
+    "vehicle.blind_spot.left": {
+      "type": "enum", "capabilities": ["read", "notify"],
+      "choices": ["unknown", "clear", "detected", "warning"]
+    },
+    "vehicle.blind_spot.right": {
+      "type": "enum", "capabilities": ["read", "notify"],
+      "choices": ["unknown", "clear", "detected", "warning"]
+    }
   }
 }

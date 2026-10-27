@@ -40,7 +40,7 @@ enum class MessageObservationResult : std::uint8_t {
   CapacityExceeded,
 };
 
-inline constexpr std::size_t kTrackedMessageCapacity = 7;
+inline constexpr std::size_t kTrackedMessageCapacity = 8;
 
 struct VehicleState {
   vehicle_core::MonotonicTimestamp timestamp_us{0};
@@ -77,6 +77,8 @@ struct VehicleState {
   vehicle_core::Signal<bool> right_indicator_lamp{vehicle_core::SignalUnit::Boolean};
   vehicle_core::Signal<bool> wiper_low{vehicle_core::SignalUnit::Boolean};
   vehicle_core::Signal<FrontWiperPosition> front_wiper{};
+  vehicle_core::Signal<BlindSpotStatus> blind_spot_left{};
+  vehicle_core::Signal<BlindSpotStatus> blind_spot_right{};
 
   // One fixed record per currently decoded Mazda message. This is copied by
   // snapshots and never owns transport or task resources.

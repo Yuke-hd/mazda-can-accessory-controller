@@ -11,37 +11,34 @@ vehicle validation is involved.
 
 ## Measured service size
 
-The figures were measured at `43438c6` by instantiating an undefined template
-with `sizeof` and `alignof` of `VehicleTelemetryService` in
-`components/mazda_telemetry/src/vehicle_telemetry.cpp`, so the compiler printed
-the values in its diagnostic. That probe was not committed.
+The figures were re-measured for the blind-spot channels (#307) on 2026-10-27
+using temporary `sizeof`/`alignof` host probes and ESP32 object-symbol sizes
+compiled with the firmware compile-command flags. The probes were not committed.
 
 | Configuration | Toolchain | `sizeof` | `alignof` | `alignof(max_align_t)` |
 | --- | --- | ---: | ---: | ---: |
-| Host, default options | Apple clang 17, arm64 | 27,976 B | 8 | 8 |
-| Host, `MAZDA_ENABLE_DEBUG_TELEMETRY`, `MAZDA_ENABLE_TELEMETRY_PROFILING` and `MAZDA_ENABLE_TELEMETRY_STAGE_PROFILING` | Apple clang 17, arm64 | 31,704 B | 8 | 8 |
-| ESP32, `sdkconfig.defaults` | ESP-IDF 5.5.4, xtensa-esp-elf GCC 14.2.0 | 23,704 B | 8 | 8 |
-| ESP32, `sdkconfig.defaults` plus `CONFIG_WEACT_CAN_FRESHNESS_DEBUG` and `CONFIG_WEACT_CAN_TELEMETRY_PROFILING` | ESP-IDF 5.5.4, xtensa-esp-elf GCC 14.2.0 | 27,320 B | 8 | 8 |
+| Host, default options | Apple clang 17, arm64 | 29,168 B | 8 | 8 |
+| Host, `MAZDA_ENABLE_DEBUG_TELEMETRY`, `MAZDA_ENABLE_TELEMETRY_PROFILING` and `MAZDA_ENABLE_TELEMETRY_STAGE_PROFILING` | Apple clang 17, arm64 | 32,896 B | 8 | 8 |
+| ESP32, `sdkconfig.defaults` | ESP-IDF 5.5.4, xtensa-esp-elf GCC 14.2.0 | 24,704 B | 8 | 8 |
+| ESP32, `sdkconfig.defaults` plus `CONFIG_WEACT_CAN_FRESHNESS_DEBUG` and `CONFIG_WEACT_CAN_TELEMETRY_PROFILING` | ESP-IDF 5.5.4, xtensa-esp-elf GCC 14.2.0 | 28,320 B | 8 | 8 |
 
 The opt-in diagnostics add the debug recorder, its pending-frame state and the
 stage-profiler histograms to the service, so the diagnostic layouts are the
 largest per target. `CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS` and
 `CONFIG_WEACT_CAN_TELEMETRY_BENCHMARK` do not change the service layout.
 
-On the largest host layout the generic `vehicle_telemetry::Runtime` is
-16,384 B, the publication store 1,912 B, the host runtime source 2,248 B, the
-debug recorder 1,816 B and `VehicleState` 1,352 B. The remainder is mainly the
-fixed notification channels. The ESP32 layout is smaller because pointers and
-`std::size_t` are 4 bytes there.
+The two additional bounded notification channels, registration records and
+BSM state increase the host diagnostic layout beyond its previous 32 KiB
+reservation. The runtime core dependency and its own storage remain unchanged.
 
 ## Budget
 
 | Target | `kImplementationStorageBytes` | Largest measured layout | Headroom |
 | --- | ---: | ---: | ---: |
-| Host (`ESP_PLATFORM` undefined) | 32,768 B (32 KiB) | 31,704 B | 1,064 B |
-| ESP32 (`ESP_PLATFORM` defined) | 28,672 B (28 KiB) | 27,320 B | 1,352 B |
+| Host (`ESP_PLATFORM` undefined) | 33,792 B (33 KiB) | 32,896 B | 896 B |
+| ESP32 (`ESP_PLATFORM` defined) | 29,696 B (29 KiB) | 28,320 B | 1,376 B |
 
-With default options the headroom is 4,792 B on the host and 4,968 B on
+With default options the headroom is 4,624 B on the host and 4,992 B on
 ESP32. Storage alignment is `alignof(std::max_align_t)` on both targets.
 
 The constructor in `vehicle_telemetry.cpp` asserts at compile time that the
@@ -51,11 +48,10 @@ this page.
 
 ### Why per target
 
-The host budget is unchanged: the largest host layout needs 31,704 B, so 32 KiB
-is required there. The ESP32 layout is about 4 KiB smaller in every
-configuration, so a shared 32 KiB reservation would leave about 9 KiB of unused
-static DRAM in the production firmware. Lowering the ESP32 value to 28 KiB
-returns 4,096 B of `.bss` to the heap.
+The host diagnostic layout needs 32,896 B, so its reservation grows by one
+KiB to 33 KiB. The ESP32 reservation grows by one KiB to 29 KiB to keep its
+1,376 B diagnostic headroom at least equal to the host's 896 B. A shared
+33 KiB reservation would waste four KiB of static DRAM in production firmware.
 
 The ESP32 budget keeps at least as much headroom as the host budget, in both
 the default and the diagnostic layouts. Because the 64-bit host layout grows

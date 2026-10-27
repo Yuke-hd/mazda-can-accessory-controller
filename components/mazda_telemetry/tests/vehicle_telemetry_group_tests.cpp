@@ -15,6 +15,7 @@
 namespace {
 
 using mazda::candidate::kAccelerationId;
+using mazda::candidate::kBlindSpotId;
 using mazda::candidate::kBlinkInfoId;
 using mazda::candidate::kBrakePedalId;
 using mazda::candidate::kDoorsId;
@@ -150,9 +151,9 @@ vehicle_telemetry::TransportDiagnostics diagnostics(
   return result;
 }
 
-constexpr std::array<std::uint32_t, 8> kMessageIds{0x7ffU,       kEngineDataId, kAccelerationId,
+constexpr std::array<std::uint32_t, 9> kMessageIds{0x7ffU,       kEngineDataId, kAccelerationId,
                                                    kGearId,      kDoorsId,      kTurnSwitchId,
-                                                   kBlinkInfoId, kBrakePedalId};
+                                                   kBlinkInfoId, kBrakePedalId, kBlindSpotId};
 
 struct EvaluationCounts final {
   std::array<std::size_t, kMessageIds.size()> by_message{};

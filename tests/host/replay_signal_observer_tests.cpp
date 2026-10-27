@@ -488,7 +488,7 @@ TEST_CASE("replay observer receives the production catalog once before any readi
   REQUIRE(result.ok());
   CHECK(observer.catalog_calls() == 1);
   CHECK(observer.catalog_before_readings());
-  CHECK(observer.catalog().size() == 23);
+  CHECK(observer.catalog().size() == 25);
   CHECK(observer.catalog().find("vehicle.engine_rpm") != nullptr);
   CHECK(observer.catalog().find("vehicle.turn_state") != nullptr);
   CHECK(observer.catalog().find("vehicle.accelerator_pedal_position") != nullptr);
@@ -899,4 +899,27 @@ TEST_CASE("signal record keys are JSON-escaped") {
   CHECK(stream.str() == "{\"type\":\"signal\",\"timestamp_us\":1,\"signal\":\"odd\\\"key\\\\\\n\","
                         "\"value\":false,\"unit\":null,\"freshness\":\"fresh\","
                         "\"availability\":\"fresh\",\"validation\":\"reference\"}\n");
+}
+
+TEST_CASE("replay reports blind spot enum choices from synthetic BSM frames") {
+  replay::ReplayClock clock;
+  replay::TimestampedPixelFrameSink ignored{clock};
+  replay::LocalArgbOutputStage stage{ignored, clock};
+  RecordingObserver observer;
+  const std::vector<gvret::TimedCanFrame> frames{
+      timed_frame(0, 0x477, {0, 0x90, 0, 0, 0, 0, 0, 0})};
+  const auto result = replay::run_replay(frames, clock, stage, {&observer}, {100'000});
+  REQUIRE(result.ok());
+  for (const auto side : {std::string_view{"left"}, std::string_view{"right"}}) {
+    const auto readings =
+        observer.readings_of(std::string{"vehicle.blind_spot."} + std::string{side});
+    const auto value =
+        std::find_if(readings.begin(), readings.end(), [](const ObservedReading &reading) {
+          return reading.reading.value.has_value() &&
+                 reading.reading.availability == vehicle_signals::Availability::FreshnessUnverified;
+        });
+    REQUIRE(value != readings.end());
+    CHECK(choice_key(*value) == (side == "left" ? "detected" : "warning"));
+    CHECK(value->reading.validation == vehicle_signals::ValidationStatus::Reference);
+  }
 }

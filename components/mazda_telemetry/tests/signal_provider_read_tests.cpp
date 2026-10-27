@@ -248,6 +248,8 @@ constexpr SignalId kAllIds[] = {
     ids::kAccelerationLateral,
     ids::kAcceleratorPedalPosition,
     ids::kBrakePressure,
+    ids::kBlindSpotLeft,
+    ids::kBlindSpotRight,
 };
 static_assert(std::size(kAllIds) == internal::kSignalCatalogSize);
 
@@ -406,7 +408,7 @@ void test_invalid_and_unknown_ids_are_request_failures() {
   const auto unknown = harness.provider.read(SignalId{99});
   EXPECT(unknown.status == SignalStatus::InvalidSignal);
   EXPECT(!unknown.value.has_value());
-  const auto beyond = harness.provider.read(SignalId{24});
+  const auto beyond = harness.provider.read(SignalId{26});
   EXPECT(beyond.status == SignalStatus::InvalidSignal);
 }
 
@@ -486,6 +488,7 @@ void test_all_ids_read_no_data_then_typed_values() {
   harness.inject(turn_frame(1'000));
   harness.inject(blink_frame(1'000));
   harness.inject(doors_frame(1'000));
+  harness.inject(frame(candidate::kBlindSpotId, 1'000, {0, 0x90, 0, 0, 0, 0, 0, 0}));
   harness.inject(frame(candidate::kBrakePedalId, 1'000, {0x10, 0, 0, 0, 0, 0, 0, 0}));
   harness.inject(
       frame(candidate::kAccelerationId, 1'000, {0x1f, 0x41, 0x00, 0x00, 0xc3, 0x50, 0x00, 0x00}));
@@ -640,6 +643,7 @@ void test_clock_advance_past_freshness_timeout_is_stale() {
   harness.clock.set(1'000);
   harness.inject(turn_frame(1'000));
   harness.inject(doors_frame(1'000));
+  harness.inject(frame(candidate::kBlindSpotId, 1'000, {0, 0x90, 0, 0, 0, 0, 0, 0}));
   EXPECT(wait_for_read(harness.provider, ids::kTurnState, Availability::Fresh));
   EXPECT(wait_for_read(harness.provider, ids::kTurnRequestLeft, Availability::Fresh));
   EXPECT(wait_for_value(harness.provider, ids::kLiftgateOpen));
@@ -1026,9 +1030,46 @@ void test_brake_uses_explicit_caller_freshness_policy() {
   EXPECT(harness.telemetry.stop().ok());
 }
 
+void test_blind_spot_reads_and_typed_notifications_preserve_availability() {
+  NoticeRecorder<mazda::BlindSpotStatus> left{}, right{};
+  Harness harness{};
+  EXPECT(harness.telemetry.on_blind_spot_left_changed(&record_notice<mazda::BlindSpotStatus>, &left)
+             .ok());
+  EXPECT(
+      harness.telemetry.on_blind_spot_right_changed(&record_notice<mazda::BlindSpotStatus>, &right)
+          .ok());
+  EXPECT(harness.telemetry.start().ok());
+  harness.clock.set(1'000);
+  harness.inject(frame(candidate::kBlindSpotId, 1'000, {0, 0x90, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_notice_value(left, mazda::BlindSpotStatus::Detected));
+  EXPECT(wait_for_notice_value(right, mazda::BlindSpotStatus::Warning));
+  const auto reading = harness.provider.read(ids::kBlindSpotLeft);
+  EXPECT(reading.ok());
+  EXPECT(reading.value->value == internal::to_signal_value(mazda::BlindSpotStatus::Detected));
+  EXPECT(reading.value->availability == Availability::FreshnessUnverified);
+  EXPECT(reading.value->validation == ValidationStatus::Reference);
+  harness.clock.set(1'001);
+  harness.inject(frame(candidate::kBlindSpotId, 1'001, {0, 0xB0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, ids::kBlindSpotLeft, Availability::Unavailable));
+  EXPECT(harness.provider.read(ids::kBlindSpotRight).value->availability ==
+         Availability::FreshnessUnverified);
+  harness.clock.set(1'002);
+  harness.inject(frame(candidate::kBlindSpotId, 1'002, {1, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, ids::kBlindSpotRight, Availability::Unavailable));
+  harness.clock.set(1'003);
+  harness.inject(frame(candidate::kBlindSpotId, 1'003, {0, 0, 0, 0, 0, 0, 0, 0}));
+  EXPECT(wait_for_read(harness.provider, ids::kBlindSpotLeft, Availability::FreshnessUnverified));
+  EXPECT(wait_for_notice_value(left, mazda::BlindSpotStatus::Clear));
+  EXPECT(wait_for_notice_value(right, mazda::BlindSpotStatus::Clear));
+  EXPECT(harness.telemetry.stop().ok());
+  EXPECT(harness.provider.read(ids::kBlindSpotLeft).value->availability ==
+         Availability::Unavailable);
+}
+
 } // namespace
 
 int main() {
+  test_blind_spot_reads_and_typed_notifications_preserve_availability();
   test_acceleration_matches_source_and_keeps_message_health_independent();
   test_acceleration_preserves_explicit_freshness_policy();
   test_brake_catalog_and_read_without_freshness_policy();
