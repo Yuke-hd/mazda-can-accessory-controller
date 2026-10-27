@@ -1,0 +1,25 @@
+{
+  "format": "vehicle-signal-profile",
+  "version": 1,
+  "profile_id": "synthetic.river",
+  "semantic_policy_revision": "river.v1",
+  "recognition_rule_revision": "synthetic.v1",
+  "selected_bus": "body",
+  "sources": [
+    {"id": "river-a", "kind": "dbc", "path": "synthetic/river-a.dbc", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revision": "fixture-v1", "license": "Apache-2.0; independently authored synthetic data", "bus": "body"},
+    {"id": "river-b", "kind": "dbc", "path": "synthetic/river-b.dbc", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "revision": null, "license": "Apache-2.0; independently authored synthetic data", "bus": "body"}
+  ],
+  "messages": [
+    {"id": "river.speed", "bus": "body", "identifier_format": "standard", "identifier": 256, "dlc": 8, "fields": [
+      {"id": "river.raw_speed", "name": "TravelRate", "sources": ["river-a", "river-b"], "start": 0, "length": 16, "byte_order": "intel", "signed": false, "scale": "0.0100000000000000000001", "offset": "0", "minimum": "0", "maximum": "655.3500000000000000065535", "unit": "km/h", "value_table": []},
+      {"id": "river.raw_state", "name": "WideState", "sources": ["river-b"], "start": 16, "length": 48, "byte_order": "intel", "signed": false, "scale": "1", "offset": "0", "minimum": "0", "maximum": "281474976710655", "unit": "", "value_table": [{"raw": "281474976710655", "label": "Reserved"}]}
+    ]}
+  ],
+  "bindings": [
+    {"key": "vehicle.speed", "runtime_id": 1, "type": "number", "unit": "km/h", "capabilities": ["read", "notify"], "choices": [], "kind": "dbc", "inputs": ["river.raw_speed"], "policy": {"conversion": {"source_unit": "km/h", "target_unit": "km/h", "scale": "1", "offset": "0", "target_precision": "float32", "invalid_ranges": [{"minimum": "655.3400000000000000065534", "maximum": "655.3500000000000000065535"}]}, "enum_map": [], "invalid_value": "unavailable"}, "evidence": {"ref": "synthetic/river-review", "confidence": "Reference", "eligibility": "source_only"}, "freshness": null},
+    {"key": "vehicle.synthetic_ready", "runtime_id": 2, "type": "boolean", "unit": "", "capabilities": ["read"], "choices": [], "kind": "native", "inputs": [], "policy": {"handler": "synthetic.ready", "revision": "v1", "invalid_value": "unavailable"}, "evidence": {"ref": "synthetic/river-review", "confidence": "Reference", "eligibility": "source_only"}, "freshness": null}
+  ],
+  "diagnostics": [{"category": "unmapped", "affected": "river.raw_state", "sources": ["river-b"], "reason": "Synthetic wide state has no reviewed canonical meaning."}],
+  "compatibility_identity": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "artifact_identity": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}
