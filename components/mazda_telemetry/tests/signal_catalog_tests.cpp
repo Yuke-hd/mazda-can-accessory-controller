@@ -578,23 +578,29 @@ void check_descriptor_bindings() {
   check(tally.polling_rows == 6, "six catalog rows are bound to polling descriptors");
   check(tally.notification_rows == 17, "seventeen catalog rows are bound to notification channels");
 
-  // The host build carries one test polling descriptor and test channel 18.
+  // Host-only descriptors are located by type and channel identity.
   check(tally.host_only == 2, "host-only descriptors are present and excluded");
-  check(!std::get<2>(polling).id.valid(), "host test polling descriptor has no signal id");
-  using TestDescriptor = std::tuple_element_t<17, internal::NotificationDescriptorTuple>;
-  static_assert(TestDescriptor::Channel::channel_id() ==
-                internal::kTestFrontWiperNotificationChannel);
-  check(!std::get<17>(notifications).id.valid(), "host test channel descriptor has no signal id");
+  check(!std::get<internal::PollingDescriptor<FrontWiperPosition>>(polling).id.valid(),
+        "host test polling descriptor has no signal id");
+  check(
+      !internal::notification_descriptor<internal::TestFrontWiperNotificationChannel>(notifications)
+           .id.valid(),
+      "host test channel descriptor has no signal id");
 }
 
 // Explicit separation checks for the easily confused signals.
 void check_separated_bindings() {
   const auto &notifications = internal::VehicleTelemetryService::notification_descriptors();
-  const auto &turn = std::get<2>(notifications);
-  const auto &left_request = std::get<4>(notifications);
-  const auto &right_request = std::get<5>(notifications);
-  const auto &left_lamp = std::get<12>(notifications);
-  const auto &right_lamp = std::get<13>(notifications);
+  const auto &turn =
+      internal::notification_descriptor<internal::TurnNotificationChannel>(notifications);
+  const auto &left_request =
+      internal::notification_descriptor<internal::LeftTurnNotificationChannel>(notifications);
+  const auto &right_request =
+      internal::notification_descriptor<internal::RightTurnNotificationChannel>(notifications);
+  const auto &left_lamp =
+      internal::notification_descriptor<internal::LeftLampNotificationChannel>(notifications);
+  const auto &right_lamp =
+      internal::notification_descriptor<internal::RightLampNotificationChannel>(notifications);
   check(turn.id == ids::kTurnState && turn.signal == &VehicleState::turn_state,
         "turn_state binds the semantic turn state");
   check(left_request.id == ids::kTurnRequestLeft &&

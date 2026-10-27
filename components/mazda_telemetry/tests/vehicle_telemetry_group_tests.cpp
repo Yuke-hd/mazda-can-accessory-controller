@@ -435,7 +435,9 @@ void test_due_groups_and_field_specific_deadlines() {
   EXPECT(harness.evaluations.by_message[3] == 2);
 
   const auto descriptors = mazda::internal::VehicleTelemetryService::notification_descriptors();
-  const auto rear_left = harness.service.read_descriptor(std::get<8>(descriptors));
+  const auto rear_left = harness.service.read_descriptor(
+      mazda::internal::notification_descriptor<mazda::internal::RearLeftDoorNotificationChannel>(
+          descriptors));
   EXPECT(rear_left.value.has_value());
   EXPECT(rear_left.availability == mazda::Availability::FreshnessUnverified);
   harness.stop();
@@ -463,11 +465,17 @@ void test_unrelated_traffic_and_newer_same_value_extend_deadline() {
   EXPECT(harness.process(frame(kTurnSwitchId, 105, {0, 0x20, 0, 0, 0, 0, 0, 0})).status ==
          vehicle_telemetry::ProcessStatus::Processed);
   const auto descriptors = mazda::internal::VehicleTelemetryService::notification_descriptors();
-  EXPECT(harness.service.read_descriptor(std::get<2>(descriptors)).availability ==
-         mazda::Availability::Fresh);
+  EXPECT(harness.service
+             .read_descriptor(
+                 mazda::internal::notification_descriptor<mazda::internal::TurnNotificationChannel>(
+                     descriptors))
+             .availability == mazda::Availability::Fresh);
   harness.publish(115);
-  EXPECT(harness.service.read_descriptor(std::get<2>(descriptors)).availability ==
-         mazda::Availability::Fresh);
+  EXPECT(harness.service
+             .read_descriptor(
+                 mazda::internal::notification_descriptor<mazda::internal::TurnNotificationChannel>(
+                     descriptors))
+             .availability == mazda::Availability::Fresh);
 
   // A continuously unrelated frame still services due work once and does not
   // make an unrelated group evaluate.
@@ -541,19 +549,22 @@ void test_equal_older_conflict_do_not_recover() {
          vehicle_telemetry::ProcessStatus::Processed);
   EXPECT(harness.service
              .read_descriptor(
-                 std::get<2>(mazda::internal::VehicleTelemetryService::notification_descriptors()))
+                 mazda::internal::notification_descriptor<mazda::internal::TurnNotificationChannel>(
+                     mazda::internal::VehicleTelemetryService::notification_descriptors()))
              .availability == mazda::Availability::Stale);
   EXPECT(harness.process(frame(kTurnSwitchId, 100, {0, 0x10, 0, 0, 0, 0, 0, 0}), 112).status ==
          vehicle_telemetry::ProcessStatus::Processed);
   EXPECT(harness.service
              .read_descriptor(
-                 std::get<2>(mazda::internal::VehicleTelemetryService::notification_descriptors()))
+                 mazda::internal::notification_descriptor<mazda::internal::TurnNotificationChannel>(
+                     mazda::internal::VehicleTelemetryService::notification_descriptors()))
              .availability == mazda::Availability::Stale);
   EXPECT(harness.process(frame(kTurnSwitchId, 99, {0, 0x20, 0, 0, 0, 0, 0, 0}), 113).status ==
          vehicle_telemetry::ProcessStatus::Processed);
   EXPECT(harness.service
              .read_descriptor(
-                 std::get<2>(mazda::internal::VehicleTelemetryService::notification_descriptors()))
+                 mazda::internal::notification_descriptor<mazda::internal::TurnNotificationChannel>(
+                     mazda::internal::VehicleTelemetryService::notification_descriptors()))
              .availability == mazda::Availability::Stale);
 
   // Only a newer observation recovers the signal. Delay dispatch so the
@@ -579,23 +590,37 @@ void test_brake_default_unverified_and_malformed_failoff() {
   EXPECT(harness.process(frame(kBrakePedalId, 100, {0x10, 0, 0, 0, 0, 0, 0, 0})).status ==
          vehicle_telemetry::ProcessStatus::Processed);
   const auto descriptors = mazda::internal::VehicleTelemetryService::notification_descriptors();
-  const auto brake = harness.service.read_descriptor(std::get<16>(descriptors));
+  const auto brake = harness.service.read_descriptor(
+      mazda::internal::notification_descriptor<mazda::internal::BrakeNotificationChannel>(
+          descriptors));
   EXPECT(brake.value.has_value() && *brake.value);
   EXPECT(brake.availability == mazda::Availability::FreshnessUnverified);
   harness.publish(1'000'000);
-  EXPECT(harness.service.read_descriptor(std::get<16>(descriptors)).availability ==
-         mazda::Availability::FreshnessUnverified);
+  EXPECT(
+      harness.service
+          .read_descriptor(
+              mazda::internal::notification_descriptor<mazda::internal::BrakeNotificationChannel>(
+                  descriptors))
+          .availability == mazda::Availability::FreshnessUnverified);
 
   // An owned malformed frame fails off at the processing boundary. A newer
   // valid observation is required to restore the unverified brake reading.
   const auto malformed = harness.process(frame(kBrakePedalId, 2'000, {0x10, 0, 0, 0, 0, 0, 0}));
   EXPECT(malformed.status == vehicle_telemetry::ProcessStatus::Malformed);
-  EXPECT(harness.service.read_descriptor(std::get<16>(descriptors)).availability ==
-         mazda::Availability::Unavailable);
+  EXPECT(
+      harness.service
+          .read_descriptor(
+              mazda::internal::notification_descriptor<mazda::internal::BrakeNotificationChannel>(
+                  descriptors))
+          .availability == mazda::Availability::Unavailable);
   EXPECT(harness.process(frame(kBrakePedalId, 2'001, {0x10, 0, 0, 0, 0, 0, 0, 0})).status ==
          vehicle_telemetry::ProcessStatus::Processed);
-  EXPECT(harness.service.read_descriptor(std::get<16>(descriptors)).availability ==
-         mazda::Availability::FreshnessUnverified);
+  EXPECT(
+      harness.service
+          .read_descriptor(
+              mazda::internal::notification_descriptor<mazda::internal::BrakeNotificationChannel>(
+                  descriptors))
+          .availability == mazda::Availability::FreshnessUnverified);
   EXPECT(harness.drain() > 0);
   EXPECT(recorder.count >= 2);
   EXPECT(recorder.notices[recorder.count - 1].recovered);
