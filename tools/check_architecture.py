@@ -9,7 +9,10 @@ and reach only its value-only telemetry contracts, the generic
 alone, the host generic consumer
 must include only the public provider and ``vehicle_signals`` headers, the
 vehicle binding must compile and exercise its project-owned listen-only
-contract, and retired capture code must stay absent. The
+contract, only the catalog exporter may include a ``mazda_telemetry`` private
+header from ``tools/``, firmware, ``components/`` and ``lib/`` builds must not
+reference host-only profile tooling, and retired capture code must stay
+absent. The
 existing source-safety validators are run here rather than duplicated in
 CTest and firmware CI. Public-header positive/negative checks remain the
 separate ``public_header_boundary`` and ``public_header_checker_regression``
@@ -1512,6 +1515,69 @@ def _check_companion_config_isolation(root: Path) -> None:
     )
 
 
+MAZDA_TELEMETRY_PRIVATE_INCLUDE = Path("components/mazda_telemetry/private_include")
+# The host catalog exporter publishes the compiled Mazda signal catalog, so it
+# is the single reviewed tool allowed to include a mazda_telemetry private
+# header. Every other file under tools/ uses public targets only.
+_TOOL_PRIVATE_INCLUDE_ALLOWLIST = frozenset(
+    (("tools/export_controller_signal_catalog.cpp", "mazda/signal_catalog.hpp"),)
+)
+
+
+def _check_tool_private_includes(root: Path) -> None:
+    """Allow only the catalog exporter to include a mazda_telemetry private header."""
+
+    private_root = root / MAZDA_TELEMETRY_PRIVATE_INCLUDE
+    violations: List[str] = []
+    for relative, _ in sorted(_TOOL_PRIVATE_INCLUDE_ALLOWLIST):
+        if not (root / relative).is_file():
+            violations.append(f"allowlisted catalog exporter is missing: {relative}")
+    sources = sorted(
+        path for path in (root / "tools").rglob("*") if path.suffix in _CPP_SUFFIXES and path.is_file()
+    )
+    for path in sources:
+        relative = path.relative_to(root).as_posix()
+        code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+        for name in re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', code, re.M):
+            private = "private_include" in name or (private_root / name).is_file()
+            if private and (relative, name) not in _TOOL_PRIVATE_INCLUDE_ALLOWLIST:
+                violations.append(f"{relative} includes mazda_telemetry private header {name}")
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print(
+        "OK   only the catalog exporter includes a mazda_telemetry private header from tools/"
+    )
+
+
+# Host-only tooling that firmware, component and portable-library builds must
+# not reference. Profile artifacts reach a build only through the
+# tools/vehicle_profile.cmake helper, never through the Python package itself.
+_HOST_ONLY_TOOL_MARKERS = ("vehicle_profiles", "export_controller_signal_catalog")
+_PRODUCT_BUILD_ROOTS = ("components", "firmware", "lib")
+_BUILD_FILE_SUFFIXES = frozenset((".cmake", ".yml", ".yaml"))
+
+
+def _check_host_only_tooling(root: Path) -> None:
+    """Keep firmware, components/ and lib/ builds off host-only profile tooling."""
+
+    violations: List[str] = []
+    for directory in _PRODUCT_BUILD_ROOTS:
+        for path in sorted((root / directory).rglob("*")):
+            if not path.is_file() or (
+                path.name != "CMakeLists.txt" and path.suffix not in _BUILD_FILE_SUFFIXES
+            ):
+                continue
+            code = re.sub(r"#.*", "", path.read_text(encoding="utf-8"))
+            for marker in _HOST_ONLY_TOOL_MARKERS:
+                if marker in code:
+                    violations.append(
+                        f"{path.relative_to(root).as_posix()} references host-only tool {marker}"
+                    )
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   firmware, components/ and lib/ builds reference no host-only profile tooling")
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -1687,6 +1753,8 @@ def check(
             _check_companion_ble_isolation(root)
             _check_companion_ble_startup_invariants(root)
             _check_companion_config_isolation(root)
+            _check_tool_private_includes(root)
+            _check_host_only_tooling(root)
             _check_adapter(
                 root,
                 cmake,
