@@ -1,0 +1,7 @@
+VERSION "synthetic-a-v1"
+NS_ :
+BS_:
+BU_: ECU Controller
+BO_ 256 Engine: 8 ECU
+ SG_ rpm : 0|16@1+ (0.25,0) [0|16383.75] "rpm" Controller
+ SG_ BrakePressure : 16|16@1+ (0.1,0) [0|6553.5] "kPa" Controller

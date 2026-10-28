@@ -1,0 +1,7 @@
+VERSION "synthetic-b-v1"
+NS_ :
+BS_:
+BU_: ECU Controller
+BO_ 256 EngineExtra: 8 ECU
+ SG_ engine_rpm : 0|16@1+ (0.250,0.0) [0|16383.750] "rpm" Controller
+ SG_ CoolantRaw : 32|8@1+ (1,-40) [-40|215] "degC" Controller
