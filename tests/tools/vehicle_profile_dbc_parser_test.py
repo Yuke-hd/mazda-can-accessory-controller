@@ -437,7 +437,7 @@ class AttributeTests(unittest.TestCase):
         self.assertEqual(values[("GenMsgSendType", (256,))].value, "NoMsgSendType")
         self.assertEqual(values[("GenSigStartValue", (256, "rpm"))].value, Fraction(-5, 2))
         self.assertEqual(values[("SigMask", (256, "rpm"))].scope, "signal")
-        self.assertEqual(values[("SigMask", (256, "rpm"))].span.line, 17)
+        self.assertEqual([s.line for s in values[("SigMask", (256, "rpm"))].spans], [17])
 
     def test_retained_attributes_do_not_execute(self):
         inv = self.attrs('BA_ "GenMsgSendType" BO_ 256 0;\nBA_ "GenSigStartValue" SG_ 256 rpm 7;\n')
@@ -503,6 +503,23 @@ class AttributeTests(unittest.TestCase):
         self.assertEqual((error.code, error.span.line), ("source_conflict", 6))
         inv = parse(META_BASE + 'BA_DEF_ BO_ "X" INT 0 1 ;\nBA_DEF_ BO_ "X" INT 0 1 ;\n')
         self.assertEqual([s.line for s in inv.attribute_definitions[0].spans], [4, 5])
+
+    def test_conflicting_repeated_values_fail_in_either_order(self):
+        # Input order never supplies precedence (D1 composition rules).
+        for first, second in ((0, 3), (3, 0)):
+            error = failure(META_BASE + FRAME_DEF + f'BA_ "VFrameFormat" BO_ 256 {first};\n'
+                            f'BA_ "VFrameFormat" BO_ 256 {second};\n')
+            self.assertEqual((error.code, error.span.line), ("source_conflict", 6))
+        for first, second in ((100, 200), (200, 100)):
+            error = failure(META_BASE + ATTR_DEFS + f'BA_ "GenMsgCycleTime" BO_ 256 {first};\n'
+                            f'BA_ "GenMsgCycleTime" BO_ 256 {second};\n')
+            self.assertEqual((error.code, error.span.line), ("source_conflict", 11))
+        # Enum ordinal and label spellings of one choice are the same typed value.
+        inv = self.attrs('BA_ "GenMsgSendType" BO_ 256 1;\n'
+                         'BA_ "GenMsgSendType" BO_ 256 "NoMsgSendType";\n')
+        (value,) = inv.attributes
+        self.assertEqual(value.value, "NoMsgSendType")
+        self.assertEqual([s.line for s in value.spans], [10, 11])
 
     def test_environment_scope_is_unsupported(self):
         for line in ('BA_DEF_ EV_ "X" INT 0 1 ;\n', 'BA_ "NetNote" EV_ envVar "x";\n'):

@@ -151,7 +151,7 @@ class AttributeValue:
     scope: str
     target: tuple
     value: object  # int, Fraction or str; enum values hold the declared label
-    span: Span
+    spans: tuple[Span, ...]  # identical repeats share one entry
 
 
 @dataclass(frozen=True)
@@ -664,6 +664,8 @@ def _resolve_attributes(meta: _Metadata, messages: dict, nodes: list[str]):
                                                defaults.get(name, (None,))[0],
                                                tuple(item["spans"])))
     explicit: dict[tuple[str, tuple], tuple[object, Span]] = {}
+    spans: dict[tuple[str, tuple], list[Span]] = {}
+    order: list[tuple[tuple[str, tuple], str]] = []
     for name, scope, target, token, span in meta.pending:
         definition = meta.definitions.get(name.value)
         if definition is None:
@@ -673,8 +675,18 @@ def _resolve_attributes(meta: _Metadata, messages: dict, nodes: list[str]):
         if not _target_exists(scope, target, messages, nodes):
             raise ParserError("dbc_syntax_error", "attribute references an unknown object", span)
         value = _typed_value(definition["shape"], token, span)
-        meta.values.append(AttributeValue(name.value, scope, target, value, span))
-        explicit[(name.value, target)] = (value, span)
+        key = (name.value, target)
+        if key in explicit:
+            # Input order never supplies precedence: repeats must agree exactly.
+            if explicit[key][0] != value:
+                raise ParserError("source_conflict",
+                                  "repeated attribute value differs for one object", span)
+            spans[key].append(span)
+            continue
+        explicit[key], spans[key] = (value, span), [span]
+        order.append((key, scope))
+    meta.values.extend(AttributeValue(key[0], scope, key[1], explicit[key][0], tuple(spans[key]))
+                       for key, scope in order)
     _apply_allowlist(meta, defaults, explicit, messages, nodes)
     return tuple(definitions)
 
