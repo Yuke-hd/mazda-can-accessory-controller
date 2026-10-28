@@ -521,7 +521,8 @@ def _parse_multiplex_range(cur: _Cursor, head: Token, pending: list) -> None:
     while True:
         low = cur.integer("range start")
         high = cur.integer("range end")  # the lexer reads "0-3" as 0 and -3
-        if low.value < 0 or high.value > 0:
+        adjacent = (high.span.line, high.span.column) == (low.span.end_line, low.span.end_column)
+        if not low.text.isdigit() or not high.text.startswith("-") or not adjacent:
             _syntax(cur, "multiplex range must be written start-end", _join(low.span, high.span))
         if -high.value < low.value:
             _syntax(cur, "multiplex range start exceeds end", _join(low.span, high.span))
@@ -555,6 +556,9 @@ def _resolve_multiplex_ranges(pending: list, messages: dict) -> tuple[MultiplexR
         _signals_of(messages, ident, name, span, "SG_MUL_VAL_")
         for (raw, _), builder in messages.items():
             if raw == ident and name in builder.signals:
+                marker = builder.signals[name]["multiplex"]
+                if name == switch or marker is None or not marker.startswith("m"):
+                    _syntax(None, "SG_MUL_VAL_ target is not a multiplexed signal", span)
                 selector = builder.signals.get(switch)
                 if selector is None or not (selector["multiplex"] or "").endswith("M"):
                     _syntax(None, "SG_MUL_VAL_ switch is not a multiplexer signal", span)

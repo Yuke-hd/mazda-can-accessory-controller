@@ -271,7 +271,7 @@ class RejectionTests(unittest.TestCase):
             self.assertIsNotNone(error.span, text)
 
     def test_unsupported_families_fail_with_span(self):
-        # D1 rows 66-67 families (and the rows-65/66 forms T5/T6 own) still fail.
+        # D1 row 67 families still fail.
         for keyword in ("EV_", "ENVVAR_DATA_", "EV_DATA_",
                         "SGTYPE_", "SGTYPE_VAL_", "SIG_TYPE_REF_", "SIGTYPE_VALTYPE_",
                         "BA_DEF_REL_", "BA_REL_", "BA_DEF_DEF_REL_", "BU_SG_REL_",
@@ -318,7 +318,9 @@ class MultiplexAndValueTypeTests(unittest.TestCase):
         for text in (MUX.replace(" m0 :", " m :"), MUX.replace(" m0 :", " x1 :"),
                      MUX + "SG_MUL_VAL_ 300 a sel 3-0;\n", MUX + "SG_MUL_VAL_ 300 a nope 0-1;\n",
                      MUX + "SG_MUL_VAL_ 300 a plain 0-1;\n", MUX + "SG_MUL_VAL_ 300 zz sel 0-1;\n",
-                     MUX + "SG_MUL_VAL_ 300 a sel ;\n", MUX + "SG_MUL_VAL_ 300 a sel 0-1\n"):
+                     MUX + "SG_MUL_VAL_ 300 a sel ;\n", MUX + "SG_MUL_VAL_ 300 a sel 0 0;\n",
+                     MUX + "SG_MUL_VAL_ 300 a sel -0-3;\n", MUX + "SG_MUL_VAL_ 300 a sel 0 -3;\n",
+                     MUX + "SG_MUL_VAL_ 300 sel sel 0-1;\n", MUX + "SG_MUL_VAL_ 300 a sel 0-1\n"):
             error = failure(text)
             self.assertEqual(error.code, "dbc_syntax_error", text)
             self.assertIsNotNone(error.span, text)
@@ -335,7 +337,7 @@ class MultiplexAndValueTypeTests(unittest.TestCase):
         self.assertEqual([s.value_type for s in message.signals], [1, 0])
         self.assertFalse(message.executable)
         self.assertEqual(message.unsupported_forms, ("ieee_float",))
-        inv = parse(IEEE.replace("0|0", "0|0") + "SIG_VALTYPE_ 301 f : 2;\n")
+        inv = parse(IEEE + "SIG_VALTYPE_ 301 f : 2;\n")
         self.assertEqual(inv.messages[0].signals[0].value_type, 2)
 
     def test_other_codes_and_bad_references_fail(self):
