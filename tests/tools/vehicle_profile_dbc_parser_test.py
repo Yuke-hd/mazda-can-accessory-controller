@@ -276,11 +276,293 @@ class RejectionTests(unittest.TestCase):
             self.assertIsNotNone(error.span, text)
 
     def test_unsupported_families_fail_with_span(self):
-        for keyword in ("CM_", "BA_DEF_", "BA_", "SIG_VALTYPE_", "EV_", "SG_MUL_VAL_",
-                        "SIG_GROUP_", "VAL_TABLE_", "BO_TX_BU_"):
+        # D1 rows 66-67 families (and the rows-65/66 forms T5/T6 own) still fail.
+        for keyword in ("SIG_VALTYPE_", "EV_", "SG_MUL_VAL_", "ENVVAR_DATA_", "EV_DATA_",
+                        "SGTYPE_", "SGTYPE_VAL_", "SIG_TYPE_REF_", "SIGTYPE_VALTYPE_",
+                        "BA_DEF_REL_", "BA_REL_", "BA_DEF_DEF_REL_", "BU_SG_REL_",
+                        "BU_EV_REL_", "BU_BO_REL_", "BA_DEF_SGTYPE_", "BA_SGTYPE_"):
             error = failure(f"BO_ 1 M: 8 ECU\n{keyword} 1 2 ;\n")
             self.assertEqual(error.code, "unsupported_dbc_construct", keyword)
             self.assertEqual(error.span.line, 2)
+
+    def test_metadata_keywords_are_no_longer_unsupported(self):
+        # D1 rows 63-64: these families parse; a malformed record is a syntax error.
+        for keyword in ("CM_", "BA_DEF_", "BA_DEF_DEF_", "BA_", "SIG_GROUP_", "VAL_TABLE_",
+                        "BO_TX_BU_"):
+            error = failure(f"BO_ 1 M: 8 ECU\n{keyword} 1 2 ;\n")
+            self.assertEqual(error.code, "dbc_syntax_error", keyword)
+            self.assertEqual(error.span.line, 2, keyword)
+
+
+FULL_NS = """NS_ :
+    NS_DESC_ CM_ BA_DEF_ BA_ VAL_ CAT_DEF_ CAT_ FILTER BA_DEF_DEF_ EV_DATA_
+    ENVVAR_DATA_ SGTYPE_ SGTYPE_VAL_ BA_DEF_SGTYPE_ BA_SGTYPE_ SIG_TYPE_REF_
+    VAL_TABLE_ SIG_GROUP_ SIG_VALTYPE_ SIGTYPE_VALTYPE_ BO_TX_BU_ BA_DEF_REL_
+    BA_REL_ BA_DEF_DEF_REL_ BU_SG_REL_ BU_EV_REL_ BU_BO_REL_ SG_MUL_VAL_
+BS_:
+"""
+META_BASE = ('BU_: ECU Controller\nBO_ 256 Engine: 8 ECU\n'
+             ' SG_ rpm : 0|16@1+ (1,0) [0|0] "rpm" Controller\n')
+
+
+class NamespaceTests(unittest.TestCase):
+    """D1 row 59: NS_ entries declare vocabulary; they are not uses."""
+
+    def test_full_vocabulary_is_accepted(self):
+        inv = parse(FULL_NS + META_BASE)
+        self.assertIn("EV_DATA_", inv.namespace)
+        self.assertIn("SIG_VALTYPE_", inv.namespace)
+        self.assertEqual(len(inv.namespace), 28)
+        self.assertEqual(len(inv.messages), 1)
+
+    def test_empty_namespace(self):
+        self.assertEqual(parse("NS_ :\nBS_:\n").namespace, ())
+
+    def test_unknown_namespace_word_fails(self):
+        error = failure("NS_ :\n    CM_\n    VENDOR_X_\nBS_:\n")
+        self.assertEqual(error.code, "dbc_syntax_error")
+        self.assertEqual(error.span.line, 3)
+
+
+class CommentTests(unittest.TestCase):
+    """D1 row 63: CM_ is source metadata with no runtime behavior or binding."""
+
+    def test_all_comment_scopes_are_retained(self):
+        inv = parse(META_BASE + 'CM_ "network note";\nCM_ BU_ ECU "node note";\n'
+                    'CM_ BO_ 256 "message note";\nCM_ SG_ 256 rpm "multi\nline \\"q\\"";\n')
+        self.assertEqual([(c.scope, c.target, c.text) for c in inv.comments], [
+            ("network", (), "network note"),
+            ("node", ("ECU",), "node note"),
+            ("message", (256,), "message note"),
+            ("signal", (256, "rpm"), 'multi\nline "q"'),
+        ])
+        self.assertEqual(inv.comments[3].span.line, 7)
+
+    def test_comments_create_no_binding_or_behavior(self):
+        plain = parse(META_BASE)
+        commented = parse(META_BASE + 'CM_ BO_ 256 "x";\nCM_ SG_ 256 rpm "y";\n')
+        self.assertEqual(plain.messages, commented.messages)
+
+    def test_malformed_comments_fail_with_span(self):
+        for line in ('CM_ "x"\n', 'CM_ ;\n', 'CM_ BO_ "x";\n', 'CM_ SG_ 256 "x";\n',
+                     'CM_ BU_ 5 "x";\n', 'CM_ BO_ 256 rpm "x";\n', 'CM_ "a" "b";\n',
+                     'CM_ BO_ x "x";\n', 'CM_ VAL_ 1 "x";\n'):
+            error = failure(META_BASE + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 4, line)
+
+    def test_environment_comment_is_unsupported(self):
+        error = failure(META_BASE + 'CM_ EV_ envVar "x";\n')
+        self.assertEqual(error.code, "unsupported_dbc_construct")
+        self.assertEqual(error.span.line, 4)
+
+
+class MetadataRecordTests(unittest.TestCase):
+    """D1 row 63: BO_TX_BU_, SIG_GROUP_ and standalone VAL_TABLE_ are metadata."""
+
+    def test_transmitters(self):
+        inv = parse(META_BASE + "BO_TX_BU_ 256 : ECU,Controller;\n")
+        (tx,) = inv.transmitters
+        self.assertEqual((tx.raw_id, tx.nodes, tx.span.line), (256, ("ECU", "Controller"), 4))
+        self.assertEqual(inv.messages, parse(META_BASE).messages)
+
+    def test_signal_group(self):
+        inv = parse(META_BASE + "SIG_GROUP_ 256 Grp 1 : rpm;\n")
+        (group,) = inv.signal_groups
+        self.assertEqual((group.raw_id, group.name, group.repetitions, group.signals),
+                         (256, "Grp", 1, ("rpm",)))
+        self.assertEqual(inv.messages, parse(META_BASE).messages)
+
+    def test_standalone_value_table(self):
+        inv = parse(META_BASE + 'VAL_TABLE_ Gear -1 "R" 0 "N" 18446744073709551615 "max" ;\n')
+        (table,) = inv.value_tables
+        self.assertEqual(table.name, "Gear")
+        self.assertEqual([(v.raw, v.label) for v in table.values],
+                         [(-1, "R"), (0, "N"), ((1 << 64) - 1, "max")])
+        self.assertEqual(inv.messages[0].signals[0].value_table, ())
+
+    def test_empty_value_table_is_allowed(self):
+        self.assertEqual(parse('VAL_TABLE_ Empty ;\n').value_tables[0].values, ())
+
+    def test_malformed_metadata_records(self):
+        for line in ("BO_TX_BU_ 256 ECU;\n", "BO_TX_BU_ 256 : ;\n", "BO_TX_BU_ 256 : ECU,;\n",
+                     "BO_TX_BU_ 256 : ECU\n", "SIG_GROUP_ 256 Grp : rpm;\n",
+                     "SIG_GROUP_ 256 Grp 1 rpm;\n", "SIG_GROUP_ 256 Grp 1 : ;\n",
+                     "SIG_GROUP_ 256 Grp -1 : rpm;\n", 'VAL_TABLE_ T 1 ;\n',
+                     'VAL_TABLE_ T 1.5 "x" ;\n', 'VAL_TABLE_ 1 "x" ;\n',
+                     'VAL_TABLE_ T 1 "x"\n', f'VAL_TABLE_ T {1 << 64} "x" ;\n'):
+            error = failure(META_BASE + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 4, line)
+
+    def test_conflicting_standalone_labels_fail(self):
+        error = failure(META_BASE + 'VAL_TABLE_ T 1 "a" 1 "b" ;\n')
+        self.assertEqual(error.code, "source_conflict")
+
+
+ATTR_DEFS = ('BA_DEF_ "NetNote" STRING ;\n'
+             'BA_DEF_ BU_ "NodeLayer" INT 0 10 ;\n'
+             'BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535 ;\n'
+             'BA_DEF_ BO_ "GenMsgSendType" ENUM "Cyclic","NoMsgSendType" ;\n'
+             'BA_DEF_ SG_ "GenSigStartValue" FLOAT -1e3 1e3 ;\n'
+             'BA_DEF_ SG_ "SigMask" HEX 0 255 ;\n')
+
+
+class AttributeTests(unittest.TestCase):
+    """D1 row 64: definitions, defaults and scoped values; allowlist only."""
+
+    def attrs(self, extra):
+        return parse(META_BASE + ATTR_DEFS + extra)
+
+    def test_definitions_defaults_and_scoped_values_are_retained(self):
+        inv = self.attrs('BA_DEF_DEF_ "NetNote" "";\nBA_DEF_DEF_ "GenMsgSendType" "Cyclic";\n'
+                         'BA_DEF_DEF_ "GenSigStartValue" .5;\n'
+                         'BA_ "NetNote" "hello";\nBA_ "NodeLayer" BU_ ECU 3;\n'
+                         'BA_ "GenMsgSendType" BO_ 256 1;\n'
+                         'BA_ "GenSigStartValue" SG_ 256 rpm -2.5;\nBA_ "SigMask" SG_ 256 rpm 15;\n')
+        defs = {d.name: d for d in inv.attribute_definitions}
+        self.assertEqual(defs["NetNote"].scope, "network")
+        self.assertEqual((defs["NodeLayer"].scope, defs["NodeLayer"].value_type,
+                          defs["NodeLayer"].minimum, defs["NodeLayer"].maximum),
+                         ("node", "INT", 0, 10))
+        self.assertEqual(defs["GenMsgSendType"].choices, ("Cyclic", "NoMsgSendType"))
+        self.assertEqual(defs["GenSigStartValue"].minimum, Fraction(-1000))
+        self.assertEqual(defs["GenSigStartValue"].default, Fraction(1, 2))
+        self.assertIs(type(defs["GenSigStartValue"].default), Fraction)
+        self.assertEqual(defs["GenMsgSendType"].default, "Cyclic")
+        values = {(a.name, a.target): a for a in inv.attributes}
+        self.assertEqual(values[("NetNote", ())].value, "hello")
+        self.assertEqual(values[("NodeLayer", ("ECU",))].value, 3)
+        # Enum ordinals resolve through this source's declared choices.
+        self.assertEqual(values[("GenMsgSendType", (256,))].value, "NoMsgSendType")
+        self.assertEqual(values[("GenSigStartValue", (256, "rpm"))].value, Fraction(-5, 2))
+        self.assertEqual(values[("SigMask", (256, "rpm"))].scope, "signal")
+        self.assertEqual(values[("SigMask", (256, "rpm"))].span.line, 17)
+
+    def test_retained_attributes_do_not_execute(self):
+        inv = self.attrs('BA_ "GenMsgSendType" BO_ 256 0;\nBA_ "GenSigStartValue" SG_ 256 rpm 7;\n')
+        self.assertEqual(inv.messages[0].signals, parse(META_BASE).messages[0].signals)
+        self.assertIsNone(inv.messages[0].cycle_time_ms)
+
+    def test_cycle_time_is_recorded_from_value_or_default(self):
+        inv = self.attrs('BA_ "GenMsgCycleTime" BO_ 256 100;\n')
+        self.assertEqual(inv.messages[0].cycle_time_ms, 100)
+        inv = self.attrs('BA_DEF_DEF_ "GenMsgCycleTime" 20;\n')
+        self.assertEqual(inv.messages[0].cycle_time_ms, 20)
+
+    def test_cycle_time_must_be_nonnegative_integer(self):
+        for line in ('BA_ "GenMsgCycleTime" BO_ 256 -1;\n', 'BA_ "GenMsgCycleTime" BO_ 256 1.5;\n'):
+            error = failure(META_BASE + 'BA_DEF_ BO_ "GenMsgCycleTime" INT -10 10 ;\n' + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 5, line)
+        error = failure(META_BASE + 'BA_DEF_ BO_ "GenMsgCycleTime" FLOAT 0 10 ;\n'
+                        'BA_ "GenMsgCycleTime" BO_ 256 2.5;\n')
+        self.assertEqual(error.code, "dbc_syntax_error")
+
+    def test_undefined_attribute_fails_with_span(self):
+        for line in ('BA_ "Nope" BO_ 256 1;\n', 'BA_DEF_DEF_ "Nope" 1;\n'):
+            error = failure(META_BASE + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 4, line)
+
+    def test_invalid_scope_fails_with_span(self):
+        for line in ('BA_ "NodeLayer" BO_ 256 1;\n', 'BA_ "GenMsgCycleTime" 1;\n',
+                     'BA_ "NetNote" BU_ ECU "x";\n', 'BA_ "SigMask" BO_ 256 1;\n',
+                     'BA_ "GenMsgCycleTime" BO_ 999 1;\n', 'BA_ "NodeLayer" BU_ Ghost 1;\n',
+                     'BA_ "SigMask" SG_ 256 nope 1;\n'):
+            error = failure(META_BASE + ATTR_DEFS + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 10, line)
+
+    def test_invalid_value_types_fail_with_span(self):
+        for line in ('BA_ "NetNote" 5;\n', 'BA_ "NodeLayer" BU_ ECU "3";\n',
+                     'BA_ "NodeLayer" BU_ ECU 1.5;\n', 'BA_ "GenMsgSendType" BO_ 256 2;\n',
+                     'BA_ "GenMsgSendType" BO_ 256 -1;\n', 'BA_ "GenMsgSendType" BO_ 256 "Other";\n',
+                     'BA_ "GenSigStartValue" SG_ 256 rpm "x";\n', 'BA_DEF_DEF_ "NetNote" 1;\n',
+                     'BA_DEF_DEF_ "GenMsgSendType" "Other";\n'):
+            error = failure(META_BASE + ATTR_DEFS + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 10, line)
+
+    def test_malformed_definitions_fail(self):
+        for line in ('BA_DEF_ BO_ "X" BOGUS ;\n', 'BA_DEF_ BO_ "X" INT 0 ;\n',
+                     'BA_DEF_ BO_ "X" INT 0 1.5 ;\n', 'BA_DEF_ BO_ "X" INT 5 1 ;\n',
+                     'BA_DEF_ BO_ "X" ENUM ;\n', 'BA_DEF_ BO_ "X" ENUM "a", ;\n',
+                     'BA_DEF_ BO_ "X" ENUM "a","a" ;\n', 'BA_DEF_ BO_ X INT 0 1 ;\n',
+                     'BA_DEF_ BO_ "bad name" INT 0 1 ;\n', 'BA_DEF_ VAL_ "X" INT 0 1 ;\n',
+                     'BA_DEF_ BO_ "X" STRING\n', 'BA_ "NetNote" "a" junk;\n'):
+            error = failure(META_BASE + 'BA_DEF_ "NetNote" STRING ;\n' + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertEqual(error.span.line, 5, line)
+
+    def test_conflicting_definitions_and_defaults(self):
+        error = failure(META_BASE + 'BA_DEF_ BO_ "X" INT 0 1 ;\nBA_DEF_ SG_ "X" INT 0 1 ;\n')
+        self.assertEqual((error.code, error.span.line), ("source_conflict", 5))
+        error = failure(META_BASE + 'BA_DEF_ BO_ "X" INT 0 1 ;\n'
+                        'BA_DEF_DEF_ "X" 0;\nBA_DEF_DEF_ "X" 1;\n')
+        self.assertEqual((error.code, error.span.line), ("source_conflict", 6))
+        inv = parse(META_BASE + 'BA_DEF_ BO_ "X" INT 0 1 ;\nBA_DEF_ BO_ "X" INT 0 1 ;\n')
+        self.assertEqual([s.line for s in inv.attribute_definitions[0].spans], [4, 5])
+
+    def test_environment_scope_is_unsupported(self):
+        for line in ('BA_DEF_ EV_ "X" INT 0 1 ;\n', 'BA_ "NetNote" EV_ envVar "x";\n'):
+            error = failure(META_BASE + 'BA_DEF_ "NetNote" STRING ;\n' + line)
+            self.assertEqual(error.code, "unsupported_dbc_construct", line)
+            self.assertEqual(error.span.line, 5, line)
+
+
+FRAME_DEF = ('BA_DEF_ BO_ "VFrameFormat" ENUM "ExtendedCAN","StandardCAN","J1939PG",'
+             '"StandardCAN_FD","ExtendedCAN_FD" ;\n')
+
+
+class FrameFormatAndProtocolTests(unittest.TestCase):
+    """D1 allowlist: VFrameFormat via declared labels, BusType/ProtocolType = CAN."""
+
+    def test_frame_format_uses_declared_labels_not_vendor_ordinals(self):
+        # Ordinal 1 is StandardCAN in this source's declaration.
+        inv = parse(META_BASE + FRAME_DEF + 'BA_ "VFrameFormat" BO_ 256 1;\n')
+        self.assertEqual(inv.messages[0].frame_format, "StandardCAN")
+        self.assertTrue(inv.messages[0].executable)
+        inv = parse(META_BASE + FRAME_DEF + 'BA_DEF_DEF_ "VFrameFormat" "StandardCAN";\n')
+        self.assertEqual(inv.messages[0].frame_format, "StandardCAN")
+
+    def test_frame_format_contradictions_fail(self):
+        for line in ('BA_ "VFrameFormat" BO_ 256 0;\n',  # ExtendedCAN on a standard id
+                     'BA_ "VFrameFormat" BO_ 256 "ExtendedCAN_FD";\n',
+                     'BA_DEF_DEF_ "VFrameFormat" "ExtendedCAN";\n'):
+            error = failure(META_BASE + FRAME_DEF + line)
+            self.assertEqual(error.code, "source_conflict", line)
+            self.assertIsNotNone(error.span, line)
+        error = failure(f'BO_ {0x80000001} X: 8 ECU\n' + FRAME_DEF +
+                        f'BA_ "VFrameFormat" BO_ {0x80000001} 1;\n')
+        self.assertEqual(error.code, "source_conflict")
+        error = failure('BO_ 1 Long: 16 ECU\n' + FRAME_DEF + 'BA_ "VFrameFormat" BO_ 1 1;\n')
+        self.assertEqual(error.code, "source_conflict")
+
+    def test_fd_frame_is_inventory_only(self):
+        inv = parse('BO_ 1 M: 8 ECU\nBO_ 2 L: 64 ECU\n' + FRAME_DEF +
+                    'BA_ "VFrameFormat" BO_ 1 3;\nBA_ "VFrameFormat" BO_ 2 "StandardCAN_FD";\n')
+        self.assertEqual([(m.frame_format, m.executable) for m in inv.messages],
+                         [("StandardCAN_FD", False), ("StandardCAN_FD", False)])
+
+    def test_unknown_frame_format_label_is_unsupported(self):
+        error = failure(META_BASE + FRAME_DEF + 'BA_ "VFrameFormat" BO_ 256 2;\n')
+        self.assertEqual((error.code, error.span.line), ("unsupported_dbc_construct", 5))
+
+    def test_bus_and_protocol_type(self):
+        for defs in ('BA_DEF_ "BusType" STRING ;\nBA_DEF_ "ProtocolType" STRING ;\n',):
+            inv = parse(META_BASE + defs + 'BA_DEF_DEF_ "BusType" "";\nBA_ "BusType" "CAN";\n'
+                        'BA_ "ProtocolType" "CAN";\n')
+            self.assertEqual(len(inv.attributes), 2)
+            self.assertEqual(len(parse(META_BASE + defs).attribute_definitions), 2)
+            for line in ('BA_ "BusType" "LIN";\n', 'BA_ "ProtocolType" "J1939";\n',
+                         'BA_DEF_DEF_ "BusType" "CAN FD";\n'):
+                error = failure(META_BASE + defs + line)
+                self.assertEqual((error.code, error.span.line),
+                                 ("unsupported_dbc_construct", 6), line)
+        error = failure(META_BASE + 'BA_DEF_ BO_ "ProtocolType" STRING ;\n'
+                        'BA_ "ProtocolType" BO_ 256 "J1939";\n')
+        self.assertEqual((error.code, error.span.line), ("unsupported_dbc_construct", 5))
 
     def test_non_selected_bus_still_fails(self):
         error = failure("BOGUS_ 1\n", bus="not-selected", source_id="other")
