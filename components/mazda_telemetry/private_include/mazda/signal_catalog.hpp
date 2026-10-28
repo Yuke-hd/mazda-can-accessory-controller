@@ -199,9 +199,7 @@ inline constexpr vehicle_signals::SignalMetadata kSignalCatalog[] = {
                                   candidate::kBrakePressureDefinition.confidence),
 };
 
-inline constexpr std::size_t kSignalCatalogSize = 23;
-
-static_assert(std::size(kSignalCatalog) == kSignalCatalogSize);
+inline constexpr std::size_t kSignalCatalogSize = std::size(kSignalCatalog);
 static_assert(vehicle_signals::SignalCatalogView{kSignalCatalog}.well_formed());
 
 [[nodiscard]] constexpr vehicle_signals::SignalCatalogView signal_catalog() noexcept {

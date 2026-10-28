@@ -1447,30 +1447,32 @@ void VehicleTelemetryService::publish_startup_black(
   lighting_next_heartbeat_us_ = saturating_add(now_us, kLightingHeartbeatUs);
 }
 
-#define MAZDA_SUBSCRIBE_METHOD(method_name, descriptor_index, callback_type)                       \
+#define MAZDA_SUBSCRIBE_METHOD(method_name, channel_type, callback_type)                           \
   SubscriptionToken VehicleTelemetryService::method_name(callback_type callback,                   \
                                                          void *context) noexcept {                 \
     return subscribe_notification_descriptor(                                                      \
-        std::get<descriptor_index>(notification_descriptors()), callback, context);                \
+        notification_descriptor<channel_type>(notification_descriptors()), callback, context);     \
   }
 
-MAZDA_SUBSCRIBE_METHOD(subscribe_selector, 0, Callback<SelectorPosition>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_actual_gear, 1, Callback<ActualGear>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_turn, 2, Callback<TurnState>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_hazard, 3, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_left_turn, 4, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_right_turn, 5, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_liftgate, 6, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_rear_right_door, 7, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_rear_left_door, 8, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_front_left_door, 9, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_front_right_door, 10, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_doors_unlocked, 11, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_left_lamp, 12, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_right_lamp, 13, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_wiper_low, 14, Callback<bool>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_front_wiper, 15, Callback<FrontWiperPosition>)
-MAZDA_SUBSCRIBE_METHOD(subscribe_brake, 16, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_selector, SelectorNotificationChannel, Callback<SelectorPosition>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_actual_gear, ActualGearNotificationChannel, Callback<ActualGear>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_turn, TurnNotificationChannel, Callback<TurnState>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_hazard, HazardNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_left_turn, LeftTurnNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_right_turn, RightTurnNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_liftgate, LiftgateNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_rear_right_door, RearRightDoorNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_rear_left_door, RearLeftDoorNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_front_left_door, FrontLeftDoorNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_front_right_door, FrontRightDoorNotificationChannel,
+                       Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_doors_unlocked, DoorsUnlockedNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_left_lamp, LeftLampNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_right_lamp, RightLampNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_wiper_low, WiperLowNotificationChannel, Callback<bool>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_front_wiper, FrontWiperNotificationChannel,
+                       Callback<FrontWiperPosition>)
+MAZDA_SUBSCRIBE_METHOD(subscribe_brake, BrakeNotificationChannel, Callback<bool>)
 
 #undef MAZDA_SUBSCRIBE_METHOD
 

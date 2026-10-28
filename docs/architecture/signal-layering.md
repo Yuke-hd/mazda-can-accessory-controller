@@ -32,8 +32,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 
 ## Brake signal contract
 
-The Mazda generic catalog contains twenty-three signals. `vehicle.brake_pressed`
-is a Boolean signal with Read and Notify capabilities and Confirmed field
+The Mazda generic catalog exposes `vehicle.brake_pressed` as a Boolean signal with Read and Notify capabilities and Confirmed field
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
 `on_brake_pressed_changed` notification channel. Its capacity is

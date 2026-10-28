@@ -125,8 +125,9 @@ the references.
 1. **Runtime id and catalog row** in
    [`signal_catalog.hpp`](../../components/mazda_telemetry/private_include/mazda/signal_catalog.hpp):
    append a new `SignalId` (never renumber existing ones) and a `kSignalCatalog`
-   row using `polled_number`, `notified_boolean`, or `notified_enum`, then bump
-   `kSignalCatalogSize`. For enums, list every enumerator, including `unknown`,
+   row using `polled_number`, `notified_boolean`, or `notified_enum`.
+   Catalog and subscriber counts are derived from their definitions. For enums,
+   list every enumerator, including `unknown`,
    as a choice with a stable key. Validation comes from the definition's
    confidence.
 2. **Unit.** If the pinned core has no matching `SignalUnit`, declare the unit
@@ -135,10 +136,9 @@ the references.
    `signal_catalog_tests.cpp`, `signal_provider_read_tests.cpp`, and the
    subscription and descriptor tests; plus `tests/host/signal_consumer_tests.cpp`
    and `tests/host/replay_signal_observer_tests.cpp`, which sweep the catalog
-   and carry its count.
+   without a separate production count.
 4. **Architecture doc.** Add the signal contract to
-   [signal layering](../architecture/signal-layering.md) and update every place
-   that states the catalog count.
+   [signal layering](../architecture/signal-layering.md) with its semantic contract.
 
 **Number (Read only):** add a `PollingDescriptor` in
 [`vehicle_telemetry_service.hpp`](../../components/mazda_telemetry/private_include/mazda/vehicle_telemetry_service.hpp)
@@ -147,18 +147,15 @@ the references.
 **Boolean or Enum (Read + Notify)** also needs a notification channel, which
 touches several files (see `d3b7bba`):
 
-- `vehicle_telemetry_service.hpp`: a new `k...NotificationChannel` number,
-  its `NotificationChannel<T, N>` alias, an entry in **both**
-  `NotificationDescriptorTuple` variants (ESP and host), a `channel_` member,
-  and a `subscribe_...()` declaration. Renumber the host-only test channel
-  if it follows yours.
-- `src/vehicle_telemetry.cpp`: the `NotificationDescriptor` row (signal id,
-  name, channel, state member, message id, confidence), a
-  `MAZDA_SUBSCRIBE_METHOD(...)` with the next index, and a
-  `MAZDA_PUBLIC_SUBSCRIPTION_METHOD(...)`.
+- `notification_registration.def`: one row with a new stable channel number,
+  channel alias, member, signal id, name, state member, message id, and
+  confidence. Preserve existing channel numbers, including the host extension.
+  This row supplies the channel, descriptor, and service member declarations.
+- `vehicle_telemetry_service.hpp`: the private `subscribe_...()` declaration.
+- `src/vehicle_telemetry.cpp`: a `MAZDA_SUBSCRIBE_METHOD(...)` bound to the
+  channel alias and a `MAZDA_PUBLIC_SUBSCRIPTION_METHOD(...)`. Subscription
+  binding uses channel identity.
 - `include/mazda/vehicle_telemetry.hpp`: the public `on_..._changed` callback.
-- `signal_subscription_record.hpp`: bump the `notify_signal_count()`
-  `static_assert`.
 
 Channels are shared by typed and generic subscribers up to
 `vehicle_core::kNotificationSubscribersPerChannel`.
@@ -228,8 +225,8 @@ Do these only when the signal should be visible there.
 - [ ] Synthetic vectors and failure-mode tests (DLC, malformed, ordering)
 - [ ] Freshness and period left unset unless timing evidence exists
 - [ ] New `SignalId` appended; catalog row, descriptor, and (if notifying) channel and public callback agree
-- [ ] Count assertions and docs updated (`kSignalCatalogSize`, `notify_signal_count()`)
 - [ ] Controller signal manifest regenerated and non-mutating check passes
+- [ ] Independent catalog key/ID/choice/wire expectations updated; derived counts need no edit
 - [ ] Docs updated: decoder mappings, signal evidence, signal layering
 - [ ] Host build, tests, and architecture checks pass ([build modes](build-modes.md))
 - [ ] Report automated results only; no hardware or vehicle claim

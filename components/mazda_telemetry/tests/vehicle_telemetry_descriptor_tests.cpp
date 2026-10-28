@@ -84,13 +84,8 @@ bool wait_for(Predicate predicate,
 } // namespace
 
 int main() {
-  static_assert(std::tuple_size_v<mazda::internal::PollingDescriptorTuple> == 7);
   static_assert(std::tuple_size_v<mazda::internal::NotificationDescriptorTuple> ==
                 mazda::internal::kNotificationChannelCount);
-  using TestNotificationDescriptor =
-      std::tuple_element_t<17, mazda::internal::NotificationDescriptorTuple>;
-  static_assert(TestNotificationDescriptor::Channel::channel_id() ==
-                mazda::internal::kTestFrontWiperNotificationChannel);
 
   TestClock clock;
   mazda::internal::HostAcquisitionSource source;
@@ -103,18 +98,24 @@ int main() {
   const auto &polling_descriptors = mazda::internal::VehicleTelemetryService::polling_descriptors();
   const auto &notification_descriptors =
       mazda::internal::VehicleTelemetryService::notification_descriptors();
+  const auto &test_notify_descriptor =
+      mazda::internal::notification_descriptor<mazda::internal::TestFrontWiperNotificationChannel>(
+          notification_descriptors);
+  const auto &front_wiper_descriptor =
+      mazda::internal::notification_descriptor<mazda::internal::FrontWiperNotificationChannel>(
+          notification_descriptors);
+  const auto &test_polling_descriptor =
+      std::get<mazda::internal::PollingDescriptor<mazda::FrontWiperPosition>>(polling_descriptors);
   if (std::strcmp(std::get<0>(polling_descriptors).name, "speed_kph") != 0 ||
       std::strcmp(std::get<1>(polling_descriptors).name, "engine_rpm") != 0 ||
-      std::strcmp(std::get<2>(polling_descriptors).name, "test_front_wiper") != 0 ||
-      std::strcmp(std::get<15>(notification_descriptors).name, "front_wiper") != 0 ||
-      std::strcmp(std::get<17>(notification_descriptors).name, "test_front_wiper") != 0 ||
-      std::get<17>(notification_descriptors).channel == nullptr)
+      std::strcmp(test_polling_descriptor.name, "test_front_wiper") != 0 ||
+      std::strcmp(front_wiper_descriptor.name, "front_wiper") != 0 ||
+      std::strcmp(test_notify_descriptor.name, "test_front_wiper") != 0 ||
+      test_notify_descriptor.channel == nullptr)
     return 1;
 
   // Both records are test-only extensions of the same fixed registries. Their
   // own channel/member and signal metadata are consumed by unchanged workers.
-  const auto test_polling_descriptor = std::get<2>(polling_descriptors);
-  const auto test_notify_descriptor = std::get<17>(notification_descriptors);
   WiperRecorder recorder{};
   const auto subscription =
       service.subscribe_notification_descriptor(test_notify_descriptor, &record_wiper, &recorder);
@@ -170,9 +171,9 @@ int main() {
 
   // Every polling and notification descriptor is readable through the same
   // production-private path, without subscribing to its channel.
-  const auto front_wiper = service.read_descriptor(std::get<15>(notification_descriptors));
+  const auto front_wiper = service.read_descriptor(front_wiper_descriptor);
   if (front_wiper.value != mazda::FrontWiperPosition::On ||
-      front_wiper.validation != std::get<15>(notification_descriptors).validation)
+      front_wiper.validation != front_wiper_descriptor.validation)
     return 14;
   std::size_t readable = 0;
   const auto count_readable = [&service, &readable](const auto &...descriptor) {

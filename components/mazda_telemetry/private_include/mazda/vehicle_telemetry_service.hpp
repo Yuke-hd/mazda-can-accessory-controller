@@ -145,6 +145,15 @@ using NotificationDescriptorTuple = decltype(std::tuple{
 #undef MAZDA_NOTIFICATION_REGISTRATION
 });
 
+// Channel identity is stable when another descriptor is inserted in the tuple.
+// std::get also rejects a missing or duplicate channel type at compile time.
+template <typename Channel>
+[[nodiscard]] const auto &
+notification_descriptor(const NotificationDescriptorTuple &descriptors) noexcept {
+  return std::get<NotificationDescriptor<typename Channel::Value, Channel::channel_id()>>(
+      descriptors);
+}
+
 inline constexpr std::size_t kNotificationChannelCount =
     std::tuple_size_v<NotificationDescriptorTuple>;
 inline constexpr std::size_t kSubscriptionCapacity =
