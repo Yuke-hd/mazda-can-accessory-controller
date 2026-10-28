@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -64,6 +65,62 @@ class ArtifactPublicationTests(unittest.TestCase):
         self.assertFalse(check(self.root, self.old))
         with self.assertRaises(OSError):
             publish(self.root, self.old)
+
+    def test_symlinked_sets_rejected_without_external_mutation(self):
+        directory = publish(self.root, self.old)
+        index = (self.root / "current.json").read_bytes()
+        outside = self.root.parent / "outside"
+        (self.root / "sets").rename(outside)
+        (self.root / "sets").symlink_to(outside, target_is_directory=True)
+        snapshot = {p: p.read_bytes() for p in outside.rglob("*") if p.is_file()}
+        self.assertFalse(check(self.root, self.old))
+        for outputs in (self.old, self.new):
+            with self.assertRaisesRegex(OSError, "symlink"):
+                publish(self.root, outputs)
+        self.assertEqual((self.root / "current.json").read_bytes(), index)
+        self.assertEqual(snapshot, {p: p.read_bytes() for p in outside.rglob("*") if p.is_file()})
+        self.assertEqual(set(outside.iterdir()), {outside / directory.name})
+
+    def test_symlinked_generation_is_rejected_without_external_mutation(self):
+        directory = publish(self.root, self.old)
+        index = (self.root / "current.json").read_bytes()
+        outside = self.root.parent / "outside-generation"
+        directory.rename(outside)
+        directory.symlink_to(outside, target_is_directory=True)
+        self.assertFalse(check(self.root, self.old))
+        with self.assertRaisesRegex(OSError, "existing generation is corrupt"):
+            publish(self.root, self.old)
+        self.assertEqual((self.root / "current.json").read_bytes(), index)
+        self.assertEqual(self.old, {p.name: p.read_bytes() for p in outside.iterdir()})
+        self.assertEqual(list((self.root / "sets").glob(".staging-*")), [])
+
+    def test_valid_concurrent_same_generation_is_reused(self):
+        old_directory = publish(self.root, self.old)
+        def concurrent_publication(staging, destination):
+            destination.mkdir()
+            for name, data in self.new.items():
+                (destination / name).write_bytes(data)
+            raise FileExistsError("another writer published the same generation")
+        with patch("vehicle_profiles.artifact_set.os.rename", side_effect=concurrent_publication):
+            directory = publish(self.root, self.new)
+        self.assertTrue(check(self.root, self.new))
+        self.assertEqual(self.new, {p.name: p.read_bytes() for p in directory.iterdir()})
+        self.assertEqual(self.old, {p.name: p.read_bytes() for p in old_directory.iterdir()})
+        self.assertEqual(list((self.root / "sets").glob(".staging-*")), [])
+
+    def test_empty_existing_generation_is_rejected_preserving_current(self):
+        damaged = publish(self.root, self.new)
+        directory = publish(self.root, self.old)
+        index = (self.root / "current.json").read_bytes()
+        for path in damaged.iterdir():
+            path.unlink()
+        with self.assertRaisesRegex(OSError, "existing generation is corrupt"):
+            publish(self.root, self.new)
+        self.assertEqual(list(damaged.iterdir()), [])
+        self.assertEqual((self.root / "current.json").read_bytes(), index)
+        self.assertTrue(check(self.root, self.old))
+        self.assertEqual(self.old, {p.name: p.read_bytes() for p in directory.iterdir()})
+        self.assertEqual(list((self.root / "sets").glob(".staging-*")), [])
 
 
 class ArtifactCommandTests(unittest.TestCase):
@@ -177,6 +234,15 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR
         self.assertIn("existing generation is corrupt", failed.stdout + failed.stderr)
         self.assertEqual((build / "vehicle-profile/current.json").read_bytes(), index)
         self.assertFalse((selected_directory / "vehicle_profile_metadata.hpp").exists())
+        for path in selected_directory.iterdir():
+            path.unlink()
+        failed = subprocess.run(["cmake", "--build", str(build), "--target", "vehicle_profile_artifacts"],
+                                capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("existing generation is corrupt", failed.stdout + failed.stderr)
+        self.assertEqual((build / "vehicle-profile/current.json").read_bytes(), index)
+        self.assertEqual(list(selected_directory.iterdir()), [])
+        self.assertEqual(list((build / "vehicle-profile/sets").glob(".staging-*")), [])
         recovered = self.run_command("--print-directory")
         self.assertEqual(recovered.returncode, 0, recovered.stderr)
         self.assertTrue((Path(recovered.stdout.strip()) / "vehicle_profile_metadata.hpp").is_file())
@@ -186,6 +252,30 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR
         self.assertTrue(Path(selected).is_dir())
         checked = subprocess.run(check_command + ["--check"], capture_output=True, text=True)
         self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    def test_cmake_rejects_symlinked_sets_before_generation(self):
+        source = self.root / "sets-source"
+        source.mkdir()
+        build = self.root / "sets-build"
+        output = build / "vehicle-profile"
+        output.mkdir(parents=True)
+        outside = self.root / "outside-sets"
+        outside.mkdir()
+        (output / "sets").symlink_to(outside, target_is_directory=True)
+        assignments = "\n".join('  "' + self.source_args[i] + '"'
+                                  for i in range(1, len(self.source_args), 2))
+        (source / "CMakeLists.txt").write_text(f'''cmake_minimum_required(VERSION 3.20)
+project(profile_sets_escape NONE)
+include("{ROOT / 'tools/vehicle_profile.cmake'}")
+vehicle_profile_generate(MANIFEST "{self.manifest}" POLICIES "{self.policy}"
+ GENERATOR_REVISION test.v1 SOURCE_FILES
+{assignments})
+''')
+        failed = subprocess.run(["cmake", "-S", str(source), "-B", str(build)], capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("symlink", failed.stdout + failed.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertFalse((output / "current.json").exists())
 
     def test_cmake_rejects_symlink_output_escape_before_generation(self):
         source = self.root / "symlink-source"

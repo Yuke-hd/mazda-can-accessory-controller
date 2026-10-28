@@ -64,7 +64,8 @@ def check(root: Path, outputs: dict[str, bytes]) -> bool:
     """Non-mutating byte check, including missing/malformed/corrupt old sets."""
     digest = generation(outputs)
     try:
-        return ((root / INDEX_NAME).read_bytes() == _index(digest)
+        return (not (root / "sets").is_symlink()
+                and (root / INDEX_NAME).read_bytes() == _index(digest)
                 and _matches(root / "sets" / digest, outputs))
     except OSError:
         return False
@@ -80,11 +81,15 @@ def publish(root: Path, outputs: dict[str, bytes], *,
     verified generation. The writer seam is for late-output fault injection.
     """
     digest = generation(outputs)
+    sets = root / "sets"
+    if sets.is_symlink():
+        raise OSError("artifact sets directory must not be a symlink")
     if check(root, outputs):
         return root / "sets" / digest
-    sets = root / "sets"
     sets.mkdir(parents=True, exist_ok=True)
     destination = sets / digest
+    if (destination.exists() or destination.is_symlink()) and not _matches(destination, outputs):
+        raise OSError("existing generation is corrupt; use a fresh output root after investigating corruption")
     staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=sets))
     pointer: Path | None = None
     try:
