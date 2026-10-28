@@ -1,0 +1,85 @@
+// Intentionally included multiple times with MAZDA_NOTIFICATION_REGISTRATION defined.
+// Keep order and channel IDs stable: tuple traversal order is part of the private
+// dispatch behavior. The final row is a host-only fixed extension seam.
+
+MAZDA_NOTIFICATION_REGISTRATION(SelectorNotificationChannel, SelectorPosition,
+                                kSelectorNotificationChannel, 1, selector_channel_,
+                                signal_ids::kSelectorPosition, "selector_position",
+                                selector_position, candidate::kGearId,
+                                candidate::kSelectorDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(ActualGearNotificationChannel, ActualGear,
+                                kActualGearNotificationChannel, 2, actual_gear_channel_,
+                                signal_ids::kActualGear, "actual_gear", actual_gear,
+                                candidate::kGearId, candidate::kActualGearDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(TurnNotificationChannel, TurnState, kTurnNotificationChannel, 3,
+                                turn_channel_, signal_ids::kTurnState, "turn_state", turn_state,
+                                candidate::kTurnSwitchId,
+                                candidate::kTurnLeftSwitchDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(HazardNotificationChannel, bool, kHazardNotificationChannel, 4,
+                                hazard_channel_, signal_ids::kHazardRequest, "hazard_request",
+                                hazard_request, candidate::kTurnSwitchId,
+                                candidate::kHazardDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(LeftTurnNotificationChannel, bool, kLeftTurnNotificationChannel, 5,
+                                left_turn_channel_, signal_ids::kTurnRequestLeft,
+                                "left_turn_request", left_turn_request, candidate::kTurnSwitchId,
+                                candidate::kTurnLeftSwitchDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(RightTurnNotificationChannel, bool, kRightTurnNotificationChannel,
+                                6, right_turn_channel_, signal_ids::kTurnRequestRight,
+                                "right_turn_request", right_turn_request, candidate::kTurnSwitchId,
+                                candidate::kTurnRightSwitchDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(LiftgateNotificationChannel, bool, kLiftgateNotificationChannel, 7,
+                                liftgate_channel_, signal_ids::kLiftgateOpen, "liftgate_open",
+                                liftgate_open, candidate::kDoorsId,
+                                candidate::kLiftgateOpenDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(RearRightDoorNotificationChannel, bool,
+                                kRearRightDoorNotificationChannel, 8, rear_right_door_channel_,
+                                signal_ids::kDoorRearRight, "rear_right_door_open",
+                                rear_right_door_open, candidate::kDoorsId,
+                                candidate::kRearRightDoorOpenDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(RearLeftDoorNotificationChannel, bool,
+                                kRearLeftDoorNotificationChannel, 9, rear_left_door_channel_,
+                                signal_ids::kDoorRearLeft, "rear_left_door_open",
+                                rear_left_door_open, candidate::kDoorsId,
+                                candidate::kRearLeftDoorOpenDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(FrontLeftDoorNotificationChannel, bool,
+                                kFrontLeftDoorNotificationChannel, 10, front_left_door_channel_,
+                                signal_ids::kDoorFrontLeftRhd, "front_left_door_open_rhd",
+                                front_left_door_open_rhd, candidate::kDoorsId,
+                                candidate::kFrontLeftDoorOpenRhdDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(FrontRightDoorNotificationChannel, bool,
+                                kFrontRightDoorNotificationChannel, 11, front_right_door_channel_,
+                                signal_ids::kDoorFrontRightRhd, "front_right_door_open_rhd",
+                                front_right_door_open_rhd, candidate::kDoorsId,
+                                candidate::kFrontRightDoorOpenRhdDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(DoorsUnlockedNotificationChannel, bool,
+                                kDoorsUnlockedNotificationChannel, 12, doors_unlocked_channel_,
+                                signal_ids::kDoorsUnlocked, "doors_unlocked", doors_unlocked,
+                                candidate::kDoorsId, candidate::kDoorsUnlockedDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(LeftLampNotificationChannel, bool, kLeftLampNotificationChannel, 13,
+                                left_lamp_channel_, signal_ids::kIndicatorLampLeft,
+                                "left_indicator_lamp", left_indicator_lamp, candidate::kBlinkInfoId,
+                                candidate::kLeftIndicatorLampDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(RightLampNotificationChannel, bool, kRightLampNotificationChannel,
+                                14, right_lamp_channel_, signal_ids::kIndicatorLampRight,
+                                "right_indicator_lamp", right_indicator_lamp,
+                                candidate::kBlinkInfoId,
+                                candidate::kRightIndicatorLampDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(WiperLowNotificationChannel, bool, kWiperLowNotificationChannel, 15,
+                                wiper_low_channel_, signal_ids::kWiperLow, "wiper_low", wiper_low,
+                                candidate::kBlinkInfoId, candidate::kWiperLowDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(FrontWiperNotificationChannel, FrontWiperPosition,
+                                kFrontWiperNotificationChannel, 16, front_wiper_channel_,
+                                signal_ids::kWiperFrontPosition, "front_wiper", front_wiper,
+                                candidate::kTurnSwitchId,
+                                candidate::kFrontWiperDefinition.confidence)
+MAZDA_NOTIFICATION_REGISTRATION(BrakeNotificationChannel, bool, kBrakeNotificationChannel, 17,
+                                brake_channel_, signal_ids::kBrakePressed, "brake_pressed",
+                                brake_pressed, candidate::kBrakePedalId,
+                                candidate::kBrakePressedDefinition.confidence)
+#if !defined(ESP_PLATFORM)
+MAZDA_NOTIFICATION_REGISTRATION(TestFrontWiperNotificationChannel, FrontWiperPosition,
+                                kTestFrontWiperNotificationChannel, 18, test_front_wiper_channel_,
+                                vehicle_signals::SignalId{}, "test_front_wiper", front_wiper,
+                                candidate::kTurnSwitchId,
+                                candidate::kFrontWiperDefinition.confidence)
+#endif

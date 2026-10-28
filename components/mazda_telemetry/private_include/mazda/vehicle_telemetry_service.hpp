@@ -47,67 +47,14 @@ public:
   [[nodiscard]] bool publish(const LightingUpdate &) noexcept override { return true; }
 };
 
-inline constexpr std::uint16_t kSelectorNotificationChannel = 1;
-inline constexpr std::uint16_t kActualGearNotificationChannel = 2;
-inline constexpr std::uint16_t kTurnNotificationChannel = 3;
-inline constexpr std::uint16_t kHazardNotificationChannel = 4;
-inline constexpr std::uint16_t kLeftTurnNotificationChannel = 5;
-inline constexpr std::uint16_t kRightTurnNotificationChannel = 6;
-inline constexpr std::uint16_t kLiftgateNotificationChannel = 7;
-inline constexpr std::uint16_t kRearRightDoorNotificationChannel = 8;
-inline constexpr std::uint16_t kRearLeftDoorNotificationChannel = 9;
-inline constexpr std::uint16_t kFrontLeftDoorNotificationChannel = 10;
-inline constexpr std::uint16_t kFrontRightDoorNotificationChannel = 11;
-inline constexpr std::uint16_t kDoorsUnlockedNotificationChannel = 12;
-inline constexpr std::uint16_t kLeftLampNotificationChannel = 13;
-inline constexpr std::uint16_t kRightLampNotificationChannel = 14;
-inline constexpr std::uint16_t kWiperLowNotificationChannel = 15;
-inline constexpr std::uint16_t kFrontWiperNotificationChannel = 16;
-inline constexpr std::uint16_t kBrakeNotificationChannel = 17;
-
-using SelectorNotificationChannel =
-    vehicle_core::NotificationChannel<SelectorPosition, kSelectorNotificationChannel>;
-using ActualGearNotificationChannel =
-    vehicle_core::NotificationChannel<ActualGear, kActualGearNotificationChannel>;
-using TurnNotificationChannel =
-    vehicle_core::NotificationChannel<TurnState, kTurnNotificationChannel>;
-using HazardNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kHazardNotificationChannel>;
-using LeftTurnNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kLeftTurnNotificationChannel>;
-using RightTurnNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kRightTurnNotificationChannel>;
-using LiftgateNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kLiftgateNotificationChannel>;
-using RearRightDoorNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kRearRightDoorNotificationChannel>;
-using RearLeftDoorNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kRearLeftDoorNotificationChannel>;
-using FrontLeftDoorNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kFrontLeftDoorNotificationChannel>;
-using FrontRightDoorNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kFrontRightDoorNotificationChannel>;
-using DoorsUnlockedNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kDoorsUnlockedNotificationChannel>;
-using LeftLampNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kLeftLampNotificationChannel>;
-using RightLampNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kRightLampNotificationChannel>;
-using WiperLowNotificationChannel =
-    vehicle_core::NotificationChannel<bool, kWiperLowNotificationChannel>;
-using FrontWiperNotificationChannel =
-    vehicle_core::NotificationChannel<FrontWiperPosition, kFrontWiperNotificationChannel>;
-
-using BrakeNotificationChannel = vehicle_core::NotificationChannel<bool, kBrakeNotificationChannel>;
-
-#if !defined(ESP_PLATFORM)
-// Host-only extension seam. The channel is deliberately private and has no
-// corresponding public facade callback; it proves a new fixed channel can be
-// added by extending the descriptor tuple alone.
-inline constexpr std::uint16_t kTestFrontWiperNotificationChannel = 18;
-using TestFrontWiperNotificationChannel =
-    vehicle_core::NotificationChannel<FrontWiperPosition, kTestFrontWiperNotificationChannel>;
-#endif
+// One private typed registration list supplies channels, descriptor types/values,
+// and member storage for both production and the host extension seam.
+#define MAZDA_NOTIFICATION_REGISTRATION(alias, type, channel, number, member, id, name, signal,    \
+                                        identifier, confidence)                                    \
+  inline constexpr std::uint16_t channel = number;                                                 \
+  using alias = vehicle_core::NotificationChannel<type, channel>;
+#include "mazda/notification_registration.def"
+#undef MAZDA_NOTIFICATION_REGISTRATION
 
 // Fixed metadata records keep the service's typed state/channel wiring in one
 // place. Member pointers preserve compile-time value types while allowing the
@@ -190,46 +137,13 @@ template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor fin
   ValidationStatus validation{ValidationStatus::Reference};
 };
 
-#if defined(ESP_PLATFORM)
-using NotificationDescriptorTuple =
-    std::tuple<NotificationDescriptor<SelectorPosition, kSelectorNotificationChannel>,
-               NotificationDescriptor<ActualGear, kActualGearNotificationChannel>,
-               NotificationDescriptor<TurnState, kTurnNotificationChannel>,
-               NotificationDescriptor<bool, kHazardNotificationChannel>,
-               NotificationDescriptor<bool, kLeftTurnNotificationChannel>,
-               NotificationDescriptor<bool, kRightTurnNotificationChannel>,
-               NotificationDescriptor<bool, kLiftgateNotificationChannel>,
-               NotificationDescriptor<bool, kRearRightDoorNotificationChannel>,
-               NotificationDescriptor<bool, kRearLeftDoorNotificationChannel>,
-               NotificationDescriptor<bool, kFrontLeftDoorNotificationChannel>,
-               NotificationDescriptor<bool, kFrontRightDoorNotificationChannel>,
-               NotificationDescriptor<bool, kDoorsUnlockedNotificationChannel>,
-               NotificationDescriptor<bool, kLeftLampNotificationChannel>,
-               NotificationDescriptor<bool, kRightLampNotificationChannel>,
-               NotificationDescriptor<bool, kWiperLowNotificationChannel>,
-               NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
-               NotificationDescriptor<bool, kBrakeNotificationChannel>>;
-#else
-using NotificationDescriptorTuple =
-    std::tuple<NotificationDescriptor<SelectorPosition, kSelectorNotificationChannel>,
-               NotificationDescriptor<ActualGear, kActualGearNotificationChannel>,
-               NotificationDescriptor<TurnState, kTurnNotificationChannel>,
-               NotificationDescriptor<bool, kHazardNotificationChannel>,
-               NotificationDescriptor<bool, kLeftTurnNotificationChannel>,
-               NotificationDescriptor<bool, kRightTurnNotificationChannel>,
-               NotificationDescriptor<bool, kLiftgateNotificationChannel>,
-               NotificationDescriptor<bool, kRearRightDoorNotificationChannel>,
-               NotificationDescriptor<bool, kRearLeftDoorNotificationChannel>,
-               NotificationDescriptor<bool, kFrontLeftDoorNotificationChannel>,
-               NotificationDescriptor<bool, kFrontRightDoorNotificationChannel>,
-               NotificationDescriptor<bool, kDoorsUnlockedNotificationChannel>,
-               NotificationDescriptor<bool, kLeftLampNotificationChannel>,
-               NotificationDescriptor<bool, kRightLampNotificationChannel>,
-               NotificationDescriptor<bool, kWiperLowNotificationChannel>,
-               NotificationDescriptor<FrontWiperPosition, kFrontWiperNotificationChannel>,
-               NotificationDescriptor<bool, kBrakeNotificationChannel>,
-               NotificationDescriptor<FrontWiperPosition, kTestFrontWiperNotificationChannel>>;
-#endif
+using NotificationDescriptorTuple = decltype(std::tuple{
+#define MAZDA_NOTIFICATION_REGISTRATION(alias, type, channel, number, member, id, name, signal,    \
+                                        identifier, confidence)                                    \
+  NotificationDescriptor<type, channel>{},
+#include "mazda/notification_registration.def"
+#undef MAZDA_NOTIFICATION_REGISTRATION
+});
 
 inline constexpr std::size_t kNotificationChannelCount =
     std::tuple_size_v<NotificationDescriptorTuple>;
@@ -576,26 +490,11 @@ private:
   vehicle_core::MonotonicTimestamp debug_last_aggregate_refresh_us_{0};
 #endif
 
-  SelectorNotificationChannel selector_channel_{};
-  ActualGearNotificationChannel actual_gear_channel_{};
-  TurnNotificationChannel turn_channel_{};
-  HazardNotificationChannel hazard_channel_{};
-  LeftTurnNotificationChannel left_turn_channel_{};
-  RightTurnNotificationChannel right_turn_channel_{};
-  LiftgateNotificationChannel liftgate_channel_{};
-  RearRightDoorNotificationChannel rear_right_door_channel_{};
-  RearLeftDoorNotificationChannel rear_left_door_channel_{};
-  FrontLeftDoorNotificationChannel front_left_door_channel_{};
-  FrontRightDoorNotificationChannel front_right_door_channel_{};
-  DoorsUnlockedNotificationChannel doors_unlocked_channel_{};
-  LeftLampNotificationChannel left_lamp_channel_{};
-  RightLampNotificationChannel right_lamp_channel_{};
-  WiperLowNotificationChannel wiper_low_channel_{};
-  FrontWiperNotificationChannel front_wiper_channel_{};
-  BrakeNotificationChannel brake_channel_{};
-#if !defined(ESP_PLATFORM)
-  TestFrontWiperNotificationChannel test_front_wiper_channel_{};
-#endif
+#define MAZDA_NOTIFICATION_REGISTRATION(alias, type, channel, number, member, id, name, signal,    \
+                                        identifier, confidence)                                    \
+  alias member{};
+#include "mazda/notification_registration.def"
+#undef MAZDA_NOTIFICATION_REGISTRATION
   std::array<Registration, kSubscriptionCapacity> registrations_{};
   std::array<SignalSubscriptionRecord, kGenericSubscriptionCapacity> generic_records_{};
   std::array<std::optional<vehicle_core::MonotonicTimestamp>, kNotificationChannelCount>
