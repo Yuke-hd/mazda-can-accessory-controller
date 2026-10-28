@@ -32,12 +32,10 @@ signals the controller recognizes; the importer does not guess.
     {"path": "demo-a.dbc", "sha256": "<64 hex digits>", "bus": "body",
      "license": "Apache-2.0; synthetic fixture", "encoding": "utf-8"}
   ],
-  "units": ["rpm"],
-  "unit_conversions": [["rpm", "rpm", "1", "0"]],
-  "freshness_policies": [],
   "bindings": [
     {"target": "vehicle.engine_rpm", "message": "Engine", "field": "rpm",
-     "unit": "rpm"}
+     "unit": "rpm", "conversion": {"scale": "1", "offset": "0"},
+     "timeout_ms": 500}
   ]
 }
 ```
@@ -48,9 +46,15 @@ signals the controller recognizes; the importer does not guess.
 | `profile_id` | Stable profile id, `<make>.<model>` for a real profile (see Locations). |
 | `selected_bus` | The one logical bus whose fields can bind. Other buses remain inventory. |
 | `sources[]` | `path` (relative to the mapping file; also the logical path written to outputs), `sha256` (pins the exact bytes), `bus` (logical bus of that source), `license` (required license/provenance note) and optional `encoding` (`utf-8` default, or `cp1252`). |
-| `units`, `unit_conversions` | Unit vocabulary and conversions, copied into the derived registry. |
-| `freshness_policies` | Optional user-declared freshness timeouts, entries `{"target": "<catalog key>", "timeout_ms": <positive integer>}` (see Freshness). |
-| `bindings[]` | `target` (a controller signal key), `message` and `field` (names as they appear in the DBC), `unit`, and for enum targets a `choices` map from DBC `VAL_` labels to catalog choice keys. |
+| `bindings[]` | `target` (a controller signal key), `message` and `field` (names as they appear in the DBC), `unit` (the target unit; `""` for boolean and enum targets), and the optional members below. |
+
+Optional binding members:
+
+| Member | Meaning |
+| --- | --- |
+| `conversion` | `{"scale": "<decimal>", "offset": "<decimal>"}`. Both are JSON strings in the source lexer's exact-decimal grammar; JSON numbers are rejected and a zero scale fails. The source unit is the DBC field's unit and the target unit is `unit`. With equal units, `conversion` may be omitted or be an explicit identity (scale 1, offset 0); an explicit non-identity conversion on equal units is a mapping error. With different units `conversion` is required and never inferred; a missing one fails `incompatible_target`. There is no unit library and no coercion. A boolean or enum target has unit `""`; if its DBC field has a unit, an explicit identity conversion is required or the binding fails. |
+| `timeout_ms` | Optional user-declared freshness timeout (D6): a JSON integer (not a boolean) with `0 < timeout_ms <= 4294967295`, otherwise `invalid_freshness`. Absent means the signal stays freshness-unverified. The importer never derives one. |
+| `choices` | For enum targets, a map from DBC `VAL_` labels to catalog choice keys. |
 
 The loader is strict: unknown members, duplicate JSON keys, nonfinite numbers
 and wrong types fail. Import limits (source count, source bytes, token bytes,
@@ -102,14 +106,26 @@ enum choices.
 | --- | --- |
 | `profile_revisions` | `profile_id` to (`semantic_policy_revision`, `recognition_rule_revision`), each `mapping-v1:<hash>` over a different preimage (see Revision). |
 | `handlers` | Empty; imported profiles have no native handlers. |
-| `evidence` | One fixed importer entry per profile, `("mapping:<profile_id>", "user_mapped", "source_only")`, plus a user-claim entry for each declared timeout. |
-| `units`, `unit_conversions` | Copied from the mapping. |
+| `evidence` | Always `("mapping:<profile_id>", "user_mapped", "source_only")`; plus `("mapping:<profile_id>", "user_mapped", "operational")` only when at least one binding declares a `timeout_ms`. |
+| `units` | The set of binding `unit` values, including `""` when any boolean or enum binding exists. |
+| `unit_conversions` | One row (`field_unit`, `binding_unit`, `scale`, `offset`) per resolved unit pair; an omitted conversion on equal units is scale 1, offset 0. See Conversion pairs. |
 | `invalid_value_policies` | `["unavailable"]`, the only value the validator accepts. |
-| `freshness_policies` | One row per declared entry, keyed by (`profile_id`, `target`): (`profile_id`, `target`, `timeout_ms`, `"reviewed_operational"`, `"mapping:<profile_id>"`). See Freshness. |
+| `freshness_policies` | One row per binding with a `timeout_ms`, keyed by (`profile_id`, `target`): (`profile_id`, `target`, `timeout_ms`, `"reviewed_operational"`, `"mapping:<profile_id>"`). See Freshness. |
 
 The mapping chooses which field feeds which target; the importer and the
 existing validator still decide type, unit, conversion and choice
 compatibility. Incompatible mappings fail and are never coerced.
+
+#### Conversion pairs
+
+The validator keeps one conversion per (source unit, target unit) per profile,
+so the importer groups bindings by their resolved pair, identity pairs
+included. It compares scale and offset as exact rationals (`"1.0"` equals
+`"1"`). If every binding in a group agrees, it emits one row in canonical
+decimal text, so the bytes do not depend on binding order. If any disagree,
+the import fails with `conflicting_conversion`, listing every binding target in
+the group, sorted, with their mapping locations. There is no first-wins rule
+and no per-binding row.
 
 ### Deferred
 
@@ -240,8 +256,14 @@ Mapping errors are fatal, stable-coded and carry the binding's JSON location:
 | --- | --- |
 | `unknown_target` | `target` is not in the controller signal catalog. |
 | `duplicate_target` | Two bindings name one target. This replaces recognition ambiguity: nothing is ranked or tie-broken. |
-| `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`). |
+| `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`, or different units with no `conversion`). |
 | `stale_mapping` | `message` or `field` does not exist in the pinned sources. |
+| `conflicting_conversion` | Bindings that resolve to one unit pair declare different exact scale or offset; the report lists every target in the group, sorted. |
+| `invalid_freshness` | `timeout_ms` is not an integer, is a boolean, or is outside `0 < timeout_ms <= 4294967295`. |
+
+A malformed `conversion` (JSON number instead of string, bad decimal, zero
+scale) or a non-identity conversion on equal units is also a fatal mapping
+error with the binding's location.
 
 Brake pressure does not imply `vehicle.brake_pressed`, and indicator lamp
 state does not imply a turn request; the mapping author must map fields
@@ -253,17 +275,20 @@ The profile revision is two digests, each `mapping-v1:` followed by the
 SHA-256 of a normalized preimage. A preimage is the UTF-8 encoding of
 `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
 over the strict-JSON validated mapping. Normalization sorts `sources` by
-logical path, `bindings` by target, `units`, `unit_conversions` (as tuples)
-and `freshness_policies` (by `target`), and the keys of each `choices` map, so
-member order and source order never change a digest.
+logical path, `bindings` by target and the keys of each `choices` map. Scale
+and offset are written in canonical decimal text, and a `conversion` that is
+the identity is omitted, so an explicit identity and an omitted conversion
+hash the same. Member order and source order never change a digest.
 
 1. `semantic_policy_revision`: the preimage holds `version`, `profile_id`,
-   `selected_bus`, `units`, `unit_conversions`, `freshness_policies` and
-   `bindings` (`target`, `message`, `field`, `unit`, `choices`). It excludes
-   `sources` entirely (path, `sha256`, `bus`, `license`, `encoding`).
+   `selected_bus` and `bindings` sorted by target. Each binding contributes
+   `target`, `message`, `field`, `unit`, its canonical `conversion` (omitted
+   when identity), `timeout_ms` (omitted when absent) and `choices` with
+   sorted keys. It excludes `sources` entirely (path, `sha256`, `bus`,
+   `license`, `encoding`).
 2. `recognition_rule_revision`: the preimage is the whole normalized mapping,
-   sources included. This replaces the recognition-pack and vehicle-context
-   preimage.
+   sources included, with the same normalization. This replaces the
+   recognition-pack and vehicle-context preimage.
 
 The derived `ValidationPolicies.profile_revisions[profile_id]` is the pair
 (`semantic_policy_revision`, `recognition_rule_revision`). Source digests
@@ -279,24 +304,21 @@ literally.
 
 ### Freshness
 
-Freshness is user-declared. A mapping may declare a freshness timeout; it is
+Freshness is user-declared. A binding may declare a freshness timeout; it is
 the mapping author's claim, not reviewed evidence.
 
-Each `freshness_policies` entry is `{"target": "<catalog key>", "timeout_ms":
-<positive integer>}`; its sort key in the digest preimage is `target`. A target
-may appear at most once (a duplicate fails `duplicate_target`). The target must
-be in the catalog and bound in `bindings`; otherwise the entry fails
-`unknown_target` or `stale_mapping` respectively. A zero, negative or
-out-of-range timeout (above 4294967295 ms) fails `invalid_freshness`, the
-existing validator category.
+Freshness is the optional per-binding `timeout_ms` (see the binding members).
+A zero, negative, boolean, non-integer or out-of-range value fails
+`invalid_freshness`, the existing validator category.
 
-The derived registry row is (`profile_id`, `target`, `timeout_ms`,
+The derived registry row for each binding with a `timeout_ms` is
+(`profile_id`, `target`, `timeout_ms`,
 `"reviewed_operational"`, `"mapping:<profile_id>"`), and the importer sets the
 same basis and `evidence_ref` on the binding's `freshness` object. The existing
-validator's basis literal `reviewed_operational` is satisfied by the matching
-evidence entry `("mapping:<profile_id>", "user_mapped", "operational")`.
-That literal does not mean reviewed evidence for imported profiles: the claim is the mapping
-author's (D6). No validator code change is required, and the validator's
+validator's basis literal `reviewed_operational` is satisfied by the evidence
+entry `("mapping:<profile_id>", "user_mapped", "operational")`.
+That literal does not mean reviewed evidence for imported profiles: the claim
+is the mapping author's (D6). No validator code change is required, and the validator's
 timeout bounds and basis checks apply unchanged. A signal without a declared
 timeout stays freshness-unverified, and features that require `Fresh` stay off for it.
 Nothing derives a timeout, for example from `GenMsgCycleTime`. The source
@@ -328,7 +350,7 @@ people; callers branch on codes.
 | --- | --- |
 | `source_io`, `source_decode`, `source_digest_mismatch`, `source_provenance_missing` | Fatal source acquisition/provenance error. |
 | `dbc_syntax_error`, `unsupported_dbc_construct`, `source_conflict`, `unsupported_required_binding` | Fatal parse/composition/support error with source locations. |
-| `unknown_target`, `duplicate_target`, `incompatible_target`, `stale_mapping` | Fatal mapping error with the binding's `mapping.json` location. |
+| `unknown_target`, `duplicate_target`, `incompatible_target`, `stale_mapping`, `conflicting_conversion`, `invalid_freshness` | Fatal mapping error with the binding's `mapping.json` location. |
 | Existing normalized validator/policy/resource error categories | Forward the category and source ids; fail the artifact. |
 | `unmapped_field`, `unsupported_message` | Map to strict v1 diagnostic categories `unmapped`, `unsupported`; omit the affected binding. |
 | `all_features_disabled` | Required explicit result when no bindings remain. |
@@ -408,17 +430,22 @@ files and in-memory variants of them, must prove:
    with spans. Cross-byte Motorola, signed/unsigned 64-bit and exact decimal
    vectors independently check extraction normalization.
 4. **Mapping errors and isolation.** Unknown target, duplicate target,
-   unknown message or field (`stale_mapping`), type/unit/choice mismatch and
-   digest mismatch each fail with a stable code. Mapping `BrakePressure` to
+   unknown message or field (`stale_mapping`), type/unit/choice mismatch,
+   different units with no `conversion` (`incompatible_target`), a
+   non-identity conversion on equal units, bindings that resolve to one unit
+   pair with different conversions (`conflicting_conversion`, listing every
+   target) and digest mismatch each fail with a stable code. Mapping `BrakePressure` to
    `vehicle.brake_pressed` fails (number field, boolean target). No imported
    profile can carry `fresh_or_unverified` or a native handler. A declared
-   timeout yields freshness backed only by `user_mapped` evidence; a zero or
-   out-of-range timeout fails; an undeclared timeout leaves the signal
-   unverified. An empty bindings list reports `all_features_disabled`.
+   `timeout_ms` yields freshness backed only by `user_mapped` evidence, and
+   the `operational` evidence entry exists only when one is declared; a zero,
+   boolean or out-of-range `timeout_ms` fails `invalid_freshness`; an
+   undeclared timeout leaves the signal unverified. An empty bindings list reports `all_features_disabled`.
 5. **Identity and transaction.** Numeric, unit-conversion or freshness
-   changes alter compatibility identity; source-byte, license-only or
-   path-only changes alter artifact identity only. Repeated runs are byte-identical. A late failure preserves
-   the prior complete artifact set.
+   changes alter compatibility identity; changes confined to source bytes,
+   license or path alter artifact identity only. An explicit identity
+   conversion and an omitted one hash the same. Repeated runs are
+   byte-identical. A late failure preserves the prior complete artifact set.
 
 Host tests, firmware builds, bench measurements and vehicle evidence are
 reported separately; this docs-only change claims none of those runtime
