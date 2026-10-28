@@ -1275,6 +1275,101 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             for path in files:
                 self.assertIn(path.relative_to(root).as_posix(), detail)
 
+    def test_only_the_catalog_exporter_includes_a_mazda_private_header(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-tool-fixture-") as directory:
+            root = Path(directory)
+            private = root / "components/mazda_telemetry/private_include/mazda"
+            private.mkdir(parents=True)
+            (private / "signal_catalog.hpp").write_text("#pragma once\n", encoding="utf-8")
+            (private / "publication_store.hpp").write_text("#pragma once\n", encoding="utf-8")
+            (root / "tools").mkdir()
+            exporter = root / "tools/export_controller_signal_catalog.cpp"
+            exporter.write_text(
+                '#include <iostream>\n#include "mazda/signal_catalog.hpp"\n'
+                '#include "vehicle_signals/signal_catalog.hpp"\n',
+                encoding="utf-8",
+            )
+            (root / "tools/dump_mazda_metadata.cpp").write_text(
+                '#include "mazda/definitions.hpp"\n'
+                '// #include "mazda/signal_catalog.hpp" is only a comment here.\n',
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_tool_private_includes(root)
+            self.assertIn("OK   only the catalog exporter", output.getvalue())
+
+            (root / "tools/other_tool.cpp").write_text(
+                '#include "mazda/signal_catalog.hpp"\n'
+                '#include "../components/mazda_telemetry/private_include/mazda/x.hpp"\n',
+                encoding="utf-8",
+            )
+            exporter.write_text(
+                exporter.read_text(encoding="utf-8") + '#include "mazda/publication_store.hpp"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_tool_private_includes(root)
+            detail = str(raised.exception)
+            self.assertIn(
+                "tools/other_tool.cpp includes mazda_telemetry private header "
+                "mazda/signal_catalog.hpp",
+                detail,
+            )
+            self.assertIn("private_include/mazda/x.hpp", detail)
+            self.assertIn(
+                "tools/export_controller_signal_catalog.cpp includes mazda_telemetry private "
+                "header mazda/publication_store.hpp",
+                detail,
+            )
+            self.assertNotIn("dump_mazda_metadata", detail)
+
+            exporter.unlink()
+            (root / "tools/other_tool.cpp").unlink()
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_tool_private_includes(root)
+            self.assertIn("allowlisted catalog exporter is missing", str(raised.exception))
+
+    def test_product_builds_reject_host_only_profile_tooling(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-profile-fixture-") as directory:
+            root = Path(directory)
+            allowed = {
+                root / "CMakeLists.txt": "add_executable(export_controller_signal_catalog x.cpp)\n",
+                root / "tools/vehicle_profile.cmake": 'file(GLOB m "vehicle_profiles/*.py")\n',
+                root / "tests/host/CMakeLists.txt": "set(E export_controller_signal_catalog)\n",
+                root / "firmware/example/CMakeLists.txt": (
+                    'include("${ROOT}/tools/vehicle_profile.cmake")\n'
+                    "# Never add tools/vehicle_profiles here.\n"
+                ),
+                root / "lib/example/CMakeLists.txt": "add_library(example STATIC a.cpp)\n",
+            }
+            for path, text in allowed.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                check_architecture._check_host_only_tooling(root)
+            self.assertIn("OK   firmware, components/ and lib/ builds", output.getvalue())
+
+            forbidden = (
+                (root / "firmware/example/main/CMakeLists.txt", "vehicle_profiles"),
+                (root / "components/example/CMakeLists.txt", "export_controller_signal_catalog"),
+                (root / "lib/example/profile.cmake", "vehicle_profiles"),
+                (root / "components/example/idf_component.yml", "vehicle_profiles"),
+            )
+            for path, marker in forbidden:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"set(P ${{ROOT}}/tools/{marker})\n", encoding="utf-8")
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_host_only_tooling(root)
+            detail = str(raised.exception)
+            for path, marker in forbidden:
+                self.assertIn(
+                    f"{path.relative_to(root).as_posix()} references host-only tool {marker}",
+                    detail,
+                )
+            self.assertNotIn("firmware/example/CMakeLists.txt", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

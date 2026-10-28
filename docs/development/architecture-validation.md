@@ -73,14 +73,25 @@ its CMake requirements are limited to `action_engine`, `companion_protocol`,
 `vehicle_core` and `vehicle_signals`. The lighting sink contract is allowed
 only so the dry run can implement the discarding scratch sink.
 
+Two host-tooling checks record the vehicle-profile tooling boundaries.
+Among C/C++ files under `tools/`, only
+`tools/export_controller_signal_catalog.cpp` may include a header from
+`components/mazda_telemetry/private_include`, and only
+`mazda/signal_catalog.hpp`. The check fails if the allowlisted exporter is
+missing. A build-file scan of `CMakeLists.txt`, `*.cmake`, `*.yml` and `*.yaml`
+under `firmware/`, `components/` and `lib/` rejects any non-comment reference
+to `vehicle_profiles` or `export_controller_signal_catalog`. The top-level
+host build, `tests/` and the `tools/vehicle_profile.cmake` helper may reference
+them; product builds use that helper rather than the Python package.
+
 The gate owns the receive-only, board-artifact, and local-ARGB semantic
 validators, plus checks that retired raw-capture code has no active dependency.
 Those source validators are not separately registered or repeated by firmware
 CI. The historical protocol and work-item documentation remains outside the
 active-path scan.
 
-Negative fixtures for a forbidden core dependency and a retired marker in an
-active build path can be run with:
+Negative fixtures for a forbidden core dependency, a retired marker in an
+active build path, and both host-tooling checks can be run with:
 
 ```sh
 python3 tests/tools/check_architecture_test.py -v
