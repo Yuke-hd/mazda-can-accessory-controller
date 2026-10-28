@@ -114,6 +114,24 @@ class RecognitionTests(unittest.TestCase):
         pack = pack_with(lambda d: d["rules"].append(copy.deepcopy(d["rules"][0])))
         self.assertEqual(len(run(pack_text=pack).profile["bindings"]), 1)
 
+    def test_conflicting_rule_templates_fail_closed_in_either_order(self):
+        def conflicting(first):
+            def mutate(d):
+                copy_ = copy.deepcopy(d["rules"][0])
+                copy_["binding"]["runtime_id"] = 7
+                d["rules"].insert(0 if first else 1, copy_)
+            return mutate
+        results = [run(pack_text=pack_with(conflicting(first))) for first in (True, False)]
+        for result in results:
+            self.assertEqual(result.profile["bindings"], [])
+            self.assertIn("ambiguous_binding", codes(result))
+        self.assertEqual(results[0].identity.artifact_preimage,
+                         results[1].identity.artifact_preimage)
+
+    def test_diagnostic_overflow_is_reported_after_recognition(self):
+        result = run(request(limits=dict(request()["limits"], max_diagnostics=0)))
+        self.assertEqual(result.report["diagnostics"][0]["stage"], "result")
+
     def test_distinct_fields_for_one_key_are_ambiguous(self):
         text = (FIXTURES / "demo-a.dbc").read_text().replace(
             "BrakePressure", "engine_rpm").replace('"kPa"', '"rpm"').replace(
