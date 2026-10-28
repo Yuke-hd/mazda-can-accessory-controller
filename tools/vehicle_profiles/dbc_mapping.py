@@ -6,6 +6,7 @@ compatibility are checked against the signal catalog at import time (host tools
 only).
 """
 
+from fractions import Fraction
 import hashlib
 import json
 import re
@@ -14,17 +15,41 @@ from typing import Any
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+# The source lexer's exact-decimal grammar (see dbc-import "Supported DBC subset").
+_DECIMAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z")
 ENCODINGS = ("utf-8", "cp1252")
-TOP_KEYS = ("version profile_id selected_bus sources units unit_conversions "
-            "freshness_policies bindings")
+TOP_KEYS = "version profile_id selected_bus sources bindings"
 SOURCE_KEYS = "path sha256 bus license"
 DEFAULT_ENCODING = "utf-8"
 BINDING_KEYS = "target message field unit"
+BINDING_OPTIONAL = "conversion timeout_ms"
+MAX_TIMEOUT_MS = 0xFFFFFFFF
+IDENTITY = ("1", "0")
 
 
 class MappingError(ValueError):
     """A mapping that cannot be read or is not an exact version-1 mapping."""
+
+    def __init__(self, reason: str, code: str = "invalid_mapping") -> None:
+        super().__init__(reason)
+        self.code = code
+
+
+def decimal_text(value: Fraction) -> str:
+    """Exact normalized-v1 decimal for a Fraction whose denominator is 2^a * 5^b."""
+    twos = fives = 0
+    denominator = value.denominator
+    while denominator % 2 == 0:
+        denominator, twos = denominator // 2, twos + 1
+    while denominator % 5 == 0:
+        denominator, fives = denominator // 5, fives + 1
+    if denominator != 1:
+        raise ValueError("value has no finite decimal form")
+    places = max(twos, fives)
+    scaled = abs(value.numerator) * 10 ** places // value.denominator
+    digits = str(scaled).rjust(places + 1, "0")
+    text = digits[:-places] + "." + digits[-places:] if places else digits
+    return "-" + text if value < 0 and scaled else text
 
 
 def strict_json(text: str) -> Any:
@@ -74,8 +99,41 @@ def _source_path(value: Any) -> str:
     return path
 
 
+def _exact_decimal(value: Any, name: str) -> Fraction:
+    """Parse a JSON string in the lexer's decimal grammar; JSON numbers are rejected."""
+    if type(value) is not str or len(value) > 1024 or not _DECIMAL.match(value):
+        raise MappingError(f"{name} must be an exact decimal string")
+    exponent = re.search(r"[eE]([+-]?[0-9]+)$", value)
+    if exponent and (len(exponent[1].lstrip("+-")) > 4 or abs(int(exponent[1])) > 1024):
+        raise MappingError(f"{name} exponent is out of range")
+    return Fraction(value)
+
+
+def _binding(binding: Any) -> None:
+    _object(binding, BINDING_KEYS, "binding", BINDING_OPTIONAL)
+    for key in ("target", "message", "field"):
+        _text(binding[key], "binding " + key)
+    _text(binding["unit"], "binding unit", empty=True)
+    if "conversion" in binding:
+        conversion = _object(binding["conversion"], "scale offset", "conversion")
+        scale = _exact_decimal(conversion["scale"], "conversion scale")
+        offset = _exact_decimal(conversion["offset"], "conversion offset")
+        if scale == 0:
+            raise MappingError("conversion scale must not be zero", "incompatible_target")
+        binding["conversion"] = {"scale": decimal_text(scale), "offset": decimal_text(offset)}
+    if "timeout_ms" in binding:
+        timeout = binding["timeout_ms"]
+        if type(timeout) is not int or not 0 < timeout <= MAX_TIMEOUT_MS:
+            raise MappingError("timeout_ms must be an integer in 1..4294967295",
+                               "invalid_freshness")
+
+
 def load_mapping(text: str) -> dict:
-    """Read and shape-check one version-1 mapping; return the plain dict."""
+    """Read and shape-check one version-1 mapping; return the plain dict.
+
+    Conversion decimals are rewritten to canonical decimal text; an explicit
+    identity conversion stays present (it matters for different units).
+    """
     mapping = _object(strict_json(text), TOP_KEYS, "mapping")
     if type(mapping["version"]) is not int or mapping["version"] != 1:
         raise MappingError("expected a version-1 mapping")
@@ -95,26 +153,15 @@ def load_mapping(text: str) -> dict:
         _text(source["license"], "source license", empty=True)
         if source["encoding"] not in ENCODINGS:
             raise MappingError("source encoding must be utf-8 or cp1252")
-    units = [_text(unit, "unit", empty=True) for unit in _list(mapping["units"], "units")]
-    if len(set(units)) != len(units):
-        raise MappingError("units must be unique")
-    seen = set()
-    for row in _list(mapping["unit_conversions"], "unit_conversions"):
-        if not isinstance(row, list) or len(row) != 4 or any(type(v) is not str for v in row):
-            raise MappingError("unit conversions are [source, target, scale, offset] strings")
-        if not _DECIMAL.match(row[2]) or not _DECIMAL.match(row[3]):
-            raise MappingError("unit conversion scale and offset must be decimal strings")
-        if tuple(row[:2]) in seen:
-            raise MappingError("duplicate unit conversion")
-        seen.add(tuple(row[:2]))
-    if _list(mapping["freshness_policies"], "freshness_policies"):
-        raise MappingError("freshness policies are not supported yet")
     for binding in _list(mapping["bindings"], "bindings"):
-        _object(binding, BINDING_KEYS, "binding")
-        for key in ("target", "message", "field"):
-            _text(binding[key], "binding " + key)
-        _text(binding["unit"], "binding unit", empty=True)
+        _binding(binding)
     return mapping
+
+
+def conversion_of(binding: dict) -> tuple[str, str]:
+    """Canonical (scale, offset) texts; an omitted conversion is the identity."""
+    conversion = binding.get("conversion")
+    return (conversion["scale"], conversion["offset"]) if conversion else IDENTITY
 
 
 def _digest(preimage: dict) -> str:
@@ -122,16 +169,24 @@ def _digest(preimage: dict) -> str:
     return "mapping-v1:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def _binding_preimage(binding: dict) -> dict:
+    """A binding without its identity conversion, so omission and identity hash alike."""
+    result = {key: binding[key] for key in BINDING_KEYS.split()}
+    if conversion_of(binding) != IDENTITY:
+        result["conversion"] = dict(binding["conversion"])
+    for key in ("timeout_ms", "choices"):
+        if key in binding:
+            result[key] = binding[key]
+    return result
+
+
 def _normalized(mapping: dict, *, sources: bool) -> dict:
     """Order-insensitive preimage; list order in the file never changes a digest."""
-    def by_json(items):
-        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True))
+    bindings = [_binding_preimage(binding) for binding in mapping["bindings"]]
     result = {
         "version": mapping["version"], "profile_id": mapping["profile_id"],
-        "selected_bus": mapping["selected_bus"], "units": sorted(mapping["units"]),
-        "unit_conversions": sorted(tuple(row) for row in mapping["unit_conversions"]),
-        "freshness_policies": by_json(mapping["freshness_policies"]),
-        "bindings": sorted(mapping["bindings"], key=lambda item: (
+        "selected_bus": mapping["selected_bus"],
+        "bindings": sorted(bindings, key=lambda item: (
             item["target"], json.dumps(item, sort_keys=True)))}
     if sources:
         result["sources"] = sorted(mapping["sources"], key=lambda item: item["path"])

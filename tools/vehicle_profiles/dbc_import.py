@@ -7,15 +7,16 @@ the strict v1 Diagnostic (host tools only).
 """
 
 from dataclasses import dataclass
-from fractions import Fraction
 import json
 from pathlib import Path, PurePosixPath
 
 from .canonical import ProfileIdentity, identify_profile
 from .dbc_lexer import LexerError, LexerLimits, SourceRequest, Span, load_sources
-from .dbc_mapping import MappingError, load_mapping, mapping_revision, semantic_revision
+from .dbc_mapping import (IDENTITY, MappingError, conversion_of, decimal_text, load_mapping,
+                          mapping_revision, semantic_revision)
 from .dbc_parser import ParserLimits, Signal, SourceInventory, parse_tokens
-from .dbc_registry import EVIDENCE_CONFIDENCE, EVIDENCE_ELIGIBILITY, derive_registry, evidence_ref
+from .dbc_registry import (ELIGIBILITY_SOURCE, EVIDENCE_CONFIDENCE, FRESHNESS_BASIS,
+                           conflicts, conversion_groups, derive_registry, evidence_ref)
 from .model import FORMAT, VERSION
 from .validation import ProfileValidationError
 
@@ -39,23 +40,6 @@ class ImportResult:
     profile: dict | None
     identity: ProfileIdentity | None
     report: dict
-
-
-def decimal_text(value: Fraction) -> str:
-    """Exact normalized-v1 decimal for a Fraction whose denominator is 2^a * 5^b."""
-    twos = fives = 0
-    denominator = value.denominator
-    while denominator % 2 == 0:
-        denominator, twos = denominator // 2, twos + 1
-    while denominator % 5 == 0:
-        denominator, fives = denominator // 5, fives + 1
-    if denominator != 1:
-        raise ValueError("value has no finite decimal form")
-    places = max(twos, fives)
-    scaled = abs(value.numerator) * 10 ** places // value.denominator
-    digits = str(scaled).rjust(places + 1, "0")
-    text = digits[:-places] + "." + digits[-places:] if places else digits
-    return "-" + text if value < 0 and scaled else text
 
 
 def _location(span: Span) -> dict:
@@ -103,7 +87,6 @@ def _field(signal: Signal, source_id: str) -> dict:
 def _resolve(mapping: dict, inventory: SourceInventory, catalog: dict,
              source_id: str) -> tuple[list[tuple[dict, Signal]], list[dict]]:
     """Resolve bindings to signals; return (resolved, fatal items)."""
-    conversions = {(s, t) for s, t, _, _ in mapping["unit_conversions"]}
     resolved, errors, targets = [], [], set()
 
     def error(code: str, target: str, spans, reason: str) -> None:
@@ -137,26 +120,36 @@ def _resolve(mapping: dict, inventory: SourceInventory, catalog: dict,
         if entry["type"] != "number":
             error("incompatible_target", target, signal.spans,
                   "only number targets are supported by this importer step")
-        elif (signal.unit, binding["unit"]) not in conversions:
+        elif signal.unit == binding["unit"] and conversion_of(binding) != IDENTITY:
             error("incompatible_target", target, signal.spans,
-                  "no declared unit conversion from the field unit to the binding unit")
+                  "a non-identity conversion is not allowed between equal units")
+        elif signal.unit != binding["unit"] and "conversion" not in binding:
+            error("incompatible_target", target, signal.spans,
+                  "a conversion is required between different units")
         else:
             resolved.append((binding, signal))
+    for (source, unit), targets in conflicts(conversion_groups(
+            (binding, signal.unit) for binding, signal in resolved)):
+        errors.append(_item("conflicting_conversion", "mapping", f"{source}->{unit}",
+                            [source_id], [], "bindings of one unit pair disagree on the "
+                            "conversion: " + ", ".join(targets), "error"))
     return resolved, errors
 
 
 def _binding(index: int, binding: dict, signal: Signal, mapping: dict, entry: dict) -> dict:
-    scale, offset = next((scale, offset) for s, t, scale, offset in mapping["unit_conversions"]
-                         if (s, t) == (signal.unit, binding["unit"]))
+    scale, offset = conversion_of(binding)
     conversion = {"source_unit": signal.unit, "target_unit": binding["unit"], "scale": scale,
                   "offset": offset, "target_precision": "float32", "invalid_ranges": []}
+    ref = evidence_ref(mapping["profile_id"])
+    freshness = ({"timeout_ms": binding["timeout_ms"], "basis": FRESHNESS_BASIS,
+                  "evidence_ref": ref} if "timeout_ms" in binding else None)
     return {"key": binding["target"], "runtime_id": index, "type": "number",
             "unit": binding["unit"], "capabilities": list(entry["capabilities"]), "choices": [],
             "kind": "dbc", "inputs": [signal.field_id],
             "policy": {"conversion": conversion, "enum_map": [], "invalid_value": "unavailable"},
-            "evidence": {"ref": evidence_ref(mapping["profile_id"]),
-                         "confidence": EVIDENCE_CONFIDENCE, "eligibility": EVIDENCE_ELIGIBILITY},
-            "freshness": None}
+            "evidence": {"ref": ref, "confidence": EVIDENCE_CONFIDENCE,
+                         "eligibility": ELIGIBILITY_SOURCE},
+            "freshness": freshness}
 
 
 def _diagnostics(inventory: SourceInventory, bound: set[str], source_id: str) -> list[dict]:
@@ -237,7 +230,8 @@ def import_profile(mapping_path: Path | str) -> ImportResult:
                         for item in items],
         "compatibility_identity": PLACEHOLDER, "artifact_identity": PLACEHOLDER}
     try:
-        identity = identify_profile(document, policies=derive_registry(mapping),
+        identity = identify_profile(document, policies=derive_registry(
+                                        mapping, {b["target"]: sig.unit for b, sig in resolved}),
                                     generator_revision=GENERATOR_REVISION,
                                     validation_limits=LIMITS)
     except ProfileValidationError as error:
