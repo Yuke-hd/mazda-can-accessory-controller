@@ -79,6 +79,11 @@ def _compose_fields(signals: list[Signal]) -> tuple[tuple[ComposedSignal, ...], 
         by_id.setdefault(signal.field_id, []).append(signal)
     groups: dict[tuple, list[Signal]] = {}
     for field_id, found in sorted(by_id.items()):
+        for other in found[1:]:
+            if _signature(other) != _signature(found[0]):
+                raise ComposeError(
+                    f"incompatible definitions of source signal name {found[0].name}",
+                    (found[0].spans[0], other.spans[0]))
         merged = replace(found[0], spans=_spans(s for item in found for s in item.spans))
         groups.setdefault(_signature(merged), []).append(merged)
     ordered = sorted(groups.values(), key=lambda group: group[0].field_id)
