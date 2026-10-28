@@ -1,53 +1,124 @@
-# Offline DBC import and automatic recognition
+# Offline DBC import with explicit mapping
 
-Status: proposed module contract for owner review. This document specifies the
-`dbc-import` module; it does not add a parser, recognition engine, dependency,
-or vehicle support. Importer implementation tickets may start only after the
-owner accepts this contract and its acceptance examples.
+Status: proposed module contract for owner review, revised for explicit
+`mapping.json` import (milestone-6 decisions D1-D6, tracked in #310). This
+document specifies the `dbc-import` module; it does not add a parser, mapping
+loader, dependency, or vehicle support. Importer implementation tickets may
+start only after the owner accepts this contract and its acceptance examples.
 
 ## Boundary and inputs
 
 The importer runs on the host before a build. It produces the
 [normalized version-one profile](v1-format.md), its two computed identities,
-and a source/recognition report. The existing `SignalProvider` remains the
-consumer boundary. Build selection and command-line syntax belong to the
-later integration contract; runtime storage and handlers belong to the runtime
-contract. The importer never opens a CAN interface or emits transmit code.
+and a source/mapping report. The existing `SignalProvider` remains the
+consumer boundary. Build selection and the integration of the command line
+belong to the later integration contract; runtime storage and handlers belong
+to the runtime contract. The importer never opens a CAN interface or emits
+transmit code.
 
-A request supplies these explicit inputs:
+The only per-profile inputs are the DBC source files and one user-authored
+`mapping.json`. There is no request file, recognition pack, vehicle context or
+hand-written registry. The mapping author explicitly maps DBC fields to
+signals the controller recognizes; the importer does not guess.
 
-- Stable `profile_id`, one `selected_bus`, and one reviewed recognition/model
-  policy-pack id and revision.
-- Vehicle context: make, model/platform, model year, market and trim. Unknown
-  values are explicit; a missing value cannot satisfy a restricted rule.
-- Source records: stable source id, local input path, logical package-relative
-  artifact path, logical bus, source revision or `null`, and a recorded
-  license/provenance reference. An expected byte digest is optional for a
-  pinned source package; the tool always computes the actual SHA-256 itself.
-- The explicit `ValidationPolicies` registry, generator revision and effective
-  parser/consumer limits required by `identify_profile`. No Mazda registry or
-  policy is inherited implicitly.
+### `mapping.json`
 
-The owner chooses sources and context, rather than assigning individual DBC
-fields to controller inputs. A DBC filename, node name, sender or `BS_` value
-does not select a physical CAN interface, bitrate, vehicle model or bus.
-Each source's logical bus comes from the request. Only the selected bus can
-contribute executable bindings; other buses remain inventory.
+```json
+{
+  "version": 1,
+  "profile_id": "synthetic.demo",
+  "selected_bus": "body",
+  "sources": [
+    {"path": "demo-a.dbc", "sha256": "<64 hex digits>", "bus": "body",
+     "license": "Apache-2.0; synthetic fixture", "encoding": "utf-8"}
+  ],
+  "units": ["rpm"],
+  "unit_conversions": [["rpm", "rpm", "1", "0"]],
+  "freshness_policies": [],
+  "bindings": [
+    {"target": "vehicle.engine_rpm", "message": "Engine", "field": "rpm",
+     "unit": "rpm"}
+  ]
+}
+```
 
-Read source bytes once, verify any expected digest, then decode with the
-source's explicitly declared encoding (`utf-8` or `cp1252` in version one).
-Decoding errors fail import; replacement characters and guessed encodings are
-forbidden. Hash the original bytes, before decoding or newline handling.
-Local absolute paths stay in host diagnostics only and never enter generated
-artifacts. A recorded license reference is required even for a privately
-licensed source. It establishes provenance, not permission to redistribute:
-committed DBCs and derived material still follow the repository's
+| Member | Meaning |
+| --- | --- |
+| `version` | Mapping format version; `1`. |
+| `profile_id` | Stable profile id, `<make>.<model>` for a real profile (see Locations). |
+| `selected_bus` | The one logical bus whose fields can bind. Other buses remain inventory. |
+| `sources[]` | `path` (relative to the mapping file; also the logical path written to outputs), `sha256` (pins the exact bytes), `bus` (logical bus of that source), `license` (required license/provenance note) and optional `encoding` (`utf-8` default, or `cp1252`). |
+| `units`, `unit_conversions` | Unit vocabulary and conversions, copied into the derived registry. |
+| `freshness_policies` | Optional user-declared freshness timeouts (see Freshness). |
+| `bindings[]` | `target` (a controller signal key), `message` and `field` (names as they appear in the DBC), `unit`, and for enum targets a `choices` map from DBC `VAL_` labels to catalog choice keys. |
+
+The loader is strict: unknown members, duplicate JSON keys, nonfinite numbers
+and wrong types fail. Import limits (source count, source bytes, token bytes,
+records, fields, total diagnostics) and the `utf-8` encoding default are
+fixed in importer code and are not mapping input; the effective limits still
+enter artifact identity through `validation_limits`.
+
+A source's logical bus comes from the mapping. A DBC filename, node name,
+sender or `BS_` value does not select a physical CAN interface, bitrate,
+vehicle model or bus. Only the selected bus can contribute executable
+bindings.
+
+Read source bytes once, verify the pinned SHA-256, then decode with the
+source's declared encoding. A missing, changed or wrong file fails
+`source_digest_mismatch`. Decoding errors fail import; replacement characters
+and guessed encodings are forbidden. Hash the original bytes, before decoding
+or newline handling. A `sources[].path` is relative to the mapping file and
+may not leave the profile directory (no absolute path, no `..`). Local
+absolute paths stay in host diagnostics only and never enter generated
+artifacts. A recorded license note is required even for a privately licensed
+source. It establishes provenance, not permission to redistribute: committed
+DBCs and derived material still follow the repository's
 [vehicle-data and licensing policy](../../development/license-and-vehicle-data.md).
+
+### Locations
+
+| What | Where |
+| --- | --- |
+| Real profiles | `vehicle-profiles/<make>/<model>/`: `mapping.json` plus the DBC files it references, when licensable. Self-contained; `profile_id` is `<make>.<model>` and must match the directory. |
+| Test fixtures | `tests/fixtures/vehicle-profiles/dbc/` (synthetic `demo-a.dbc`, `demo-b.dbc`, `mapping-*.json`, `PROVENANCE.md`). |
+| Generated output | Under `build/` only, never committed. |
+
+Only the DBC files (when their license allows) and `mapping.json` are
+committed. The derived registry, profile, report and any generated code are
+build products. Nothing in `vehicle-profiles/` is code, and no repository code
+refers to a specific profile; the importer takes the directory as an
+argument. The `vehicle-profiles/` directory appears with the first real
+profile.
+
+### Derived registry
+
+The importer builds the `ValidationPolicies` registry from the mapping; no
+per-profile registry file exists. Targets come from
+`tools/controller_signal_catalog.json`, which supplies type, capabilities and
+enum choices.
+
+| Registry key | Derived as |
+| --- | --- |
+| `profile_revisions` | `profile_id` to (`mapping-v1:<hash>`, `mapping-v1:<hash>`). |
+| `handlers` | Empty; imported profiles have no native handlers. |
+| `evidence` | One fixed importer entry per profile, `("mapping:<profile_id>", "user_mapped", "source_only")`, plus a user-claim entry for each declared timeout. |
+| `units`, `unit_conversions` | Copied from the mapping. |
+| `invalid_value_policies` | `["unavailable"]`, the only value the validator accepts. |
+| `freshness_policies` | Copied from the mapping. |
+
+The mapping chooses which field feeds which target; the importer and the
+existing validator still decide type, unit, conversion and choice
+compatibility. Incompatible mappings fail and are never coerced.
+
+### Deferred
+
+The builder web app, which would write the same `mapping.json`, is deferred to
+a later milestone. This contract covers the command-line importer only.
 
 ## Supported DBC subset
 
 Version one parses the complete input into a source inventory before applying
-recognition. Whitespace and line endings have no semantic effect; outside
+the mapping. Whitespace and line endings have no semantic effect; outside
 strings, `//` comments end at the next line ending or end of file. Quoted
 strings accept escaped quote and backslash; unsupported escapes, unterminated
 strings, trailing unparsed tokens and malformed records are errors. Names use
@@ -76,7 +147,7 @@ encoded id or payload length fails. An unknown format label is unsupported.
 `BusType` and `ProtocolType` accept absent metadata or the label `CAN`; other
 protocol labels fail as unsupported and cannot configure hardware. Start
 values, invalid values, send types and all other attributes do not become availability,
-freshness, enum or handler policies. A reviewed model rule that needs an
+freshness, enum or handler policies. A mapping that needs an
 unsupported attribute must report `unsupported_required_binding`.
 
 Source integer tokens match `[+-]?[0-9]+`, with a negative value allowed only
@@ -100,14 +171,14 @@ values, zero scale and inconsistent ranges fail.
 The existing normalized validator owns the Intel/Motorola walk and exact
 64-bit/range checks; the parser must not introduce a second bit convention.
 
-Every request supplies nonnegative integer limits for source count, source
+The importer applies fixed nonnegative integer limits for source count, source
 bytes, token bytes, records, fields and total diagnostics. Numeric tokens must
 also meet the normalized validator's existing exact-representation limits.
 Exceeding any limit is a fatal `resource_overflow`, never truncation. The
 effective limits enter artifact identity through `validation_limits`; concrete
 build defaults are an integration decision.
 
-## Composition before recognition
+## Composition before mapping
 
 Composition keys are `(logical_bus, identifier_format, wire_identifier)`.
 Parse and compare selected-bus definitions before dropping unsupported or
@@ -143,65 +214,74 @@ Known unsupported wire forms (extended id, length above eight, multiplexing,
 IEEE payload values) remain in the report, never in executable v1 messages.
 Do not decode the plain fields of a multiplexed message as an apparent
 nonmultiplexed subset. An unused unsupported message produces an `unsupported`
-diagnostic. If a selected recognition/policy rule requires such a message or
+diagnostic. If a mapping binding names such a message or
 field, fail the artifact with `unsupported_required_binding`; a successful
 artifact must not imply partial support for that binding.
 
-## Reviewed automatic recognition
+## Explicit mapping
 
-A policy pack is versioned repository data/code reviewed for its exact profile
-scope. It declares context predicates, source/evidence references, aliases,
-mechanical constraints, canonical types/units/choices, conversion and invalid
-value rules, handler id/revision, and explicit optional freshness. Its revision
-must agree with the supplied `ValidationPolicies.profile_revisions` entry.
-Unknown packs, revisions, handlers or policy references fail validation.
-No pack can supply arbitrary executable expressions from DBC text.
+The mapping author owns everything car-specific; importer code owns only
+car-independent rules (the DBC subset, parser, merge and conflict rules, the
+target catalog, validator rules, registry derivation, identities and
+publication). DBC text is never evaluated. Names, spelling similarity, units
+or file order never select a target: only a `bindings` entry does.
 
-The resolved `recognition_rule_revision` must identify the pack and exact
-context inputs, rather than only a shared parser/library version. Define it
-as `recognition-v1:` followed by SHA-256 of this recognition-input preimage:
-`format` is `dbc-recognition-input-v1`, `pack_id` and `pack_revision` are
-registered identifiers, and `context` has exactly `make`, `model`, `platform`,
-`model_year`, `market` and `trim`. Text values use the pack's exact registered
-ASCII codes or `null`; `model_year` is an integer (excluding booleans) or
-`null`. Serialize as UTF-8 JSON, sorted object keys, compact separators, no ASCII escaping and no nonfinite
-numbers. The resolver supplies the matching expected profile revision pair to
-the validator and retains this preimage in the source report. Thus a context
-or recognition-pack change remains attributable in artifact identity without
-changing semantic compatibility when the resolved bindings agree.
+Resolve each binding after composition. Look up `message` and `field` by their
+DBC names within the selected bus and resolve them to `dbc-message-v1:` and
+`dbc-field-v1:` ids; the composed field keeps every source reference. Names
+that no longer resolve fail `stale_mapping`. A binding to a message or field
+that is an unsupported wire form fails `unsupported_required_binding`; a
+successful artifact must not imply partial support for it. Valid fields with
+no binding produce `unmapped`.
 
-Rules operate on composed fields plus their original source-name inventory.
-Aliases are explicit ASCII case-insensitive spellings; for example a reviewed
-engine rule can accept `rpm`, `engine_rpm` and `EngineRPM`. The name match must
-also satisfy that rule's unit, mechanical and source/model-context predicates.
-Spelling similarity, a substring, file order or a confidence score alone
-cannot select a canonical input. Unknown context fails the restricted
-predicate; it never widens a rule to all models or years.
+Mapping errors are fatal, stable-coded and carry the binding's JSON location:
 
-Each complete rule match proposes a binding. Mechanically equivalent aliases
-of the same input normalize before signature/arity validation. Native-handler
-arguments follow the rule's declared named-slot order; deduplication must not
-sort or reorder those inputs. Equivalent complete candidates deduplicate only
-when their resolved semantics and policies agree. Competing candidates for
-one canonical key produce `ambiguous`, exclude that binding, and identify
-all candidate sources. There is no best-score or last-file tie breaker.
-Valid fields with no reviewed match produce `unmapped`.
+| Code | Cause |
+| --- | --- |
+| `unknown_target` | `target` is not in the controller signal catalog. |
+| `duplicate_target` | Two bindings name one target. This replaces recognition ambiguity: nothing is ranked or tie-broken. |
+| `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`). |
+| `stale_mapping` | `message` or `field` does not exist in the pinned sources. |
 
-Model policy supplies meaning as well as names. Brake pressure does not imply
-`vehicle.brake_pressed`; indicator lamp state does not imply a turn request.
-Reserved/unknown enum values need an explicit invalid-value policy, and
-combined turn state or disable-bit behavior uses a reviewed native handler.
-The Mazda brake opt-in remains scoped to its approved Mazda profile. Other
-profiles cannot inherit its `fresh_or_unverified` policy. Import success and
-synthetic tests never promote Reference evidence to Fresh; source timing,
+Brake pressure does not imply `vehicle.brake_pressed`, and indicator lamp
+state does not imply a turn request; the mapping author must map fields
+explicitly and the type check rejects mismatches.
+
+### Revision
+
+The profile revision pair is `mapping-v1:` followed by the SHA-256 of the
+normalized mapping: UTF-8 JSON of the validated mapping with sorted object
+keys, compact separators, no ASCII escaping and no nonfinite numbers. Sources
+sorted by logical path and bindings sorted by target give a canonical order,
+so member order and source order do not change it. This replaces the
+`recognition_rule_revision` and its vehicle-context preimage. A mapping change
+remains attributable in artifact identity without changing semantic
+compatibility when the resolved bindings agree.
+
+### Freshness
+
+Freshness is user-declared. A mapping may declare a freshness timeout; it is
+the mapping author's claim, not reviewed evidence. Each declared timeout gets
+a matching `("mapping:<profile_id>", "user_mapped", "operational")` evidence
+entry, so the validator's timeout bounds and basis checks apply unchanged: a
+zero or out-of-range timeout fails. A signal without a declared timeout stays
+freshness-unverified, and features that require `Fresh` stay off for it.
+Nothing derives a timeout, for example from `GenMsgCycleTime`. The source
+report states that imported-profile freshness is user-declared. Source timing,
 operational freshness, confidence and current availability stay distinct.
 
+This applies to imported profiles only. The Mazda compiled catalog, its unset
+brake freshness and the owner-approved `fresh_or_unverified` opt-in on
+`vehicle.brake_pressed` are unchanged. Imported profiles get no native
+handlers and cannot express `fresh_or_unverified`, and import success never
+promotes a signal to Fresh without a declared timeout.
+
 The importer emits bindings and diagnostics, rather than factory actions.
-Missing or ambiguous canonical inputs disable their dependent generated
-factory features in projection/integration. User-authored invalid rules remain
-strict errors. Zero exposed bindings is a valid explicit
-`all_features_disabled` profile, with no fallback to Mazda bindings or policy;
-the integration contract must preserve black startup for it.
+Unmapped targets disable their dependent generated factory features in
+projection/integration. User-authored invalid mappings remain strict errors.
+Zero bindings is a valid explicit `all_features_disabled` profile, with no
+fallback to Mazda bindings or policy; the integration contract must preserve
+black startup for it.
 
 ## Diagnostics and output transaction
 
@@ -215,13 +295,14 @@ people; callers branch on codes.
 | --- | --- |
 | `source_io`, `source_decode`, `source_digest_mismatch`, `source_provenance_missing` | Fatal source acquisition/provenance error. |
 | `dbc_syntax_error`, `unsupported_dbc_construct`, `source_conflict`, `unsupported_required_binding` | Fatal parse/composition/support error with source locations. |
+| `unknown_target`, `duplicate_target`, `incompatible_target`, `stale_mapping` | Fatal mapping error with the binding's `mapping.json` location. |
 | Existing normalized validator/policy/resource error categories | Forward the category and source ids; fail the artifact. |
-| `unmapped_field`, `ambiguous_binding`, `unsupported_message` | Map to strict v1 diagnostic categories `unmapped`, `ambiguous`, `unsupported`; omit the affected binding. |
+| `unmapped_field`, `unsupported_message` | Map to strict v1 diagnostic categories `unmapped`, `unsupported`; omit the affected binding. |
 | `all_features_disabled` | Required explicit result when no bindings remain. |
 
 Do not extend the strict v1 Diagnostic object with report-only fields. Its
-`sources` ids connect it to the richer source report. After recognition, call
-`validate_profile` and `identify_profile` with the reviewed registries,
+`sources` ids connect it to the richer source report. After mapping, call
+`validate_profile` and `identify_profile` with the derived registry,
 generator revision and effective limits. The manifest module owns catalog
 projection and complete-set publication. A fatal import produces diagnostics
 and no usable profile/artifact set; previously published outputs stay usable
@@ -253,8 +334,9 @@ proposed parser.
 ## Synthetic acceptance and owner-review gate
 
 Use newly authored synthetic DBCs, with source ids `demo-a` and `demo-b`, bus
-`body`, explicit Apache-2.0 provenance and a synthetic model context. They
-contain no vehicle observations. The first source has:
+`body`, explicit Apache-2.0 provenance and a synthetic `mapping.json`. They
+contain no vehicle observations, and no Mazda mapping is part of this
+contract. The first source has:
 
 ```dbc
 VERSION "synthetic-a-v1"
@@ -266,7 +348,7 @@ BO_ 256 Engine: 8 ECU
  SG_ BrakePressure : 16|16@1+ (0.1,0) [0|6553.5] "kPa" Controller
 ```
 
-The second source has an equivalent alias and a compatible fragment:
+The second source has an equivalent duplicate field and a compatible fragment:
 
 ```dbc
 VERSION "synthetic-b-v1"
@@ -278,29 +360,38 @@ BO_ 256 EngineExtra: 8 ECU
  SG_ CoolantRaw : 32|8@1+ (1,-40) [-40|215] "degC" Controller
 ```
 
-Before importer implementation is accepted, independent fixtures must prove:
+Before importer implementation is accepted, independent fixtures, using these
+files and in-memory variants of them, must prove:
 
-1. The reviewed synthetic pack automatically binds `vehicle.engine_rpm` from
-   the aliases; the duplicate field has both source references, while
-   pressure/coolant remain unmapped. Reversing source order gives identical
-   normalized bytes and identities. No per-field owner assignment is needed.
-2. A changed duplicate scale or DLC fails `source_conflict` with both spans.
-   A distinct matching rpm field on another message creates ambiguity and
-   removes only that canonical binding. Brake pressure alone never produces
-   brake-pressed or Mazda freshness policy.
-3. A multiplex/IEEE/extended/FD example is inventoried as unsupported; a
-   reviewed binding requiring it fails. Unknown records and malformed strings
-   fail rather than disappear. Cross-byte Motorola, signed/unsigned 64-bit and
-   exact decimal vectors independently check extraction normalization.
-4. Wrong/unknown model, year, market, trim or policy revision cannot borrow a
-   different profile's rules. An explicitly empty synthetic profile reports
-   all features disabled. Numeric/handler/freshness changes alter compatibility;
-   source-byte/provenance-only changes remain attributable in artifact identity.
-5. A late failure preserves the prior complete artifact set. Host tests,
-   firmware builds, bench measurements and vehicle evidence are reported
-   separately; this docs-only change claims none of those runtime results.
+1. **Mapping and merge.** `demo-a` plus `demo-b` with a mapping of `rpm` to
+   `vehicle.engine_rpm` binds it with both source references (the duplicate
+   composes), while `BrakePressure` and `CoolantRaw` are `unmapped`. Reversing
+   source order gives identical normalized bytes and identities.
+2. **Conflicts.** A changed duplicate scale or DLC fails `source_conflict`
+   with both spans, including in a message no mapping uses.
+3. **Unsupported forms.** Multiplex, IEEE, extended-id and FD messages are
+   reported `unsupported`; mapping one of their fields fails
+   `unsupported_required_binding`. Unknown records and malformed strings fail
+   with spans. Cross-byte Motorola, signed/unsigned 64-bit and exact decimal
+   vectors independently check extraction normalization.
+4. **Mapping errors and isolation.** Unknown target, duplicate target,
+   unknown message or field (`stale_mapping`), type/unit/choice mismatch and
+   digest mismatch each fail with a stable code. Mapping `BrakePressure` to
+   `vehicle.brake_pressed` fails (number field, boolean target). No imported
+   profile can carry `fresh_or_unverified` or a native handler. A declared
+   timeout yields freshness backed only by `user_mapped` evidence; a zero or
+   out-of-range timeout fails; an undeclared timeout leaves the signal
+   unverified. An empty bindings list reports `all_features_disabled`.
+5. **Identity and transaction.** Numeric or freshness changes alter
+   compatibility identity; source-byte/provenance-only changes alter artifact
+   identity only. Repeated runs are byte-identical. A late failure preserves
+   the prior complete artifact set.
 
-Owner review must accept the subset/rejection rules, parser proposal,
-recognition/context contract, evidence boundaries and these acceptance cases.
-Only then open bounded importer implementation tickets. A real second vehicle
-and its licensed DBC package remain unselected.
+Host tests, firmware builds, bench measurements and vehicle evidence are
+reported separately; this docs-only change claims none of those runtime
+results.
+
+Owner review must accept the subset/rejection rules, parser proposal, mapping
+and derived-registry contract, evidence boundaries and these acceptance cases.
+Only then rework the dependent importer tickets. A real second vehicle and its
+licensed DBC package remain unselected.

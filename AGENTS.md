@@ -36,7 +36,11 @@ hardware changes, consult `docs/architecture/hardware/weact-can485-v1.1.md`.
   telemetry must fail off to black. Preserve startup black, immediate
   driver-failure fail-off, bounded retries/watchdogs, and recovery only after
   a newer valid observation where required.
-- Brake freshness is intentionally unset pending reviewed timing evidence.
+- This brake-freshness invariant governs the Mazda compiled catalog. Imported
+  vehicle profiles follow the user-declared freshness rules in
+  `docs/specs/vehicle-profiles/dbc-import.md` and never get native handlers or
+  `fresh_or_unverified`. Mazda brake freshness is intentionally unset pending
+  reviewed timing evidence.
   Do not invent a timeout or promote brake observations to `Fresh`. Brake
   output is enabled only through the owner-approved `fresh_or_unverified`
   opt-in on `vehicle.brake_pressed` (the factory `brake` action); keep other
