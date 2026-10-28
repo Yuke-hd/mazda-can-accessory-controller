@@ -122,6 +122,25 @@ class TokenTests(unittest.TestCase):
             self.assertEqual(error.code, "resource_overflow", text)
             self.assertEqual(error.span.line, 1)
 
+    def test_oversized_integer_overflow_carries_span(self):
+        limits = LexerLimits(4, 8192, 8192)
+        error = failure(lex, "9" * 5000, limits)
+        self.assertEqual(error.code, "resource_overflow")
+        self.assertIsNotNone(error.span)
+        self.assertEqual(error.span.line, 1)
+
+    def test_overlimit_decimal_token_fails_with_span(self):
+        error = failure(lex, "1.2345678", LexerLimits(4, 4096, 5))
+        self.assertEqual(error.code, "resource_overflow")
+        self.assertIsNotNone(error.span)
+
+    def test_integer_with_many_leading_zeros_is_int(self):
+        limits = LexerLimits(4, 8192, 8192)
+        token = lex("0" * 4999 + "1", limits)[0]
+        self.assertEqual(token.kind, "int")
+        self.assertIs(type(token.value), int)
+        self.assertEqual(token.value, 1)
+
 
 class SourceTests(unittest.TestCase):
     def setUp(self):

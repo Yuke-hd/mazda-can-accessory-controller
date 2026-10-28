@@ -129,11 +129,15 @@ def tokenize(text: str, source_id: str, limits: LexerLimits) -> tuple[Token, ...
     def span(start: int, end: int) -> Span:
         return Span(source_id, *lines.locate(start), *lines.locate(end))
 
-    def emit(kind: str, start: int, end: int, value: object) -> None:
-        raw = text[start:end]
-        if len(raw.encode("utf-8")) > limits.max_token_bytes:
+    def check_size(start: int, end: int) -> None:
+        # The limit counts UTF-8 bytes of the decoded token text.
+        if len(text[start:end].encode("utf-8")) > limits.max_token_bytes:
             raise LexerError("resource_overflow", "token exceeds the request token-byte limit",
                              span(start, end))
+
+    def emit(kind: str, start: int, end: int, value: object) -> None:
+        raw = text[start:end]
+        check_size(start, end)
         tokens.append(Token(kind, raw, raw if value is None else value, span(start, end)))
 
     while index < size:
@@ -177,8 +181,12 @@ def tokenize(text: str, source_id: str, limits: LexerLimits) -> tuple[Token, ...
                 raise _syntax("invalid numeric token", span(index, end + 1))
             raw = match.group()
             if _INTEGER.fullmatch(raw):
-                emit("int", index, end, int(raw) if len(raw) <= MAX_MANTISSA_DIGITS else
-                     parse_decimal(raw))
+                check_size(index, end)
+                digits = raw.lstrip("+-").lstrip("0")
+                if len(digits) > MAX_MANTISSA_DIGITS:
+                    raise LexerError("resource_overflow",
+                                     "numeric token exceeds exact-value bounds", span(index, end))
+                emit("int", index, end, (-1 if raw[0] == "-" else 1) * int(digits or "0"))
             else:
                 try:
                     value = parse_decimal(raw)
