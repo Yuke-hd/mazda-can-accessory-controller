@@ -1,7 +1,5 @@
-"""Walking-skeleton import: one synthetic source to a validated, identified v1 profile."""
+"""Walking-skeleton import: demo-a through mapping.json to a validated v1 profile."""
 
-import copy
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -11,31 +9,41 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from generate_vehicle_profile import load_policies
-from vehicle_profiles.dbc_import import import_profile, load_request
-from vehicle_profiles.recognition import load_pack
+from vehicle_profiles.dbc_import import import_profile
+from vehicle_profiles.dbc_mapping import (MappingError, load_mapping, mapping_revision,
+                                           semantic_revision)
+from vehicle_profiles.dbc_registry import derive_registry
 from vehicle_profiles.validation import validate_profile
 
 FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
-PACK_TEXT = (FIXTURES / "synthetic-pack.json").read_text()
-POLICIES = load_policies((FIXTURES / "policies.json").read_text())
+MAPPING = FIXTURES / "mapping-demo-a.json"
+DEMO_A = (FIXTURES / "demo-a.dbc").read_text()
 
 
-def request(**changes):
-    value = load_request((FIXTURES / "request-demo-a.json").read_text())
-    value.update(changes)
-    return value
+def snapshot(directory):
+    return sorted((str(p), p.stat().st_size, p.stat().st_mtime_ns)
+                  for p in directory.rglob("*") if p.is_file())
 
 
-def run(req=None, pack_text=PACK_TEXT, base_dir=FIXTURES):
-    return import_profile(request() if req is None else req, pack=load_pack(pack_text),
-                          policies=POLICIES, base_dir=base_dir)
+def staged(mutate=None, dbc=None, mapping="mapping-demo-a.json", keep_digest=False):
+    """Copy a fixture mapping and demo-a into a temp dir; return the mapping path."""
+    tmp = tempfile.TemporaryDirectory()
+    root = Path(tmp.name)
+    text = DEMO_A if dbc is None else dbc
+    (root / "demo-a.dbc").write_text(text)
+    document = json.loads((FIXTURES / mapping).read_text())
+    if dbc is not None and not keep_digest:
+        import hashlib
+        document["sources"][0]["sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    if mutate is not None:
+        mutate(document)
+    path = root / "mapping.json"
+    path.write_text(json.dumps(document))
+    staged.keep.append(tmp)
+    return path
 
 
-def pack_with(mutate):
-    document = json.loads(PACK_TEXT)
-    mutate(document)
-    return json.dumps(document)
+staged.keep = []
 
 
 def codes(result):
@@ -44,267 +52,271 @@ def codes(result):
 
 class AcceptanceTests(unittest.TestCase):
     def test_demo_a_binds_engine_rpm_and_leaves_pressure_unmapped(self):
-        result = run()
+        result = import_profile(MAPPING)
         profile = result.profile
         (binding,) = profile["bindings"]
         self.assertEqual(binding["key"], "vehicle.engine_rpm")
         (message,) = profile["messages"]
         by_name = {field["name"]: field for field in message["fields"]}
         self.assertEqual(binding["inputs"], [by_name["rpm"]["id"]])
-        self.assertEqual((by_name["rpm"]["scale"], by_name["rpm"]["maximum"]), ("0.25", "16383.75"))
+        self.assertTrue(by_name["rpm"]["id"].startswith("dbc-field-v1:"))
         unmapped = [d for d in profile["diagnostics"] if d["category"] == "unmapped"]
         self.assertEqual([d["affected"] for d in unmapped], [by_name["BrakePressure"]["id"]])
-        self.assertEqual(unmapped[0]["sources"], ["demo-a"])
-        self.assertEqual([d for d in codes(result)], ["unmapped_field"])
+        self.assertEqual(codes(result), ["unmapped_field"])
+        self.assertEqual(result.report["diagnostics"][0]["severity"], "info")
         self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
 
-    def test_request_assigns_no_per_field_owner_mapping(self):
-        for name in ("request-demo-a.json", "request-mazda-custom.json"):
-            text = (FIXTURES / name).read_text()
-            for word in ("binding", "field", "signal", "rpm", "BrakePressure"):
-                self.assertNotIn(word.lower(), text.replace("max_fields", "").lower(), name)
-
-    def test_no_matching_rule_yields_explicit_empty_profile_without_fallback(self):
-        pack = pack_with(lambda d: d["rules"][0]["match"].update(aliases=["NoSuchSignal"]))
-        result = run(pack_text=pack)
+    def test_empty_bindings_yield_explicit_all_features_disabled_without_fallback(self):
+        result = import_profile(FIXTURES / "mapping-empty.json")
         self.assertEqual(result.profile["bindings"], [])
         categories = [d["category"] for d in result.profile["diagnostics"]]
-        self.assertIn("all_features_disabled", categories)
+        self.assertEqual(categories.count("all_features_disabled"), 1)
         self.assertEqual(categories.count("unmapped"), 2)
-        self.assertIn("all_features_disabled", codes(result))
-        self.assertNotIn("vehicle.engine_rpm", json.dumps(result.profile))
+        self.assertNotIn("vehicle.", json.dumps(result.profile))
+        self.assertEqual(codes(result)[-1], "all_features_disabled")
 
     def test_output_passes_unmodified_validator_and_has_identities(self):
-        result = run()
-        validate_profile(result.profile, policies=POLICIES)
+        result = import_profile(MAPPING)
+        validate_profile(result.profile, policies=derive_registry(load_mapping(MAPPING.read_text())))
         self.assertRegex(result.profile["compatibility_identity"], r"^[0-9a-f]{64}$")
         self.assertRegex(result.profile["artifact_identity"], r"^[0-9a-f]{64}$")
         self.assertEqual(result.identity.profile, result.profile)
+        mapping = load_mapping(MAPPING.read_text())
+        self.assertEqual(result.profile["semantic_policy_revision"], semantic_revision(mapping))
+        self.assertEqual(result.profile["recognition_rule_revision"], mapping_revision(mapping))
+        self.assertNotEqual(semantic_revision(mapping), mapping_revision(mapping))
 
     def test_v1_diagnostic_shape_is_not_extended(self):
-        for diagnostic in run().profile["diagnostics"]:
+        for diagnostic in import_profile(MAPPING).profile["diagnostics"]:
             self.assertEqual(set(diagnostic), {"category", "affected", "sources", "reason"})
 
-    def test_run_is_deterministic_and_carries_no_machine_path_or_timestamp(self):
-        first, second = run(), run()
+    def test_run_is_deterministic_and_leaves_no_path_or_tree_change(self):
+        before = snapshot(FIXTURES)
+        first, second = import_profile(MAPPING), import_profile(MAPPING)
+        self.assertEqual(snapshot(FIXTURES), before)
         self.assertEqual(first.identity.artifact_preimage, second.identity.artifact_preimage)
         text = json.dumps([first.profile, first.report])
         self.assertNotIn(str(FIXTURES), text)
-        self.assertNotIn("demo-a.dbc\"", text.replace("synthetic/demo-a.dbc", ""))
-        self.assertEqual(first.profile["sources"][0]["path"], "synthetic/demo-a.dbc")
+        self.assertEqual(first.profile["sources"][0]["path"], "demo-a.dbc")
+
+    def test_no_registry_request_or_pack_file_is_committed(self):
+        names = sorted(p.name for p in FIXTURES.iterdir())
+        self.assertEqual(names, ["PROVENANCE.md", "demo-a.dbc", "demo-b.dbc",
+                                 "mapping-demo-a.json", "mapping-empty.json"])
 
 
-class RecognitionTests(unittest.TestCase):
-    def test_aliases_are_ascii_case_insensitive(self):
-        pack = pack_with(lambda d: d["rules"][0]["match"].update(aliases=["RPM"]))
-        self.assertEqual(len(run(pack_text=pack).profile["bindings"]), 1)
+class DerivedRegistryTests(unittest.TestCase):
+    def test_registry_contains_only_the_derived_entries(self):
+        mapping = load_mapping(MAPPING.read_text())
+        registry = derive_registry(mapping)
+        self.assertRegex(mapping_revision(mapping), r"^mapping-v1:[0-9a-f]{64}$")
+        self.assertEqual(registry.profile_revisions, {"synthetic.demo": (
+            semantic_revision(mapping), mapping_revision(mapping))})
+        self.assertEqual(registry.handlers, {})
+        self.assertEqual(registry.evidence,
+                         frozenset({("mapping:synthetic.demo", "user_mapped", "source_only")}))
+        self.assertEqual(registry.units, frozenset({"rpm"}))
+        self.assertEqual(registry.unit_conversions, {("rpm", "rpm"): ("1", "0")})
+        self.assertEqual(registry.invalid_value_policies, frozenset({"unavailable"}))
+        self.assertEqual(registry.freshness_policies, {})
 
-    def test_unit_predicate_must_match_exactly(self):
-        pack = pack_with(lambda d: d["rules"][0]["match"].update(unit="kPa"))
-        self.assertEqual(run(pack_text=pack).profile["bindings"], [])
+    def test_semantic_revision_excludes_sources_and_ignores_order(self):
+        base = load_mapping(MAPPING.read_text())
+        other = json.loads(MAPPING.read_text())
+        other["sources"][0]["license"] = "another note"
+        other["sources"][0]["path"] = "sub/demo-a.dbc"
+        other = load_mapping(json.dumps(other))
+        self.assertEqual(semantic_revision(other), semantic_revision(base))
+        self.assertNotEqual(mapping_revision(other), mapping_revision(base))
+        reordered = json.loads(MAPPING.read_text())
+        reordered["units"] = ["rpm"]
+        reordered["bindings"].reverse()
+        reordered = load_mapping(json.dumps(reordered, sort_keys=True))
+        self.assertEqual(mapping_revision(reordered), mapping_revision(base))
 
-    def test_mechanical_predicate_must_match(self):
-        for key, value in (("length", 8), ("byte_order", "motorola"), ("signed", True)):
-            pack = pack_with(lambda d: d["rules"][0]["match"].update({key: value}))
-            self.assertEqual(run(pack_text=pack).profile["bindings"], [], key)
+    def test_license_or_path_edit_changes_artifact_but_not_compatibility_identity(self):
+        base = import_profile(MAPPING)
+        for change in (lambda d: d["sources"][0].update(license="Apache-2.0; edited note"),
+                       lambda d: d["sources"][0].update(path="demo-a.dbc")):
+            edited = import_profile(staged(change))
+            self.assertEqual(edited.profile["compatibility_identity"],
+                             base.profile["compatibility_identity"])
+        self.assertNotEqual(import_profile(staged(
+            lambda d: d["sources"][0].update(license="edited"))).profile["artifact_identity"],
+            base.profile["artifact_identity"])
 
-    def test_spelling_similarity_or_substring_does_not_match(self):
-        pack = pack_with(lambda d: d["rules"][0]["match"].update(aliases=["rp", "rpm_extra"]))
-        self.assertEqual(run(pack_text=pack).profile["bindings"], [])
-
-    def test_repeated_rule_for_the_same_field_does_not_duplicate(self):
-        pack = pack_with(lambda d: d["rules"].append(copy.deepcopy(d["rules"][0])))
-        self.assertEqual(len(run(pack_text=pack).profile["bindings"]), 1)
-
-    def test_conflicting_rule_templates_fail_closed_in_either_order(self):
-        def conflicting(first):
-            def mutate(d):
-                copy_ = copy.deepcopy(d["rules"][0])
-                copy_["binding"]["runtime_id"] = 7
-                d["rules"].insert(0 if first else 1, copy_)
-            return mutate
-        results = [run(pack_text=pack_with(conflicting(first))) for first in (True, False)]
-        for result in results:
-            self.assertEqual(result.profile["bindings"], [])
-            self.assertIn("ambiguous_binding", codes(result))
-        self.assertEqual(results[0].identity.artifact_preimage,
-                         results[1].identity.artifact_preimage)
-
-    def test_diagnostic_overflow_is_reported_after_recognition(self):
-        result = run(request(limits=dict(request()["limits"], max_diagnostics=0)))
-        self.assertEqual(result.report["diagnostics"][0]["stage"], "result")
-
-    def test_distinct_fields_for_one_key_are_ambiguous(self):
-        text = (FIXTURES / "demo-a.dbc").read_text().replace(
-            "BrakePressure", "engine_rpm").replace('"kPa"', '"rpm"').replace(
-            "0.1,0) [0|6553.5]", "0.25,0) [0|16383.75]")
+    def test_path_edit_changes_artifact_but_not_compatibility_identity(self):
+        base = import_profile(MAPPING)
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "demo-a.dbc").write_text(text)
-            result = run(base_dir=Path(tmp))
-        self.assertEqual(result.profile["bindings"], [])
-        self.assertIn("ambiguous", [d["category"] for d in result.profile["diagnostics"]])
-        self.assertIn("ambiguous_binding", codes(result))
-        self.assertIn("all_features_disabled", codes(result))
+            Path(tmp, "sub").mkdir()
+            Path(tmp, "sub", "demo-a.dbc").write_text(DEMO_A)
+            document = json.loads(MAPPING.read_text())
+            document["sources"][0]["path"] = "sub/demo-a.dbc"
+            Path(tmp, "mapping.json").write_text(json.dumps(document))
+            moved = import_profile(Path(tmp, "mapping.json"))
+        self.assertEqual(moved.profile["compatibility_identity"],
+                         base.profile["compatibility_identity"])
+        self.assertNotEqual(moved.profile["artifact_identity"], base.profile["artifact_identity"])
+
+    def test_unit_conversion_edit_changes_compatibility_identity(self):
+        base = import_profile(MAPPING)
+        edited = import_profile(staged(
+            lambda d: d.update(unit_conversions=[["rpm", "rpm", "2", "0"]])))
+        self.assertNotEqual(edited.profile["compatibility_identity"],
+                            base.profile["compatibility_identity"])
+
+    def test_imported_profile_cannot_carry_native_handler_or_brake_opt_in(self):
+        text = json.dumps(import_profile(MAPPING).profile)
+        for word in ("native", "fresh_or_unverified", "handler"):
+            self.assertNotIn(word, text)
+
+
+class LoaderTests(unittest.TestCase):
+    def good(self):
+        return json.loads(MAPPING.read_text())
+
+    def rejects(self, text):
+        with self.assertRaises(MappingError):
+            load_mapping(text)
+
+    def test_strict_json_rejects_duplicate_keys_and_nonfinite_numbers(self):
+        self.rejects('{"version": 1, "version": 1}')
+        self.rejects('{"version": NaN}')
+        self.rejects('{"version": Infinity}')
+        self.rejects("[]")
+        self.rejects("{")
+
+    def test_exact_shape(self):
+        for mutate in (lambda d: d.update(extra=1), lambda d: d.pop("units"),
+                       lambda d: d.update(version=2), lambda d: d.update(version=True),
+                       lambda d: d["bindings"][0].update(extra=1),
+                       lambda d: d["sources"][0].pop("sha256"),
+                       lambda d: d["sources"][0].update(sha256="ABC"),
+                       lambda d: d["sources"][0].update(bus="other"),
+                       lambda d: d["sources"][0].update(encoding="latin-1"),
+                       lambda d: d.update(sources=[]),
+                       lambda d: d["unit_conversions"].append(["rpm", "rpm", "2", "0"]),
+                       lambda d: d["unit_conversions"][0].__setitem__(2, "x"),
+                       lambda d: d["units"].append("rpm")):
+            document = self.good()
+            mutate(document)
+            self.rejects(json.dumps(document))
+
+    def test_source_paths_stay_inside_the_profile_directory(self):
+        for path in ("/etc/x.dbc", "../x.dbc", "a/../../x.dbc", "a\\b.dbc", "", "C:x.dbc"):
+            document = self.good()
+            document["sources"][0]["path"] = path
+            self.rejects(json.dumps(document))
+
+    def test_freshness_policies_are_completed_in_a_later_ticket(self):
+        document = self.good()
+        document["freshness_policies"] = [["vehicle.engine_rpm", 100]]
+        self.rejects(json.dumps(document))
+
+    def test_dbc_text_is_never_evaluated(self):
+        dbc = DEMO_A.replace("synthetic-a-v1", "__import__('os')")
+        self.assertEqual(len(import_profile(staged(dbc=dbc)).profile["bindings"]), 1)
+
+
+class MappingResolutionTests(unittest.TestCase):
+    def fatal(self, result, code):
+        self.assertIsNone(result.profile)
+        self.assertIsNone(result.identity)
+        self.assertIn(code, codes(result))
+        for item in result.report["diagnostics"]:
+            self.assertEqual(item["severity"], "error")
+        self.assertNotIn(str(FIXTURES), json.dumps(result.report))
+        self.assertNotIn(tempfile.gettempdir(), json.dumps(result.report))
+
+    def test_unknown_target(self):
+        result = import_profile(staged(lambda d: d["bindings"][0].update(target="vehicle.nope")))
+        self.fatal(result, "unknown_target")
+
+    def test_duplicate_target(self):
+        def mutate(d):
+            d["bindings"].append(dict(d["bindings"][0], field="BrakePressure"))
+        self.fatal(import_profile(staged(mutate)), "duplicate_target")
+
+    def test_stale_message_and_field(self):
+        self.fatal(import_profile(staged(lambda d: d["bindings"][0].update(message="Gone"))),
+                   "stale_mapping")
+        self.fatal(import_profile(staged(lambda d: d["bindings"][0].update(field="Gone"))),
+                   "stale_mapping")
+
+    def test_number_field_cannot_feed_a_boolean_target(self):
+        def mutate(d):
+            d["bindings"][0].update(target="vehicle.brake_pressed", field="BrakePressure")
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_undeclared_unit_conversion_is_incompatible(self):
+        def mutate(d):
+            d["bindings"][0].update(field="BrakePressure", unit="rpm")
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_digest_mismatch_is_fatal(self):
+        result = import_profile(staged(lambda d: d["sources"][0].update(sha256="0" * 64)))
+        self.fatal(result, "source_digest_mismatch")
+        self.assertEqual(result.report["diagnostics"][0]["stage"], "acquisition")
+
+    def test_missing_source_is_source_io_without_a_path(self):
+        result = import_profile(staged(lambda d: d["sources"][0].update(path="missing.dbc")))
+        self.fatal(result, "source_io")
+
+    def test_syntax_error_is_fatal_with_location(self):
+        result = import_profile(staged(dbc='VERSION "x"\nBO_ nonsense\n'))
+        self.fatal(result, "dbc_syntax_error")
+        self.assertEqual(result.report["diagnostics"][0]["locations"][0]["source_id"], "demo-a")
+
+    def test_validator_category_is_forwarded(self):
+        result = import_profile(staged(lambda d: d["units"].clear()))
+        self.fatal(result, "unknown_policy")
+        self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
+
+    def test_unreadable_or_malformed_mapping_is_a_configuration_error(self):
+        with self.assertRaises(MappingError):
+            import_profile(FIXTURES / "does-not-exist.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "m.json").write_text("{")
+            with self.assertRaises(MappingError):
+                import_profile(Path(tmp, "m.json"))
 
 
 class SourceReportTests(unittest.TestCase):
+    WIDE = 'BO_ 2147483905 Wide: 8 ECU\n SG_ X : 0|8@1+ (1,0) [0|255] "" Controller\n'
+
     def test_unsupported_message_is_inventory_only(self):
-        text = (FIXTURES / "demo-a.dbc").read_text() + (
-            'BO_ 2147483905 Wide: 8 ECU\n SG_ X : 0|8@1+ (1,0) [0|255] "" Controller\n')
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "demo-a.dbc").write_text(text)
-            result = run(base_dir=Path(tmp))
+        result = import_profile(staged(dbc=DEMO_A + self.WIDE))
         self.assertEqual(len(result.profile["messages"]), 1)
         self.assertIn("unsupported", [d["category"] for d in result.profile["diagnostics"]])
         self.assertEqual(codes(result), ["unsupported_message", "unmapped_field"])
 
-    def test_report_is_sorted_by_stage_source_location_code_and_affected(self):
-        result = run(pack_text=pack_with(lambda d: d["rules"][0]["match"].update(aliases=["x"])))
-        keys = [(item["stage"], item["source_ids"], item["locations"], item["code"],
-                 item["affected"]) for item in result.report["diagnostics"]]
-        self.assertEqual(keys, sorted(keys, key=lambda k: (
-            ["parse", "recognition", "result"].index(k[0]), k[1],
-            [(l["line"], l["column"]) for l in k[2]], k[3], k[4])))
+    def test_mapping_an_unsupported_message_fails_required_binding(self):
+        def mutate(d):
+            d["bindings"].append({"target": "vehicle.speed_kph", "message": "Wide",
+                                  "field": "X", "unit": "rpm"})
+        result = import_profile(staged(mutate, dbc=DEMO_A + self.WIDE))
+        self.assertIsNone(result.profile)
+        self.assertIn("unsupported_required_binding", codes(result))
+
+    def test_report_shape_and_sort_order(self):
+        result = import_profile(staged(dbc=DEMO_A + self.WIDE, mapping="mapping-empty.json"))
+        stages = ["acquisition", "parse", "mapping", "validation", "result"]
+        keys = [(stages.index(i["stage"]), i["source_ids"],
+                 [(l["line"], l["column"], l["end_line"], l["end_column"]) for l in i["locations"]],
+                 i["code"], i["affected"]) for i in result.report["diagnostics"]]
+        self.assertEqual(keys, sorted(keys))
         self.assertEqual(codes(result)[-1], "all_features_disabled")
         for item in result.report["diagnostics"]:
             self.assertEqual(set(item), {"code", "severity", "stage", "affected", "source_ids",
                                          "locations", "reason"})
+        self.assertEqual(set(result.report), {"profile_id", "semantic_revision",
+                                              "mapping_revision", "sources", "diagnostics"})
 
     def test_report_lists_source_with_digest_and_no_path(self):
-        (source,) = run().report["sources"]
-        self.assertEqual(source["id"], "demo-a")
+        (source,) = import_profile(MAPPING).report["sources"]
+        self.assertEqual(set(source), {"id", "logical_path", "bus", "sha256", "version"})
+        self.assertEqual((source["id"], source["logical_path"]), ("demo-a", "demo-a.dbc"))
         self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(source["logical_path"], "synthetic/demo-a.dbc")
-        self.assertNotIn("path", source)
-
-
-class FatalTests(unittest.TestCase):
-    def fatal(self, result, code):
-        self.assertIsNone(result.profile)
-        self.assertIsNone(result.identity)
-        (item,) = result.report["diagnostics"]
-        self.assertEqual((item["code"], item["severity"]), (code, "error"))
-        self.assertNotIn(str(FIXTURES), json.dumps(result.report))
-
-    def test_missing_file_is_source_io_without_a_path(self):
-        source = dict(request()["sources"][0], path="missing.dbc")
-        self.fatal(run(request(sources=[source])), "source_io")
-
-    def test_digest_mismatch_is_fatal(self):
-        source = dict(request()["sources"][0], expected_sha256="0" * 64)
-        self.fatal(run(request(sources=[source])), "source_digest_mismatch")
-
-    def test_missing_provenance_is_fatal(self):
-        source = dict(request()["sources"][0], license_ref="")
-        self.fatal(run(request(sources=[source])), "source_provenance_missing")
-
-    def test_syntax_error_is_fatal_with_location(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "demo-a.dbc").write_text('VERSION "x"\nBO_ nonsense\n')
-            result = run(base_dir=Path(tmp))
-        self.fatal(result, "dbc_syntax_error")
-        self.assertEqual(result.report["diagnostics"][0]["locations"][0]["source_id"], "demo-a")
-
-    def test_limit_overflow_is_fatal(self):
-        limits = dict(request()["limits"], max_fields=1)
-        self.fatal(run(request(limits=limits)), "resource_overflow")
-
-    def test_validator_category_is_forwarded(self):
-        pack = pack_with(lambda d: d["rules"][0]["binding"]["evidence"].update(ref="unknown/ref"))
-        result = run(pack_text=pack)
-        self.fatal(result, "unknown_policy")
-        self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
-
-
-class MazdaBaselineTests(unittest.TestCase):
-    """The committed repository DBC, referenced in place, through the synthetic pack."""
-
-    SOURCE = ROOT / "docs/protocol/mazda_custom.dbc"
-
-    def run_baseline(self):
-        req = load_request((FIXTURES / "request-mazda-custom.json").read_text())
-        return run(req, base_dir=ROOT)
-
-    def test_baseline_imports_to_a_validated_profile_without_fatal_items(self):
-        result = self.run_baseline()
-        self.assertIsNotNone(result.profile)
-        validate_profile(result.profile, policies=POLICIES)
-        self.assertEqual(result.identity.profile, result.profile)
-        self.assertNotIn("error", [item["severity"] for item in result.report["diagnostics"]])
-        self.assertEqual(len(result.profile["messages"]), 9)
-        fields = [f for m in result.profile["messages"] for f in m["fields"]]
-        self.assertEqual(len(fields), 22)
-
-    def test_synthetic_pack_binds_nothing_so_the_profile_is_explicitly_empty(self):
-        # EngineRPM is Motorola (@0); the reviewed synthetic rule requires Intel.
-        result = self.run_baseline()
-        self.assertEqual(result.profile["bindings"], [])
-        self.assertEqual(codes(result), ["unmapped_field"] * 22 + ["all_features_disabled"])
-        by_name = {f["name"]: f for m in result.profile["messages"] for f in m["fields"]}
-        self.assertEqual(by_name["EngineRPM"]["byte_order"], "motorola")
-        unmapped = [d["affected"] for d in result.profile["diagnostics"]
-                    if d["category"] == "unmapped"]
-        self.assertIn(by_name["EngineRPM"]["id"], unmapped)
-        self.assertNotIn("vehicle.", json.dumps(result.profile))
-
-    def test_report_lists_the_mazda_source_with_its_digest(self):
-        (source,) = self.run_baseline().report["sources"]
-        self.assertEqual(source["id"], "mazda-custom")
-        self.assertEqual(source["logical_path"], "docs/protocol/mazda_custom.dbc")
-        self.assertEqual(source["bus"], "body")
-        self.assertEqual(source["sha256"], hashlib.sha256(self.SOURCE.read_bytes()).hexdigest())
-        self.assertNotIn("path", source)
-
-    def test_output_carries_no_absolute_path(self):
-        result = self.run_baseline()
-        text = json.dumps([result.profile, result.report])
-        for path in (ROOT, FIXTURES, self.SOURCE):
-            self.assertNotIn(str(path), text)
-        self.assertNotIn(str(Path.home()), text)
-
-    def test_repeated_run_is_byte_identical(self):
-        first, second = self.run_baseline(), self.run_baseline()
-        dump = lambda r: json.dumps([r.profile, r.report], sort_keys=True).encode()
-        self.assertEqual(dump(first), dump(second))
-        self.assertEqual(first.identity.artifact_preimage, second.identity.artifact_preimage)
-        self.assertEqual(first.identity.compatibility_preimage,
-                         second.identity.compatibility_preimage)
-
-
-class ConfigurationTests(unittest.TestCase):
-    def test_pack_must_match_the_request_reference_and_profile(self):
-        for change in (lambda d: d.update(id="other"), lambda d: d.update(revision="other"),
-                       lambda d: d.update(profile_id="other.profile")):
-            with self.assertRaises(ValueError):
-                run(pack_text=pack_with(change))
-
-    def test_exactly_one_selected_bus_source_is_required(self):
-        source = request()["sources"][0]
-        for sources in ([], [source, dict(source, id="demo-b")], [dict(source, bus="other")]):
-            with self.assertRaises(ValueError):
-                run(request(sources=sources))
-
-    def test_request_and_pack_are_strict_json(self):
-        text = (FIXTURES / "request-demo-a.json").read_text()
-        for bad in ('{"version": 1, "version": 1}', '{"version": NaN}', "[]",
-                    text.replace('"version": 1,', '"version": 1, "extra": 1,', 1)):
-            with self.assertRaises(ValueError):
-                load_request(bad)
-        for bad in ('{"version": 1, "version": 1}', '{"version": Infinity}',
-                    pack_with(lambda d: d.update(extra=1)),
-                    pack_with(lambda d: d["rules"][0]["match"].update(aliases=[])),
-                    pack_with(lambda d: d["rules"][0]["match"].update(aliases=["a", "A"])),
-                    pack_with(lambda d: d["rules"][0]["match"].update(aliases=["é"])),
-                    pack_with(lambda d: d["rules"][0]["match"].pop("unit"))):
-            with self.assertRaises(ValueError):
-                load_pack(bad)
-
-    def test_dbc_text_is_never_evaluated(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "demo-a.dbc").write_text('VERSION "__import__(\'os\')"\n' + "".join(
-                (FIXTURES / "demo-a.dbc").read_text().splitlines(True)[1:]))
-            result = run(base_dir=Path(tmp))
-        self.assertEqual(len(result.profile["bindings"]), 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "profile_id": "synthetic.demo",
+  "selected_bus": "body",
+  "sources": [
+    {"path": "demo-a.dbc",
+     "sha256": "b884d194c8f876930fac7dbb0834e2fabb1f727931a31f0ae677db6edc665b88",
+     "bus": "body", "license": "Apache-2.0; synthetic fixture", "encoding": "utf-8"}
+  ],
+  "units": [],
+  "unit_conversions": [],
+  "freshness_policies": [],
+  "bindings": []
+}
