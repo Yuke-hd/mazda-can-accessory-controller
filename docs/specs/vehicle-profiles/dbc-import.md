@@ -99,7 +99,7 @@ enum choices.
 
 | Registry key | Derived as |
 | --- | --- |
-| `profile_revisions` | `profile_id` to (`mapping-v1:<hash>`, `mapping-v1:<hash>`). |
+| `profile_revisions` | `profile_id` to (`semantic_policy_revision`, `recognition_rule_revision`), each `mapping-v1:<hash>` over a different preimage (see Revision). |
 | `handlers` | Empty; imported profiles have no native handlers. |
 | `evidence` | One fixed importer entry per profile, `("mapping:<profile_id>", "user_mapped", "source_only")`, plus a user-claim entry for each declared timeout. |
 | `units`, `unit_conversions` | Copied from the mapping. |
@@ -249,14 +249,33 @@ explicitly and the type check rejects mismatches.
 
 ### Revision
 
-The profile revision pair is `mapping-v1:` followed by the SHA-256 of the
-normalized mapping: UTF-8 JSON of the validated mapping with sorted object
-keys, compact separators, no ASCII escaping and no nonfinite numbers. Sources
-sorted by logical path and bindings sorted by target give a canonical order,
-so member order and source order do not change it. This replaces the
-`recognition_rule_revision` and its vehicle-context preimage. A mapping change
-remains attributable in artifact identity without changing semantic
-compatibility when the resolved bindings agree.
+The profile revision is two digests, each `mapping-v1:` followed by the
+SHA-256 of a normalized preimage. A preimage is the UTF-8 encoding of
+`json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
+over the strict-JSON validated mapping. Normalization sorts `sources` by
+logical path, `bindings` by target, `units`, `unit_conversions` (as tuples)
+and `freshness_policies` (by key), and the keys of each `choices` map, so
+member order and source order never change a digest.
+
+1. `semantic_policy_revision`: the preimage holds `version`, `profile_id`,
+   `selected_bus`, `units`, `unit_conversions`, `freshness_policies` and
+   `bindings` (`target`, `message`, `field`, `unit`, `choices`). It excludes
+   `sources` entirely (path, `sha256`, `bus`, `license`, `encoding`).
+2. `recognition_rule_revision`: the preimage is the whole normalized mapping,
+   sources included. This replaces the recognition-pack and vehicle-context
+   preimage.
+
+The derived `ValidationPolicies.profile_revisions[profile_id]` is the pair
+(`semantic_policy_revision`, `recognition_rule_revision`). Source digests
+enter artifact identity separately, through the normalized profile's sources;
+the generation identity (the import CLI ticket) also covers mapping bytes,
+source bytes and importer modules. They never enter the compatibility
+preimage.
+
+Consequently a license-only or path-only edit changes artifact identity and
+leaves compatibility identity unchanged, while a unit-conversion or freshness
+edit changes compatibility identity. Golden vectors pin both preimages
+literally.
 
 ### Freshness
 
@@ -382,9 +401,9 @@ files and in-memory variants of them, must prove:
    timeout yields freshness backed only by `user_mapped` evidence; a zero or
    out-of-range timeout fails; an undeclared timeout leaves the signal
    unverified. An empty bindings list reports `all_features_disabled`.
-5. **Identity and transaction.** Numeric or freshness changes alter
-   compatibility identity; source-byte/provenance-only changes alter artifact
-   identity only. Repeated runs are byte-identical. A late failure preserves
+5. **Identity and transaction.** Numeric, unit-conversion or freshness
+   changes alter compatibility identity; source-byte, license-only or
+   path-only changes alter artifact identity only. Repeated runs are byte-identical. A late failure preserves
    the prior complete artifact set.
 
 Host tests, firmware builds, bench measurements and vehicle evidence are
