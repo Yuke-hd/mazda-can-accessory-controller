@@ -49,14 +49,15 @@ signals the controller recognizes; the importer does not guess.
 | `selected_bus` | The one logical bus whose fields can bind. Other buses remain inventory. |
 | `sources[]` | `path` (relative to the mapping file; also the logical path written to outputs), `sha256` (pins the exact bytes), `bus` (logical bus of that source), `license` (required license/provenance note) and optional `encoding` (`utf-8` default, or `cp1252`). |
 | `units`, `unit_conversions` | Unit vocabulary and conversions, copied into the derived registry. |
-| `freshness_policies` | Optional user-declared freshness timeouts (see Freshness). |
+| `freshness_policies` | Optional user-declared freshness timeouts, entries `{"target": "<catalog key>", "timeout_ms": <positive integer>}` (see Freshness). |
 | `bindings[]` | `target` (a controller signal key), `message` and `field` (names as they appear in the DBC), `unit`, and for enum targets a `choices` map from DBC `VAL_` labels to catalog choice keys. |
 
 The loader is strict: unknown members, duplicate JSON keys, nonfinite numbers
 and wrong types fail. Import limits (source count, source bytes, token bytes,
 records, fields, total diagnostics) and the `utf-8` encoding default are
-fixed in importer code and are not mapping input; the effective limits still
-enter artifact identity through `validation_limits`.
+constants in importer code (the version-one values) and are not mapping
+input; the effective limits still enter artifact identity through
+`validation_limits`.
 
 A source's logical bus comes from the mapping. A DBC filename, node name,
 sender or `BS_` value does not select a physical CAN interface, bitrate,
@@ -104,7 +105,7 @@ enum choices.
 | `evidence` | One fixed importer entry per profile, `("mapping:<profile_id>", "user_mapped", "source_only")`, plus a user-claim entry for each declared timeout. |
 | `units`, `unit_conversions` | Copied from the mapping. |
 | `invalid_value_policies` | `["unavailable"]`, the only value the validator accepts. |
-| `freshness_policies` | Copied from the mapping. |
+| `freshness_policies` | One row per declared entry, keyed by (`profile_id`, `target`): (`profile_id`, `target`, `timeout_ms`, `"reviewed_operational"`, `"mapping:<profile_id>"`). See Freshness. |
 
 The mapping chooses which field feeds which target; the importer and the
 existing validator still decide type, unit, conversion and choice
@@ -175,8 +176,7 @@ The importer applies fixed nonnegative integer limits for source count, source
 bytes, token bytes, records, fields and total diagnostics. Numeric tokens must
 also meet the normalized validator's existing exact-representation limits.
 Exceeding any limit is a fatal `resource_overflow`, never truncation. The
-effective limits enter artifact identity through `validation_limits`; concrete
-build defaults are an integration decision.
+effective limits enter artifact identity through `validation_limits`.
 
 ## Composition before mapping
 
@@ -254,7 +254,7 @@ SHA-256 of a normalized preimage. A preimage is the UTF-8 encoding of
 `json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`
 over the strict-JSON validated mapping. Normalization sorts `sources` by
 logical path, `bindings` by target, `units`, `unit_conversions` (as tuples)
-and `freshness_policies` (by key), and the keys of each `choices` map, so
+and `freshness_policies` (by `target`), and the keys of each `choices` map, so
 member order and source order never change a digest.
 
 1. `semantic_policy_revision`: the preimage holds `version`, `profile_id`,
@@ -280,11 +280,25 @@ literally.
 ### Freshness
 
 Freshness is user-declared. A mapping may declare a freshness timeout; it is
-the mapping author's claim, not reviewed evidence. Each declared timeout gets
-a matching `("mapping:<profile_id>", "user_mapped", "operational")` evidence
-entry, so the validator's timeout bounds and basis checks apply unchanged: a
-zero or out-of-range timeout fails. A signal without a declared timeout stays
-freshness-unverified, and features that require `Fresh` stay off for it.
+the mapping author's claim, not reviewed evidence.
+
+Each `freshness_policies` entry is `{"target": "<catalog key>", "timeout_ms":
+<positive integer>}`; its sort key in the digest preimage is `target`. A target
+may appear at most once (a duplicate fails `duplicate_target`). The target must
+be in the catalog and bound in `bindings`; otherwise the entry fails
+`unknown_target` or `stale_mapping` respectively. A zero, negative or
+out-of-range timeout (above 4294967295 ms) fails `invalid_freshness`, the
+existing validator category.
+
+The derived registry row is (`profile_id`, `target`, `timeout_ms`,
+`"reviewed_operational"`, `"mapping:<profile_id>"`), and the importer sets the
+same basis and `evidence_ref` on the binding's `freshness` object. The existing
+validator's basis literal `reviewed_operational` is satisfied by the matching
+evidence entry `("mapping:<profile_id>", "user_mapped", "operational")`.
+That literal does not mean reviewed evidence for imported profiles: the claim is the mapping
+author's (D6). No validator code change is required, and the validator's
+timeout bounds and basis checks apply unchanged. A signal without a declared
+timeout stays freshness-unverified, and features that require `Fresh` stay off for it.
 Nothing derives a timeout, for example from `GenMsgCycleTime`. The source
 report states that imported-profile freshness is user-declared. Source timing,
 operational freshness, confidence and current availability stay distinct.
@@ -335,7 +349,7 @@ than a dependency installation or a claim about every DBC dialect:
 
 | Candidate | Evidence and decision |
 | --- | --- |
-| Existing `tools/compare_mazda_dbc.py` | Its [documented Mazda comparison subset](../../protocol/dbc-metadata-verification.md) compares reviewed metadata. Its parser ignores lines outside that subset and has no complete import/recognition contract. Keep it as an independent Mazda regression check. |
+| Existing `tools/compare_mazda_dbc.py` | Its [documented Mazda comparison subset](../../protocol/dbc-metadata-verification.md) compares reviewed metadata. Its parser ignores lines outside that subset and has no complete import/mapping contract. Keep it as an independent Mazda regression check. |
 | cantools 45.1.0, commit `68131411d777da8024e11ec79ddb7bebe92c2da0` | [Release](https://github.com/cantools/cantools/releases/tag/45.1.0), [MIT license](https://github.com/cantools/cantools/blob/68131411d777da8024e11ec79ddb7bebe92c2da0/LICENSE), [DBC loader](https://github.com/cantools/cantools/blob/68131411d777da8024e11ec79ddb7bebe92c2da0/src/cantools/database/can/formats/dbc/dbc_loader.py), [numeric conversion](https://github.com/cantools/cantools/blob/68131411d777da8024e11ec79ddb7bebe92c2da0/src/cantools/database/can/formats/utils.py). It supports broader DBC syntax, but ordinary numeric loading uses `int`/`float`, which cannot supply this exact-decimal contract by itself. Its private token parser is not adopted as a public API. Suitable as an optional differential oracle for the accepted subset, excluding numeric cases where binary rounding changes the comparison. |
 | canmatrix 1.3.3.1, commit `22264038315169b73cbe889d4719a322a1eb0f96` | [Release](https://github.com/ebroecker/canmatrix/releases/tag/1.3.3.1), [BSD-2-Clause license](https://github.com/ebroecker/canmatrix/blob/22264038315169b73cbe889d4719a322a1eb0f96/LICENSE), [DBC loader](https://github.com/ebroecker/canmatrix/blob/22264038315169b73cbe889d4719a322a1eb0f96/src/canmatrix/formats/dbc.py), [package/dependency metadata](https://github.com/ebroecker/canmatrix/blob/22264038315169b73cbe889d4719a322a1eb0f96/pyproject.toml). A viable host conversion-library alternative, but still needs a reviewed adapter proving exact values, complete unsupported-construct detection and these source diagnostics. No such proof is claimed here. |
 
