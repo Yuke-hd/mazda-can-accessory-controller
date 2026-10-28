@@ -171,10 +171,23 @@ Run the [architecture checks](architecture-validation.md) when headers change.
 Rules are authored against signal keys, and the host YAML compiler validates
 them against a manifest.
 
-1. Add the key to
+1. Regenerate
    [`tools/controller_signal_catalog.json`](../../tools/controller_signal_catalog.json)
-   with its `type`, `capabilities`, and (for enums) `choices` matching the
-   catalog row exactly.
+   from the compiled catalog, then commit the generated change. Do not edit
+   the manifest by hand. A standalone host build works with testing disabled:
+
+   ```sh
+   cmake -S . -B /tmp/mazda-signal-catalog -G Ninja \
+     -DBUILD_TESTING=OFF -DMAZDA_BUILD_HOST_TESTS=OFF
+   cmake --build /tmp/mazda-signal-catalog --target regenerate_controller_signal_catalog
+   cmake --build /tmp/mazda-signal-catalog --target check_controller_signal_catalog
+   ```
+
+   The check target fails on byte drift and never writes the manifest. CI
+   runs it after the host build. Firmware configuration reads the checked-in
+   manifest and does not build or execute the host exporter. The direct
+   command is `python3 tools/generate_controller_signal_catalog.py --exporter
+   /path/to/export_controller_signal_catalog [--check] [--output path]`.
 2. Add a case to `tests/tools/compile_controller_config_test.py`.
 3. Document any new rule options in the
    [controller config spec](../specs/configuration/controller-config.md).
@@ -216,7 +229,7 @@ Do these only when the signal should be visible there.
 - [ ] Freshness and period left unset unless timing evidence exists
 - [ ] New `SignalId` appended; catalog row, descriptor, and (if notifying) channel and public callback agree
 - [ ] Count assertions and docs updated (`kSignalCatalogSize`, `notify_signal_count()`)
-- [ ] `tools/controller_signal_catalog.json` matches the catalog row
+- [ ] Controller signal manifest regenerated and non-mutating check passes
 - [ ] Docs updated: decoder mappings, signal evidence, signal layering
 - [ ] Host build, tests, and architecture checks pass ([build modes](build-modes.md))
 - [ ] Report automated results only; no hardware or vehicle claim
