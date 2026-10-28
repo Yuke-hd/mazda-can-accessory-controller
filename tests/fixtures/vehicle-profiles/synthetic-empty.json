@@ -1,0 +1,14 @@
+{
+  "format": "vehicle-signal-profile",
+  "version": 1,
+  "profile_id": "synthetic.desert",
+  "semantic_policy_revision": "desert.v3",
+  "recognition_rule_revision": "desert-recognition.v2",
+  "selected_bus": "powertrain",
+  "sources": [],
+  "messages": [],
+  "bindings": [],
+  "diagnostics": [{"category": "all_features_disabled", "affected": "factory", "sources": [], "reason": "This independently authored empty profile exposes no controller inputs."}],
+  "compatibility_identity": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "artifact_identity": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}
