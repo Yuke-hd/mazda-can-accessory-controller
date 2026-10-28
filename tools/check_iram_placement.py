@@ -6,7 +6,9 @@ renamed, inlined, or cloned hot function would quietly fall back to flash.
 This checker reads the symbol entries of a linker fragment, resolves the
 `.iram0.text` bounds with the toolchain `objdump -h`, lists the ELF symbols
 with the toolchain `nm`, and fails unless every listed symbol is defined
-inside that section. The firmware build runs it as a POST_BUILD step.
+inside that section. Optional `# check-local-code:` comments also check code
+whose demangled name includes a stable parent function identity. The firmware
+build runs it as a POST_BUILD step.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ IRAM_SECTION = ".iram0.text"
 # or `object (noflash)` place whole inputs and name no symbol.
 _SYMBOL_ENTRY = re.compile(r"^\s*[^\s:#]+:(?P<symbol>[^\s(]+)\s*\((?P<scheme>[^)]+)\)\s*$")
 _CODE_SCHEMES = frozenset({"noflash", "noflash_text", "iram"})
+_LOCAL_CODE_PARENT = re.compile(r"^\s*#\s*check-local-code:\s*(.+?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,46 @@ def parse_nm(nm_output: str) -> Dict[str, List[int]]:
     return symbols
 
 
+def parse_local_code_parents(text: str) -> List[str]:
+    """Read demangled parent identities from checker-only fragment comments."""
+    return [match.group(1) for line in text.splitlines()
+            if (match := _LOCAL_CODE_PARENT.match(line))]
+
+
+def local_code_symbols(nm_output: str, demangled_output: str,
+                       parents: Sequence[str]) -> List[str]:
+    """Find code referring to a parent's local types without mangling assumptions.
+
+    Both nm calls use --no-sort, preserving ELF symbol-table order. Demangling
+    resolves context-dependent ABI substitutions in std::apply/invoke helpers.
+    Check paired addresses/types before using the demangled identity.
+    """
+    def records(text: str) -> list[tuple[int, str, str]]:
+        result = []
+        for line in text.splitlines():
+            fields = line.split(maxsplit=2)
+            if len(fields) == 3:
+                try:
+                    result.append((int(fields[0], 16), fields[1], fields[2]))
+                except ValueError:
+                    pass
+        return result
+
+    raw = records(nm_output)
+    demangled = records(demangled_output)
+    if len(raw) != len(demangled) or any(
+            left[:2] != right[:2] for left, right in zip(raw, demangled)):
+        raise ValueError("raw and demangled nm symbol tables do not align")
+    result = set()
+    for parent in parents:
+        matches = [left[2] for left, right in zip(raw, demangled)
+                   if left[1] in {"T", "t", "W", "w"} and parent in right[2]]
+        if not matches:
+            raise ValueError(f"local code parent not found in ELF: {parent}")
+        result.update(matches)
+    return sorted(result)
+
+
 def check(symbols: Sequence[str], section: Section, defined: Dict[str, List[int]]) -> List[str]:
     """Return one failure message per symbol not placed in the section."""
     failures: List[str] = []
@@ -103,13 +146,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    symbols = parse_fragment_symbols(args.fragment.read_text(encoding="utf-8"))
+    fragment = args.fragment.read_text(encoding="utf-8")
+    symbols = parse_fragment_symbols(fragment)
+    parents = parse_local_code_parents(fragment)
     if not symbols:
         print(f"IRAM placement check failed: no symbol entries in {args.fragment}", file=sys.stderr)
         return 1
     try:
         section = parse_section(_run([args.objdump, "-h", str(args.elf)]), IRAM_SECTION)
-        defined = parse_nm(_run([args.nm, "--defined-only", str(args.elf)]))
+        nm_output = _run([args.nm, "--defined-only", "--no-sort", str(args.elf)])
+        defined = parse_nm(nm_output)
+        if parents:
+            demangled = _run([args.nm, "--defined-only", "--no-sort", "--demangle", str(args.elf)])
+            symbols = list(dict.fromkeys(symbols + local_code_symbols(nm_output, demangled, parents)))
     except (OSError, subprocess.CalledProcessError, ValueError) as error:
         print(f"IRAM placement check failed: {error}", file=sys.stderr)
         return 1

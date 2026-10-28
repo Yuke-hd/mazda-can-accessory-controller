@@ -199,6 +199,19 @@ MessageMutationMarker message_mutation_marker(const VehicleState &state,
 inline constexpr LightingDescriptor<TurnState> kTurnNotificationDescriptor{
     &VehicleState::turn_state, &candidate::kTurnLeftSwitchDefinition};
 
+#if defined(ESP_PLATFORM)
+#define MAZDA_NOTIFICATION_ALWAYS_INLINE __attribute__((always_inline))
+#else
+#define MAZDA_NOTIFICATION_ALWAYS_INLINE
+#endif
+
+template <typename Visitor, std::size_t... Indices>
+MAZDA_NOTIFICATION_ALWAYS_INLINE inline void
+visit_notification_descriptors(const NotificationDescriptorTuple &descriptors, Visitor &&visitor,
+                               std::index_sequence<Indices...>) noexcept {
+  (visitor(std::get<Indices>(descriptors)), ...);
+}
+
 // Keep the facade's receive-target conversion inside the runtime contract's
 // bounded range. The core validates the resulting RuntimeConfig, but it
 // cannot validate an overflowing or truncated facade conversion after the
@@ -1244,58 +1257,55 @@ std::size_t VehicleTelemetryService::publish_notifications(
 #if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
   const auto notification_started_us = include_lighting ? clock_->now() : 0;
 #endif
-  std::apply(
+  // Keep both tuple traversals inside this stable IRAM-pinned function.
+  // An outlined generic lambda would encode the complete descriptor tuple.
+  visit_notification_descriptors(
+      notification_descriptors(),
       [this, &state, now_us, &due_identifiers, &due_identifier_count,
-       &descriptor_index](const auto &...descriptor) {
-        (([&] {
-           if (notification_descriptor_due(state, now_us, descriptor, descriptor_index)) {
-             const bool already_recorded =
-                 std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
-                           descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
-             if (!already_recorded)
-               due_identifiers[due_identifier_count++] = descriptor.identifier;
-           }
-           ++descriptor_index;
-         }()),
-         ...);
+       &descriptor_index](const auto &descriptor) MAZDA_NOTIFICATION_ALWAYS_INLINE {
+        if (notification_descriptor_due(state, now_us, descriptor, descriptor_index)) {
+          const bool already_recorded =
+              std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
+                        descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
+          if (!already_recorded)
+            due_identifiers[due_identifier_count++] = descriptor.identifier;
+        }
+        ++descriptor_index;
       },
-      notification_descriptors());
+      std::make_index_sequence<kNotificationChannelCount>{});
 
   std::size_t evaluations = 0;
   descriptor_index = 0;
-  std::apply(
+  visit_notification_descriptors(
+      notification_descriptors(),
       [this, &state, &diagnostics, now_us, affected_identifier, global_health_transition,
        &due_identifiers, due_identifier_count, &descriptor_index,
-       &evaluations](const auto &...descriptor) {
-        (([&] {
-           const bool affected =
-               affected_identifier && descriptor.identifier == *affected_identifier;
-           const bool due =
-               std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
-                         descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
-           if (global_health_transition || affected || due) {
-             publish_notification_descriptor(state, diagnostics, now_us, descriptor);
-             // Host-only extension descriptors share a production message
-             // group but have no catalog id. They still receive the update;
-             // profiler counts describe released catalog work only.
-             if (descriptor.id.valid()) {
-               ++evaluations;
+       &evaluations](const auto &descriptor) MAZDA_NOTIFICATION_ALWAYS_INLINE {
+        const bool affected = affected_identifier && descriptor.identifier == *affected_identifier;
+        const bool due =
+            std::find(due_identifiers.begin(), due_identifiers.begin() + due_identifier_count,
+                      descriptor.identifier) != due_identifiers.begin() + due_identifier_count;
+        if (global_health_transition || affected || due) {
+          publish_notification_descriptor(state, diagnostics, now_us, descriptor);
+          // Host-only extension descriptors share a production message
+          // group but have no catalog id. They still receive the update;
+          // profiler counts describe released catalog work only.
+          if (descriptor.id.valid()) {
+            ++evaluations;
 #if defined(MAZDA_ENABLE_TELEMETRY_PROFILING)
-               if (host_options_.profiler != nullptr &&
-                   host_options_.profiler->notification_descriptor_evaluation != nullptr)
-                 host_options_.profiler->notification_descriptor_evaluation(
-                     host_options_.profiler->context, descriptor.identifier);
+            if (host_options_.profiler != nullptr &&
+                host_options_.profiler->notification_descriptor_evaluation != nullptr)
+              host_options_.profiler->notification_descriptor_evaluation(
+                  host_options_.profiler->context, descriptor.identifier);
 #endif
-             }
-             if (notification_descriptor_due(state, now_us, descriptor, descriptor_index))
-               notification_due_observations_[descriptor_index] =
-                   (state.*descriptor.signal).last_update_us;
-           }
-           ++descriptor_index;
-         }()),
-         ...);
+          }
+          if (notification_descriptor_due(state, now_us, descriptor, descriptor_index))
+            notification_due_observations_[descriptor_index] =
+                (state.*descriptor.signal).last_update_us;
+        }
+        ++descriptor_index;
       },
-      notification_descriptors());
+      std::make_index_sequence<kNotificationChannelCount>{});
 #if defined(CONFIG_WEACT_CAN_TELEMETRY_PROFILING)
   if (include_lighting)
     profile_stage(TelemetryProfileStage::NotificationEvaluation, notification_started_us,
