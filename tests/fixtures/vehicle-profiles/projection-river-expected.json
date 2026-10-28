@@ -1,0 +1,12 @@
+{
+  "compiler_catalog": {"version": 1, "signals": {
+    "vehicle.speed": {"type": "number", "capabilities": ["notify", "read"]},
+    "vehicle.synthetic_ready": {"type": "boolean", "capabilities": ["read"]}
+  }},
+  "metadata_lines": ["1\tvehicle.speed\t1\t1\t0\t3", "2\tvehicle.synthetic_ready\t0\t0\t0\t1"],
+  "capability_report": {"version": 1, "profile_id": "synthetic.river", "all_features_disabled": false,
+    "catalog_document_bytes": 99,
+    "signals": [{"key": "vehicle.speed", "binding_kind": "dbc", "capabilities": ["notify", "read"]},
+                {"key": "vehicle.synthetic_ready", "binding_kind": "native", "capabilities": ["read"]}],
+    "diagnostics": [{"category": "unmapped", "affected": "river.raw_state", "sources": ["river-b"], "reason": "Synthetic wide state has no reviewed canonical meaning."}]}
+}
