@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "profile_revisions": [["synthetic.demo", "demo.v1", "recognition.v1"]],
+  "profile_revisions": [["synthetic.demo", "demo.v1", "recognition-v1:65e78fbf623839d68719d8d1d6f3cbade14bf1ed79baf766c67076ccab53f614"]],
   "handlers": [],
   "evidence": [["synthetic/demo-review", "Reference", "source_only"]],
   "units": ["", "rpm"],

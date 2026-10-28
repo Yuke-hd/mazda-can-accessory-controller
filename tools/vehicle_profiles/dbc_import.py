@@ -15,8 +15,8 @@ from .canonical import ProfileIdentity, identify_profile
 from .dbc_lexer import LexerError, LexerLimits, SourceRequest, Span, load_sources
 from .dbc_parser import ParserLimits, Signal, SourceInventory, parse_tokens
 from .model import FORMAT, VERSION
-from .recognition import (Candidate, Pack, Recognition, exact_object, recognize, strict_json,
-                          text_field)
+from .recognition import (Candidate, Pack, Recognition, check_context, exact_object, recognize,
+                          recognition_input, recognition_rule_revision, strict_json, text_field)
 from .validation import ProfileValidationError, ValidationPolicies
 
 LIMIT_KEYS = ("max_sources", "max_source_bytes", "max_token_bytes", "max_records",
@@ -40,7 +40,7 @@ class ImportResult:
 
 def check_request(value: Any) -> dict:
     """Validate the exact request shape. Field-to-input assignments have no place in it."""
-    request = exact_object(value, "version profile_id selected_bus pack generator_revision "
+    request = exact_object(value, "version profile_id selected_bus pack context generator_revision "
                            "limits sources")
     if type(request["version"]) is not int or request["version"] != 1:
         raise ValueError("expected a version-1 import request")
@@ -49,6 +49,7 @@ def check_request(value: Any) -> dict:
     pack = exact_object(request["pack"], "id revision")
     for key, item in pack.items():
         text_field(item, "pack " + key, identifier=True)
+    check_context(request["context"])
     limits = exact_object(request["limits"], " ".join(LIMIT_KEYS))
     if any(type(item) is not int or item < 0 for item in limits.values()):
         raise ValueError("limits must be nonnegative integers")
@@ -185,6 +186,8 @@ def import_profile(request: dict, *, pack: Pack, policies: ValidationPolicies,
         raise ValueError("pack is not scoped to the requested profile")
     (source,) = request["sources"]
     limits = request["limits"]
+    preimage = recognition_input(pack.pack_id, pack.revision, request["context"])
+    recognition_report = {"preimage": preimage, "revision": recognition_rule_revision(preimage)}
     root = Path.cwd() if base_dir is None else Path(base_dir)
     try:
         (record,) = load_sources(
@@ -196,23 +199,24 @@ def import_profile(request: dict, *, pack: Pack, policies: ValidationPolicies,
         inventory = parse_tokens(record.tokens, record.source_id, record.bus,
                                  ParserLimits(limits["max_records"], limits["max_fields"]))
     except LexerError as error:
-        return ImportResult(None, None, {"sources": [], "diagnostics": [
-            _fatal_item(error, source["id"])]})
+        return ImportResult(None, None, {"sources": [], "recognition_input": recognition_report,
+                                           "diagnostics": [_fatal_item(error, source["id"])]})
     report_source = {"id": record.source_id, "logical_path": record.logical_path,
                      "bus": record.bus, "sha256": record.sha256, "version": inventory.version}
-    recognition = recognize(pack, inventory.messages)
+    recognition = recognize(pack, inventory.messages, request["context"])
     items = _diagnostics(inventory, recognition)
     if len(items) > limits["max_diagnostics"]:
         error = LexerError("resource_overflow", "diagnostic count exceeds the request limit")
-        return ImportResult(None, None, {"sources": [report_source], "diagnostics": [
-            _fatal_item(error, source["id"])]})
+        return ImportResult(None, None, {"sources": [report_source],
+                                           "recognition_input": recognition_report,
+                                           "diagnostics": [_fatal_item(error, source["id"])]})
     v1_category = {"unmapped_field": "unmapped", "ambiguous_binding": "ambiguous",
                    "unsupported_message": "unsupported",
                    "all_features_disabled": "all_features_disabled"}
     document = {
         "format": FORMAT, "version": VERSION, "profile_id": request["profile_id"],
         "semantic_policy_revision": pack.semantic_policy_revision,
-        "recognition_rule_revision": pack.revision, "selected_bus": request["selected_bus"],
+        "recognition_rule_revision": recognition_report["revision"], "selected_bus": request["selected_bus"],
         "sources": [{"id": record.source_id, "kind": "dbc", "path": record.logical_path,
                      "sha256": record.sha256, "revision": record.revision,
                      "license": record.license_ref, "bus": record.bus}],
@@ -231,7 +235,9 @@ def import_profile(request: dict, *, pack: Pack, policies: ValidationPolicies,
                                     generator_revision=request["generator_revision"],
                                     validation_limits=limits)
     except ProfileValidationError as error:
-        return ImportResult(None, None, {"sources": [report_source], "diagnostics": [
-            _fatal_item(error, record.source_id)]})
+        return ImportResult(None, None, {"sources": [report_source],
+                                           "recognition_input": recognition_report,
+                                           "diagnostics": [_fatal_item(error, record.source_id)]})
     return ImportResult(identity.profile, identity,
-                        {"sources": [report_source], "diagnostics": items})
+                        {"sources": [report_source],
+                                  "recognition_input": recognition_report, "diagnostics": items})

@@ -7,6 +7,7 @@ executed (host tools only).
 """
 
 from dataclasses import dataclass
+import hashlib
 import json
 import re
 from typing import Any
@@ -15,6 +16,9 @@ from .dbc_parser import Message, Signal
 
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]*\Z")
 BYTE_ORDERS = ("intel", "motorola")
+CONTEXT_KEYS = ("make", "model", "platform", "model_year", "market", "trim")
+CONTEXT_FORMAT = "dbc-recognition-input-v1"
+REVISION_PREFIX = "recognition-v1:"
 
 
 def strict_json(text: str) -> Any:
@@ -49,6 +53,42 @@ def text_field(value: Any, name: str, *, identifier: bool = False) -> str:
     return value
 
 
+def check_context(value: Any) -> dict:
+    """Require exactly the six context keys; unknown values are explicit nulls.
+
+    Text values are registered ASCII codes; `model_year` is an integer (never a
+    boolean) or null.
+    """
+    context = exact_object(value, " ".join(CONTEXT_KEYS))
+    for key, item in context.items():
+        if item is None:
+            continue
+        if key == "model_year":
+            if type(item) is not int:
+                raise ValueError("context model_year must be an integer or null")
+        elif type(item) is not str or not _ID.match(item) or not item.isascii():
+            raise ValueError(f"context {key} must be an ASCII code or null")
+    return context
+
+
+def recognition_input(pack_id: str, pack_revision: str, context: dict) -> str:
+    """The `dbc-recognition-input-v1` preimage: sorted keys, compact, unescaped."""
+    return json.dumps({"format": CONTEXT_FORMAT, "pack_id": pack_id,
+                       "pack_revision": pack_revision, "context": check_context(context)},
+                      sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                      allow_nan=False)
+
+
+def recognition_rule_revision(preimage: str) -> str:
+    return REVISION_PREFIX + hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+
+
+def context_allows(predicates: dict, context: dict) -> bool:
+    """Unknown (null) context never satisfies a predicate, so it cannot widen a rule."""
+    return all(context.get(key) is not None and context[key] in allowed
+               for key, allowed in predicates.items())
+
+
 @dataclass(frozen=True)
 class Match:
     aliases: tuple[str, ...]  # lowercase ASCII
@@ -62,6 +102,7 @@ class Match:
 class Rule:
     match: Match
     binding: dict  # reviewed binding template; validated structurally by validate_profile
+    context: dict  # context key -> allowed values; empty means unrestricted
 
 
 @dataclass(frozen=True)
@@ -74,7 +115,19 @@ class Pack:
 
 
 def _rule(item: Any, index: int) -> Rule:
-    rule = exact_object(item, "match binding")
+    rule = exact_object(item, "match binding", "context")
+    predicates = {}
+    raw_context = rule.get("context", {})
+    if not isinstance(raw_context, dict) or any(key not in CONTEXT_KEYS for key in raw_context):
+        raise ValueError(f"rules[{index}] context keys must be among {' '.join(CONTEXT_KEYS)}")
+    for key, allowed in raw_context.items():
+        if not isinstance(allowed, list) or not allowed:
+            raise ValueError(f"rules[{index}] context {key} must be a non-empty array")
+        for entry in allowed:
+            if entry is None:
+                raise ValueError(f"rules[{index}] context {key} cannot allow null")
+            check_context({k: (entry if k == key else None) for k in CONTEXT_KEYS})
+        predicates[key] = tuple(allowed)
     match = exact_object(rule["match"], "aliases unit", "length byte_order signed")
     aliases = match["aliases"]
     if not isinstance(aliases, list) or not aliases:
@@ -123,7 +176,8 @@ def _rule(item: Any, index: int) -> Rule:
         for key, value in exact_object(item, "minimum maximum").items():
             text_field(value, "invalid range " + key)
     text_field(binding["invalid_value"], "binding invalid_value")
-    return Rule(Match(tuple(lowered), match["unit"], length, order, signed), binding)
+    return Rule(Match(tuple(lowered), match["unit"], length, order, signed), binding,
+                predicates)
 
 
 def load_pack(text: str) -> Pack:
@@ -163,10 +217,17 @@ def matches(rule: Rule, signal: Signal) -> bool:
             and (match.signed is None or signal.signed == match.signed))
 
 
-def recognize(pack: Pack, messages: tuple[Message, ...]) -> Recognition:
-    """Propose bindings from executable messages; competing fields exclude the key."""
+def recognize(pack: Pack, messages: tuple[Message, ...],
+              context: dict | None = None) -> Recognition:
+    """Propose bindings from executable messages; competing fields exclude the key.
+
+    Rules whose context predicates the request context does not satisfy are skipped.
+    """
+    context = check_context(context if context is not None else dict.fromkeys(CONTEXT_KEYS))
     candidates: dict[str, dict[str, list[Candidate]]] = {}
     for rule in pack.rules:
+        if not context_allows(rule.context, context):
+            continue
         for message in messages:
             if not message.executable:
                 continue
