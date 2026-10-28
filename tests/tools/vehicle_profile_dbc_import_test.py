@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from vehicle_profiles.dbc_import import import_profile
 from vehicle_profiles.dbc_mapping import (MappingError, load_mapping, mapping_revision,
-                                           semantic_revision)
+                                           semantic_revision, strict_json)
 from vehicle_profiles.dbc_registry import derive_registry
 from vehicle_profiles.validation import validate_profile
 
@@ -128,19 +128,48 @@ class DerivedRegistryTests(unittest.TestCase):
         other = load_mapping(json.dumps(other))
         self.assertEqual(semantic_revision(other), semantic_revision(base))
         self.assertNotEqual(mapping_revision(other), mapping_revision(base))
-        reordered = json.loads(MAPPING.read_text())
-        reordered["units"] = ["rpm"]
-        reordered["bindings"].reverse()
-        reordered = load_mapping(json.dumps(reordered, sort_keys=True))
-        self.assertEqual(mapping_revision(reordered), mapping_revision(base))
+
+    def test_digests_ignore_list_order(self):
+        document = json.loads(MAPPING.read_text())
+        document["units"] = ["kPa", "rpm"]
+        document["unit_conversions"] = [["kPa", "kPa", "1", "0"], ["rpm", "rpm", "1", "0"]]
+        document["bindings"].append({"target": "vehicle.brake_pressure",
+                                     "message": "Engine", "field": "BrakePressure",
+                                     "unit": "kPa"})
+        base = load_mapping(json.dumps(document))
+        for key in ("units", "unit_conversions", "bindings"):
+            shuffled = json.loads(json.dumps(document))
+            shuffled[key].reverse()
+            shuffled = load_mapping(json.dumps(shuffled))
+            self.assertEqual(semantic_revision(shuffled), semantic_revision(base), key)
+            self.assertEqual(mapping_revision(shuffled), mapping_revision(base), key)
+        # Freshness entries are rejected by the T3 loader; check the preimage directly.
+        entries = [{"target": "vehicle.speed_kph", "timeout_ms": 100},
+                   {"target": "vehicle.engine_rpm", "timeout_ms": 200}]
+        forward = dict(base, freshness_policies=entries)
+        backward = dict(base, freshness_policies=entries[::-1])
+        self.assertEqual(semantic_revision(forward), semantic_revision(backward))
+        self.assertNotEqual(semantic_revision(forward), semantic_revision(base))
+        sources = [dict(base["sources"][0], path="b.dbc"), dict(base["sources"][0], path="a.dbc")]
+        self.assertEqual(mapping_revision(dict(base, sources=sources)),
+                         mapping_revision(dict(base, sources=sources[::-1])))
+
+    def test_omitted_encoding_defaults_to_utf8_and_hashes_like_explicit(self):
+        explicit = load_mapping(MAPPING.read_text())
+        document = json.loads(MAPPING.read_text())
+        del document["sources"][0]["encoding"]
+        omitted = load_mapping(json.dumps(document))
+        self.assertEqual(omitted["sources"][0]["encoding"], "utf-8")
+        self.assertEqual(mapping_revision(omitted), mapping_revision(explicit))
+        self.assertIsNotNone(import_profile(staged(
+            lambda d: d["sources"][0].pop("encoding"))).profile)
 
     def test_license_or_path_edit_changes_artifact_but_not_compatibility_identity(self):
         base = import_profile(MAPPING)
-        for change in (lambda d: d["sources"][0].update(license="Apache-2.0; edited note"),
-                       lambda d: d["sources"][0].update(path="demo-a.dbc")):
-            edited = import_profile(staged(change))
-            self.assertEqual(edited.profile["compatibility_identity"],
-                             base.profile["compatibility_identity"])
+        edited = import_profile(staged(
+            lambda d: d["sources"][0].update(license="Apache-2.0; edited note")))
+        self.assertEqual(edited.profile["compatibility_identity"],
+                         base.profile["compatibility_identity"])
         self.assertNotEqual(import_profile(staged(
             lambda d: d["sources"][0].update(license="edited"))).profile["artifact_identity"],
             base.profile["artifact_identity"])
@@ -180,11 +209,29 @@ class LoaderTests(unittest.TestCase):
             load_mapping(text)
 
     def test_strict_json_rejects_duplicate_keys_and_nonfinite_numbers(self):
-        self.rejects('{"version": 1, "version": 1}')
-        self.rejects('{"version": NaN}')
-        self.rejects('{"version": Infinity}')
-        self.rejects("[]")
-        self.rejects("{")
+        with self.assertRaisesRegex(MappingError, "duplicate key a"):
+            strict_json('{"a": 1, "a": 2}')
+        with self.assertRaisesRegex(MappingError, "non-finite number NaN"):
+            strict_json('{"a": NaN}')
+        for constant in ("Infinity", "-Infinity"):
+            with self.assertRaisesRegex(MappingError, "non-finite number"):
+                strict_json('{"a": [%s]}' % constant)
+        with self.assertRaisesRegex(MappingError, "malformed JSON"):
+            strict_json("{")
+
+    def test_full_mapping_with_duplicate_nested_key_or_nan_is_rejected_for_that_reason(self):
+        text = MAPPING.read_text()
+        duplicated = text.replace('"target": "vehicle.engine_rpm",',
+                                  '"target": "vehicle.engine_rpm", "target": "vehicle.speed_kph",')
+        self.assertNotEqual(duplicated, text)
+        with self.assertRaisesRegex(MappingError, "duplicate key target"):
+            load_mapping(duplicated)
+        nonfinite = text.replace('"freshness_policies": []', '"freshness_policies": [NaN]')
+        self.assertNotEqual(nonfinite, text)
+        with self.assertRaisesRegex(MappingError, "non-finite number NaN"):
+            load_mapping(nonfinite)
+        for bad in ("[]", "{"):
+            self.rejects(bad)
 
     def test_exact_shape(self):
         for mutate in (lambda d: d.update(extra=1), lambda d: d.pop("units"),
@@ -210,7 +257,7 @@ class LoaderTests(unittest.TestCase):
 
     def test_freshness_policies_are_completed_in_a_later_ticket(self):
         document = self.good()
-        document["freshness_policies"] = [["vehicle.engine_rpm", 100]]
+        document["freshness_policies"] = [{"target": "vehicle.engine_rpm", "timeout_ms": 100}]
         self.rejects(json.dumps(document))
 
     def test_dbc_text_is_never_evaluated(self):

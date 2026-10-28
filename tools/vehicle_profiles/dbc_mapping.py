@@ -18,7 +18,8 @@ _DECIMAL = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 ENCODINGS = ("utf-8", "cp1252")
 TOP_KEYS = ("version profile_id selected_bus sources units unit_conversions "
             "freshness_policies bindings")
-SOURCE_KEYS = "path sha256 bus license encoding"
+SOURCE_KEYS = "path sha256 bus license"
+DEFAULT_ENCODING = "utf-8"
 BINDING_KEYS = "target message field unit"
 
 
@@ -44,9 +45,10 @@ def strict_json(text: str) -> Any:
         raise MappingError(f"malformed JSON: {error.msg}") from None
 
 
-def _object(value: Any, keys: str, name: str) -> dict:
-    if not isinstance(value, dict) or set(value) != set(keys.split()):
-        raise MappingError(f"{name} must be an object with exactly: {keys}")
+def _object(value: Any, keys: str, name: str, optional: str = "") -> dict:
+    required, allowed = set(keys.split()), set(keys.split()) | set(optional.split())
+    if not isinstance(value, dict) or not required <= set(value) <= allowed:
+        raise MappingError(f"{name} must be an object with fields: {' '.join(sorted(allowed))}")
     return value
 
 
@@ -66,7 +68,7 @@ def _list(value: Any, name: str) -> list:
 def _source_path(value: Any) -> str:
     path = _text(value, "source path")
     parts = PurePosixPath(path).parts
-    if (path.startswith("/") or "\\" in path or ".." in parts or "." in parts
+    if (path.startswith("/") or "\\" in path or ".." in parts
             or re.match(r"^[A-Za-z]:", path)):
         raise MappingError("source path must stay inside the profile directory")
     return path
@@ -83,7 +85,8 @@ def load_mapping(text: str) -> dict:
     if len(sources) != 1:
         raise MappingError("exactly one source is supported")
     for source in sources:
-        _object(source, SOURCE_KEYS, "source")
+        _object(source, SOURCE_KEYS, "source", "encoding")
+        source.setdefault("encoding", DEFAULT_ENCODING)
         _source_path(source["path"])
         if type(source["sha256"]) is not str or not _SHA256.match(source["sha256"]):
             raise MappingError("source sha256 must be 64 lowercase hex digits")

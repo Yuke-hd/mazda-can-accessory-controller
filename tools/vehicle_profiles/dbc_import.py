@@ -77,12 +77,11 @@ def _sorted(items: list[dict]) -> list[dict]:
         item["code"], item["affected"]))
 
 
-def _fatal_item(error: Exception, source_id: str) -> dict:
+def _fatal_item(error: Exception, source_id: str, stage: str | None = None) -> dict:
     if isinstance(error, ProfileValidationError):
         return _item(error.category, "validation", error.path, list(error.sources) or [source_id],
                      [], error.reason, "error")
-    stage = ("acquisition" if error.code in ACQUISITION_CODES else
-             "result" if error.reason.startswith("diagnostic count") else "parse")
+    stage = stage or ("acquisition" if error.code in ACQUISITION_CODES else "parse")
     spans = [error.span] if error.span is not None else []
     return _item(error.code, stage, source_id, [source_id], spans, error.reason, "error")
 
@@ -216,7 +215,7 @@ def import_profile(mapping_path: Path | str) -> ImportResult:
     items = _diagnostics(inventory, {signal.field_id for _, signal in resolved}, source_id)
     if len(items) > LIMITS["max_diagnostics"]:
         error = LexerError("resource_overflow", "diagnostic count exceeds the import limit")
-        return _failure(report, [_fatal_item(error, source_id)])
+        return _failure(report, [_fatal_item(error, source_id, "result")])
     ordered = sorted(resolved, key=lambda pair: pair[0]["target"])
     document = {
         "format": FORMAT, "version": VERSION, "profile_id": mapping["profile_id"],
