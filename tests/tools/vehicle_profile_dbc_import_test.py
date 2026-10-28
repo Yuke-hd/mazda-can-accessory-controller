@@ -1,6 +1,7 @@
 """Walking-skeleton import: one synthetic source to a validated, identified v1 profile."""
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -58,9 +59,10 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
 
     def test_request_assigns_no_per_field_owner_mapping(self):
-        text = (FIXTURES / "request-demo-a.json").read_text()
-        for word in ("binding", "field", "signal", "rpm", "BrakePressure"):
-            self.assertNotIn(word, text.replace("max_fields", ""))
+        for name in ("request-demo-a.json", "request-mazda-custom.json"):
+            text = (FIXTURES / name).read_text()
+            for word in ("binding", "field", "signal", "rpm", "BrakePressure"):
+                self.assertNotIn(word.lower(), text.replace("max_fields", "").lower(), name)
 
     def test_no_matching_rule_yields_explicit_empty_profile_without_fallback(self):
         pack = pack_with(lambda d: d["rules"][0]["match"].update(aliases=["NoSuchSignal"]))
@@ -212,6 +214,61 @@ class FatalTests(unittest.TestCase):
         result = run(pack_text=pack)
         self.fatal(result, "unknown_policy")
         self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
+
+
+class MazdaBaselineTests(unittest.TestCase):
+    """The committed repository DBC, referenced in place, through the synthetic pack."""
+
+    SOURCE = ROOT / "docs/protocol/mazda_custom.dbc"
+
+    def run_baseline(self):
+        req = load_request((FIXTURES / "request-mazda-custom.json").read_text())
+        return run(req, base_dir=ROOT)
+
+    def test_baseline_imports_to_a_validated_profile_without_fatal_items(self):
+        result = self.run_baseline()
+        self.assertIsNotNone(result.profile)
+        validate_profile(result.profile, policies=POLICIES)
+        self.assertEqual(result.identity.profile, result.profile)
+        self.assertNotIn("error", [item["severity"] for item in result.report["diagnostics"]])
+        self.assertEqual(len(result.profile["messages"]), 9)
+        fields = [f for m in result.profile["messages"] for f in m["fields"]]
+        self.assertEqual(len(fields), 22)
+
+    def test_synthetic_pack_binds_nothing_so_the_profile_is_explicitly_empty(self):
+        # EngineRPM is Motorola (@0); the reviewed synthetic rule requires Intel.
+        result = self.run_baseline()
+        self.assertEqual(result.profile["bindings"], [])
+        self.assertEqual(codes(result), ["unmapped_field"] * 22 + ["all_features_disabled"])
+        by_name = {f["name"]: f for m in result.profile["messages"] for f in m["fields"]}
+        self.assertEqual(by_name["EngineRPM"]["byte_order"], "motorola")
+        unmapped = [d["affected"] for d in result.profile["diagnostics"]
+                    if d["category"] == "unmapped"]
+        self.assertIn(by_name["EngineRPM"]["id"], unmapped)
+        self.assertNotIn("vehicle.", json.dumps(result.profile))
+
+    def test_report_lists_the_mazda_source_with_its_digest(self):
+        (source,) = self.run_baseline().report["sources"]
+        self.assertEqual(source["id"], "mazda-custom")
+        self.assertEqual(source["logical_path"], "docs/protocol/mazda_custom.dbc")
+        self.assertEqual(source["bus"], "body")
+        self.assertEqual(source["sha256"], hashlib.sha256(self.SOURCE.read_bytes()).hexdigest())
+        self.assertNotIn("path", source)
+
+    def test_output_carries_no_absolute_path(self):
+        result = self.run_baseline()
+        text = json.dumps([result.profile, result.report])
+        for path in (ROOT, FIXTURES, self.SOURCE):
+            self.assertNotIn(str(path), text)
+        self.assertNotIn(str(Path.home()), text)
+
+    def test_repeated_run_is_byte_identical(self):
+        first, second = self.run_baseline(), self.run_baseline()
+        dump = lambda r: json.dumps([r.profile, r.report], sort_keys=True).encode()
+        self.assertEqual(dump(first), dump(second))
+        self.assertEqual(first.identity.artifact_preimage, second.identity.artifact_preimage)
+        self.assertEqual(first.identity.compatibility_preimage,
+                         second.identity.compatibility_preimage)
 
 
 class ConfigurationTests(unittest.TestCase):
