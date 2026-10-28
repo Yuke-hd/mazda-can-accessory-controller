@@ -79,6 +79,15 @@ add_subdirectory(components/mazda_telemetry)
 add_subdirectory(components/companion_ble)
 add_subdirectory(lib/replay)
 
+# Standalone host catalog export does not depend on test or factory-config
+# targets, so it can bootstrap later compiler-manifest generation.
+add_executable(export_controller_signal_catalog tools/export_controller_signal_catalog.cpp)
+target_include_directories(export_controller_signal_catalog PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/mazda/internal_include)
+target_link_libraries(export_controller_signal_catalog PRIVATE mazda vehicle_signals)
+target_compile_features(export_controller_signal_catalog PRIVATE cxx_std_17)
+
 if(MAZDA_BUILD_HOST_TESTS)
   enable_testing()
   add_subdirectory(tests/support)
