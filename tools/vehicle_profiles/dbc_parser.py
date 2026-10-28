@@ -1,7 +1,9 @@
 """Core DBC parser: tokens to a source inventory for the version-one subset.
 
-Handles VERSION, NS_, BS_, BU_, BO_, plain SG_ and VAL_, plus the metadata
-records CM_, BO_TX_BU_, SIG_GROUP_, VAL_TABLE_, BA_DEF_, BA_DEF_DEF_ and BA_.
+Handles VERSION, NS_, BS_, BU_, BO_, SG_ (including multiplex markers) and VAL_,
+plus the metadata records CM_, BO_TX_BU_, SIG_GROUP_, VAL_TABLE_, BA_DEF_,
+BA_DEF_DEF_, BA_, SIG_VALTYPE_ and SG_MUL_VAL_. Multiplexed and IEEE-typed
+messages are inventoried but never executable.
 Metadata creates no bindings; only the allowlisted attributes GenMsgCycleTime,
 VFrameFormat, BusType and ProtocolType are interpreted. Every other record
 fails with a stable code and span. Numbers stay exact; bit coordinates come
@@ -35,7 +37,7 @@ BU_EV_REL_ BU_BO_REL_ SG_MUL_VAL_
 """.split())
 SUPPORTED = frozenset({"VERSION", "NS_", "BS_", "BU_", "BO_", "SG_", "VAL_", "CM_",
                        "BO_TX_BU_", "SIG_GROUP_", "VAL_TABLE_", "BA_DEF_", "BA_DEF_DEF_",
-                       "BA_"})
+                       "BA_", "SIG_VALTYPE_", "SG_MUL_VAL_"})
 # Known record families not parsed yet; they fail rather than being skipped.
 UNSUPPORTED = (NS_KEYWORDS | {"EV_"}) - SUPPORTED
 RECORD_KEYWORDS = SUPPORTED | UNSUPPORTED
@@ -46,6 +48,8 @@ ATTRIBUTE_TYPES = frozenset({"INT", "HEX", "FLOAT", "STRING", "ENUM"})
 FRAME_FORMATS = {"StandardCAN": ("standard", False), "ExtendedCAN": ("extended", False),
                  "StandardCAN_FD": ("standard", True), "ExtendedCAN_FD": ("extended", True)}
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_MULTIPLEX_MARKER = re.compile(r"M|m[0-9]+M?")
+VALUE_TYPE_FORMS = {1: "ieee_float", 2: "ieee_double"}
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,8 @@ class Signal:
     occupied_bits: tuple[int, ...]
     value_table: tuple[ValueLabel, ...]
     spans: tuple[Span, ...]
+    multiplex: str | None = None  # source marker: M, mN or mNM
+    value_type: int = 0  # SIG_VALTYPE_ code: 0 integer, 1 IEEE float, 2 IEEE double
 
 
 @dataclass(frozen=True)
@@ -100,6 +106,7 @@ class Message:
     spans: tuple[Span, ...]
     cycle_time_ms: int | None = None  # source-declared GenMsgCycleTime; timing record only
     frame_format: str | None = None  # declared VFrameFormat label
+    unsupported_forms: tuple[str, ...] = ()  # reported wire forms that block execution
 
 
 @dataclass(frozen=True)
@@ -155,6 +162,15 @@ class AttributeValue:
 
 
 @dataclass(frozen=True)
+class MultiplexRange:
+    raw_id: int
+    signal: str
+    switch: str
+    ranges: tuple[tuple[int, int], ...]
+    span: Span
+
+
+@dataclass(frozen=True)
 class SourceInventory:
     source_id: str
     bus: str
@@ -168,6 +184,7 @@ class SourceInventory:
     value_tables: tuple[ValueTable, ...] = ()
     attribute_definitions: tuple[AttributeDefinition, ...] = ()
     attributes: tuple[AttributeValue, ...] = ()
+    multiplex_ranges: tuple[MultiplexRange, ...] = ()
 
 
 def _digest(preimage: list) -> str:
@@ -265,6 +282,8 @@ def parse_tokens(tokens: tuple[Token, ...], source_id: str, bus: str,
     nodes: list[str] = []
     messages: dict[tuple[int, str], _MessageBuilder] = {}
     pending_values: list[tuple[Span, int, str, list[tuple[Token, str]]]] = []
+    pending_types: list[tuple[Span, int, str, int]] = []
+    pending_ranges: list[tuple[Span, int, str, str, tuple]] = []
     meta = _Metadata()
     current: _MessageBuilder | None = None
     records = fields = 0
@@ -318,6 +337,10 @@ def parse_tokens(tokens: tuple[Token, ...], source_id: str, bus: str,
             _parse_signal(cur, head, source_id, bus, current)
         elif keyword == "VAL_":
             _parse_values(cur, head, pending_values)
+        elif keyword == "SIG_VALTYPE_":
+            _parse_value_type(cur, head, pending_types)
+        elif keyword == "SG_MUL_VAL_":
+            _parse_multiplex_range(cur, head, pending_ranges)
         elif keyword == "CM_":
             _parse_comment(cur, head, meta)
         elif keyword == "BO_TX_BU_":
@@ -335,11 +358,14 @@ def parse_tokens(tokens: tuple[Token, ...], source_id: str, bus: str,
 
     _resolve_values(pending_values, messages)
     definitions = _resolve_attributes(meta, messages, nodes)
+    _resolve_value_types(pending_types, messages)
+    ranges = _resolve_multiplex_ranges(pending_ranges, messages)
+    _mark_unsupported_forms(messages)
     return SourceInventory(source_id, bus, version, tuple(namespace), tuple(nodes),
                            tuple(_freeze_message(b) for b in messages.values()),
                            tuple(meta.comments), tuple(meta.transmitters),
                            tuple(meta.signal_groups), tuple(meta.value_tables),
-                           definitions, tuple(meta.values))
+                           definitions, tuple(meta.values), ranges)
 
 
 def _syntax(cur: _Cursor, reason: str, span: Span):
@@ -386,8 +412,12 @@ def _parse_signal(cur: _Cursor, head: Token, source_id: str, bus: str,
                   builder: _MessageBuilder) -> None:
     name = cur.word("signal name")
     marker = cur.peek()
+    multiplex = None
     if marker is not None and marker.kind == "word":
-        cur.fail("multiplexed signals are not supported yet", marker, "unsupported_dbc_construct")
+        if _MULTIPLEX_MARKER.fullmatch(marker.text) is None:
+            cur.fail("malformed multiplex marker", marker)
+        multiplex = marker.text
+        cur.pos += 1
     cur.punct(":")
     start = cur.integer("start bit")
     cur.punct("|")
@@ -426,7 +456,7 @@ def _parse_signal(cur: _Cursor, head: Token, source_id: str, bus: str,
     if max(bits) >= builder.message["length"] * 8:
         _syntax(cur, "signal occupies bits outside the payload", span)
     fingerprint = (start.value, length.value, byte_order, sign.text == "-", scale, offset,
-                   minimum, maximum, unit.value, tuple(receivers))
+                   minimum, maximum, unit.value, tuple(receivers), multiplex)
     existing = builder.signals.get(name.text)
     if existing is None:
         wire = builder.message
@@ -434,7 +464,7 @@ def _parse_signal(cur: _Cursor, head: Token, source_id: str, bus: str,
             "field_id": field_id(source_id, bus, wire["identifier_format"], wire["wire_id"],
                                  name.text),
             "name": name.text, "fingerprint": fingerprint, "bits": bits, "values": {},
-            "spans": [span]}
+            "multiplex": multiplex, "value_type": 0, "spans": [span]}
     elif existing["fingerprint"] != fingerprint:
         raise ParserError("source_conflict", "repeated signal has different mechanics", span)
     else:
@@ -470,6 +500,80 @@ def _resolve_values(pending: list, messages: dict) -> None:
                     raise ParserError("source_conflict",
                                       "conflicting labels for one raw value", pair_span)
                 entry["spans"].append(pair_span)
+
+
+def _parse_value_type(cur: _Cursor, head: Token, pending: list) -> None:
+    ident = _message_raw_id(cur)
+    name = cur.word("signal name")
+    cur.punct(":")
+    code = cur.integer("signal value type")
+    span = _join(head.span, cur.punct(";").span)
+    if code.value not in (0, 1, 2):
+        _syntax(cur, "SIG_VALTYPE_ code must be 0, 1 or 2", code.span)
+    pending.append((span, ident, name.text, code.value))
+
+
+def _parse_multiplex_range(cur: _Cursor, head: Token, pending: list) -> None:
+    ident = _message_raw_id(cur)
+    name = cur.word("signal name")
+    switch = cur.word("multiplexer signal name")
+    ranges = []
+    while True:
+        low = cur.integer("range start")
+        high = cur.integer("range end")  # the lexer reads "0-3" as 0 and -3
+        if low.value < 0 or high.value > 0:
+            _syntax(cur, "multiplex range must be written start-end", _join(low.span, high.span))
+        if -high.value < low.value:
+            _syntax(cur, "multiplex range start exceeds end", _join(low.span, high.span))
+        ranges.append((low.value, -high.value))
+        if not cur.is_punct(","):
+            break
+        cur.punct(",")
+    span = _join(head.span, cur.punct(";").span)
+    pending.append((span, ident, name.text, switch.text, tuple(ranges)))
+
+
+def _signals_of(messages: dict, ident: int, name: str, span: Span, what: str) -> list:
+    targets = [b.signals[name] for (raw, _), b in messages.items()
+               if raw == ident and name in b.signals]
+    if not targets:
+        _syntax(None, f"{what} references an unknown message or signal", span)
+    return targets
+
+
+def _resolve_value_types(pending: list, messages: dict) -> None:
+    for span, ident, name, code in pending:
+        for target in _signals_of(messages, ident, name, span, "SIG_VALTYPE_"):
+            if target.get("typed") and target["value_type"] != code:
+                raise ParserError("source_conflict", "conflicting SIG_VALTYPE_ codes", span)
+            target["value_type"], target["typed"] = code, True
+
+
+def _resolve_multiplex_ranges(pending: list, messages: dict) -> tuple[MultiplexRange, ...]:
+    out = []
+    for span, ident, name, switch, ranges in pending:
+        _signals_of(messages, ident, name, span, "SG_MUL_VAL_")
+        for (raw, _), builder in messages.items():
+            if raw == ident and name in builder.signals:
+                selector = builder.signals.get(switch)
+                if selector is None or not (selector["multiplex"] or "").endswith("M"):
+                    _syntax(None, "SG_MUL_VAL_ switch is not a multiplexer signal", span)
+        out.append(MultiplexRange(ident, name, switch, ranges, span))
+    return tuple(out)
+
+
+def _mark_unsupported_forms(messages: dict) -> None:
+    """Multiplexed or IEEE-typed messages stay in the report and are never executable."""
+    for builder in messages.values():
+        forms = []
+        if any(sig["multiplex"] for sig in builder.signals.values()):
+            forms.append("multiplex")
+        for code, form in VALUE_TYPE_FORMS.items():
+            if any(sig["value_type"] == code for sig in builder.signals.values()):
+                forms.append(form)
+        if forms:
+            builder.message["unsupported_forms"] = forms
+            builder.message["executable"] = False
 
 
 class _Metadata:
@@ -770,13 +874,14 @@ def _apply_allowlist(meta: _Metadata, defaults: dict, explicit: dict, messages: 
 def _freeze_message(builder: _MessageBuilder) -> Message:
     signals = []
     for item in builder.signals.values():
-        start, length, order, signed, scale, offset, minimum, maximum, unit, receivers = \
-            item["fingerprint"]
+        (start, length, order, signed, scale, offset, minimum, maximum, unit, receivers,
+         multiplex) = item["fingerprint"]
         table = tuple(ValueLabel(raw, entry["label"], tuple(entry["spans"]))
                       for raw, entry in item["values"].items())
         signals.append(Signal(item["field_id"], item["name"], start, length, order, signed,
                               scale, offset, minimum, maximum, unit, receivers, item["bits"],
-                              table, tuple(item["spans"])))
+                              table, tuple(item["spans"]), multiplex, item["value_type"]))
     values = dict(builder.message)
     values["spans"] = tuple(values["spans"])
+    values["unsupported_forms"] = tuple(values.get("unsupported_forms", ()))
     return Message(signals=tuple(signals), **values)

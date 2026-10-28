@@ -199,11 +199,6 @@ class SignalTests(unittest.TestCase):
             self.assertEqual(error.code, "dbc_syntax_error", body)
             self.assertIsNotNone(error.span, body)
 
-    def test_multiplex_is_not_supported_yet(self):
-        error = failure('BO_ 1 M: 8 ECU\n SG_ s M : 0|8@1+ (1,0) [0|0] "" X\n')
-        self.assertEqual(error.code, "unsupported_dbc_construct")
-        self.assertEqual(error.span.line, 2)
-
     def test_signal_without_message(self):
         self.assertEqual(failure('SG_ s : 0|8@1+ (1,0) [0|0] "" X\n').code, "dbc_syntax_error")
 
@@ -277,7 +272,7 @@ class RejectionTests(unittest.TestCase):
 
     def test_unsupported_families_fail_with_span(self):
         # D1 rows 66-67 families (and the rows-65/66 forms T5/T6 own) still fail.
-        for keyword in ("SIG_VALTYPE_", "EV_", "SG_MUL_VAL_", "ENVVAR_DATA_", "EV_DATA_",
+        for keyword in ("EV_", "ENVVAR_DATA_", "EV_DATA_",
                         "SGTYPE_", "SGTYPE_VAL_", "SIG_TYPE_REF_", "SIGTYPE_VALTYPE_",
                         "BA_DEF_REL_", "BA_REL_", "BA_DEF_DEF_REL_", "BU_SG_REL_",
                         "BU_EV_REL_", "BU_BO_REL_", "BA_DEF_SGTYPE_", "BA_SGTYPE_"):
@@ -288,10 +283,73 @@ class RejectionTests(unittest.TestCase):
     def test_metadata_keywords_are_no_longer_unsupported(self):
         # D1 rows 63-64: these families parse; a malformed record is a syntax error.
         for keyword in ("CM_", "BA_DEF_", "BA_DEF_DEF_", "BA_", "SIG_GROUP_", "VAL_TABLE_",
-                        "BO_TX_BU_"):
+                        "BO_TX_BU_", "SIG_VALTYPE_", "SG_MUL_VAL_"):
             error = failure(f"BO_ 1 M: 8 ECU\n{keyword} 1 2 ;\n")
             self.assertEqual(error.code, "dbc_syntax_error", keyword)
             self.assertEqual(error.span.line, 2, keyword)
+
+
+MUX = ('BO_ 300 Mux: 8 ECU\n SG_ sel M : 0|8@1+ (1,0) [0|0] "" X\n'
+       ' SG_ a m0 : 8|8@1+ (1,0) [0|0] "" X\n SG_ b m1M : 16|8@1+ (1,0) [0|0] "" X\n'
+       ' SG_ plain : 24|8@1+ (1,0) [0|0] "" X\n')
+IEEE = ('BO_ 301 Flt: 8 ECU\n SG_ f : 0|32@1- (1,0) [0|0] "" X\n'
+        ' SG_ i : 32|8@1+ (1,0) [0|0] "" X\n')
+
+
+class MultiplexAndValueTypeTests(unittest.TestCase):
+    def test_multiplex_markers_are_reported_and_message_is_not_executable(self):
+        inv = parse(MUX + 'SG_MUL_VAL_ 300 a sel 0-3, 5-5;\n')
+        (message,) = inv.messages
+        self.assertEqual([s.multiplex for s in message.signals], ["M", "m0", "m1M", None])
+        self.assertFalse(message.executable)
+        self.assertEqual(message.unsupported_forms, ("multiplex",))
+        (rng,) = inv.multiplex_ranges
+        self.assertEqual((rng.raw_id, rng.signal, rng.switch, rng.ranges),
+                         (300, "a", "sel", ((0, 3), (5, 5))))
+        self.assertEqual(rng.span.line, 6)
+
+    def test_plain_message_is_unaffected(self):
+        (message,) = parse(MUX.replace(" M :", " :").replace(" m0 :", " :")
+                           .replace(" m1M :", " :")).messages
+        self.assertTrue(message.executable)
+        self.assertEqual(message.unsupported_forms, ())
+
+    def test_bad_markers_and_ranges_fail_with_span(self):
+        for text in (MUX.replace(" m0 :", " m :"), MUX.replace(" m0 :", " x1 :"),
+                     MUX + "SG_MUL_VAL_ 300 a sel 3-0;\n", MUX + "SG_MUL_VAL_ 300 a nope 0-1;\n",
+                     MUX + "SG_MUL_VAL_ 300 a plain 0-1;\n", MUX + "SG_MUL_VAL_ 300 zz sel 0-1;\n",
+                     MUX + "SG_MUL_VAL_ 300 a sel ;\n", MUX + "SG_MUL_VAL_ 300 a sel 0-1\n"):
+            error = failure(text)
+            self.assertEqual(error.code, "dbc_syntax_error", text)
+            self.assertIsNotNone(error.span, text)
+
+    def test_integer_signal_types_zero_is_supported(self):
+        inv = parse(IEEE + "SIG_VALTYPE_ 301 i : 0;\n")
+        (message,) = inv.messages
+        self.assertTrue(message.executable)
+        self.assertEqual([s.value_type for s in message.signals], [0, 0])
+
+    def test_ieee_signal_types_are_reported_and_not_executable(self):
+        inv = parse(IEEE + "SIG_VALTYPE_ 301 f : 1;\n")
+        (message,) = inv.messages
+        self.assertEqual([s.value_type for s in message.signals], [1, 0])
+        self.assertFalse(message.executable)
+        self.assertEqual(message.unsupported_forms, ("ieee_float",))
+        inv = parse(IEEE.replace("0|0", "0|0") + "SIG_VALTYPE_ 301 f : 2;\n")
+        self.assertEqual(inv.messages[0].signals[0].value_type, 2)
+
+    def test_other_codes_and_bad_references_fail(self):
+        for line in ("SIG_VALTYPE_ 301 f : 3;\n", "SIG_VALTYPE_ 301 f : -1;\n",
+                     "SIG_VALTYPE_ 301 f 1;\n", "SIG_VALTYPE_ 301 f : 1\n",
+                     "SIG_VALTYPE_ 999 f : 1;\n", "SIG_VALTYPE_ 301 nope : 1;\n"):
+            error = failure(IEEE + line)
+            self.assertEqual(error.code, "dbc_syntax_error", line)
+            self.assertIsNotNone(error.span, line)
+
+    def test_conflicting_value_types_fail(self):
+        error = failure(IEEE + "SIG_VALTYPE_ 301 f : 1;\nSIG_VALTYPE_ 301 f : 2;\n")
+        self.assertEqual(error.code, "source_conflict")
+        parse(IEEE + "SIG_VALTYPE_ 301 f : 1;\nSIG_VALTYPE_ 301 f : 1;\n")
 
 
 FULL_NS = """NS_ :
