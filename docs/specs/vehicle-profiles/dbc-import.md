@@ -52,7 +52,7 @@ Optional binding members:
 
 | Member | Meaning |
 | --- | --- |
-| `conversion` | `{"scale": "<decimal>", "offset": "<decimal>"}`. Both are JSON strings in the source lexer's exact-decimal grammar; JSON numbers are rejected and a zero scale fails. The source unit is the DBC field's unit and the target unit is `unit`. With equal units, `conversion` may be omitted or be an explicit identity (scale 1, offset 0); an explicit non-identity conversion on equal units is a mapping error. With different units `conversion` is required and never inferred; a missing one fails `incompatible_target`. There is no unit library and no coercion. A boolean or enum target has unit `""`; if its DBC field has a unit, an explicit identity conversion is required or the binding fails. |
+| `conversion` | `{"scale": "<decimal>", "offset": "<decimal>"}`. Both are JSON strings in the source lexer's exact-decimal grammar; JSON numbers are rejected and a zero scale fails. The source unit is the DBC field's unit and the target unit is `unit`. With equal units, `conversion` may be omitted or be an explicit identity (scale 1, offset 0); an explicit non-identity conversion on equal units fails `incompatible_target`. With different units `conversion` is required and never inferred; a missing one fails `incompatible_target`. There is no unit library and no coercion. A boolean or enum target has unit `""`; if its DBC field has a unit, an explicit identity conversion is required, otherwise the binding fails `incompatible_target`. |
 | `timeout_ms` | Optional user-declared freshness timeout (D6): a JSON integer (not a boolean) with `0 < timeout_ms <= 4294967295`, otherwise `invalid_freshness`. Absent means the signal stays freshness-unverified. The importer never derives one. |
 | `choices` | For enum targets, a map from DBC `VAL_` labels to catalog choice keys. |
 
@@ -261,9 +261,13 @@ Mapping errors are fatal, stable-coded and carry the binding's JSON location:
 | `conflicting_conversion` | Bindings that resolve to one unit pair declare different exact scale or offset; the report lists every target in the group, sorted. |
 | `invalid_freshness` | `timeout_ms` is not an integer, is a boolean, or is outside `0 < timeout_ms <= 4294967295`. |
 
-A malformed `conversion` (JSON number instead of string, bad decimal, zero
-scale) or a non-identity conversion on equal units is also a fatal mapping
-error with the binding's location.
+A structurally malformed `conversion` (a JSON number instead of a string, a
+bad decimal, a zero scale or an unknown key) is a mapping-load error: the file
+is rejected for its JSON shape before binding resolution. It carries no
+per-binding stable code and is reported as a fatal mapping-file error (the
+loader raises `MappingError`, a `ValueError` subclass). A non-identity
+conversion on equal units, and a boolean or enum target whose DBC field has a
+unit but no explicit identity conversion, fail `incompatible_target`.
 
 Brake pressure does not imply `vehicle.brake_pressed`, and indicator lamp
 state does not imply a turn request; the mapping author must map fields
@@ -432,7 +436,7 @@ files and in-memory variants of them, must prove:
 4. **Mapping errors and isolation.** Unknown target, duplicate target,
    unknown message or field (`stale_mapping`), type/unit/choice mismatch,
    different units with no `conversion` (`incompatible_target`), a
-   non-identity conversion on equal units, bindings that resolve to one unit
+   non-identity conversion on equal units (`incompatible_target`), bindings that resolve to one unit
    pair with different conversions (`conflicting_conversion`, listing every
    target) and digest mismatch each fail with a stable code. Mapping `BrakePressure` to
    `vehicle.brake_pressed` fails (number field, boolean target). No imported
