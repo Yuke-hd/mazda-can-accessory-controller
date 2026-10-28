@@ -165,20 +165,24 @@ def matches(rule: Rule, signal: Signal) -> bool:
 
 def recognize(pack: Pack, messages: tuple[Message, ...]) -> Recognition:
     """Propose bindings from executable messages; competing fields exclude the key."""
-    candidates: dict[str, dict[str, Candidate]] = {}
+    candidates: dict[str, dict[str, list[Candidate]]] = {}
     for rule in pack.rules:
         for message in messages:
             if not message.executable:
                 continue
             for signal in message.signals:
                 if matches(rule, signal):
-                    # Equivalent complete candidates for one field deduplicate.
                     candidates.setdefault(rule.binding["key"], {}).setdefault(
-                        signal.field_id, Candidate(rule, message, signal))
+                        signal.field_id, []).append(Candidate(rule, message, signal))
     bound, ambiguous = [], []
     for key, found in sorted(candidates.items()):
-        if len(found) == 1:
-            bound.append(next(iter(found.values())))
+        # Candidates for one field deduplicate only when their binding templates
+        # agree; rule order never selects a winner.
+        agree = all(len({json.dumps(c.rule.binding, sort_keys=True) for c in group}) == 1
+                    for group in found.values())
+        if len(found) == 1 and agree:
+            bound.append(next(iter(found.values()))[0])
         else:
-            ambiguous.append((key, tuple(sorted(found.values(), key=lambda c: c.signal.field_id))))
+            ambiguous.append((key, tuple(sorted((group[0] for group in found.values()),
+                                                key=lambda c: c.signal.field_id))))
     return Recognition(tuple(bound), tuple(ambiguous))

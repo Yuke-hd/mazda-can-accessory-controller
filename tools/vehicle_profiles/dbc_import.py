@@ -115,7 +115,8 @@ def _fatal_item(error: Exception, source_id: str) -> dict:
     if isinstance(error, ProfileValidationError):
         return _item(error.category, "validation", error.path, list(error.sources) or [source_id],
                      [], error.reason, "error")
-    stage = "acquisition" if error.code in ACQUISITION_CODES else "parse"
+    stage = ("acquisition" if error.code in ACQUISITION_CODES else
+             "result" if error.reason.startswith("diagnostic count") else "parse")
     spans = [error.span] if error.span is not None else []
     return _item(error.code, stage, source_id, [source_id], spans, error.reason, "error")
 
