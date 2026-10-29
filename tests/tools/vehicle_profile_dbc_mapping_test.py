@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,9 @@ BODY = """BO_ 512 Body: 8 ECU
  SG_ Flag : 3|1@1+ (1,0) [0|1] "" Controller
  SG_ FlagU : 4|1@1+ (1,0) [0|1] "x" Controller
  SG_ Wide : 8|8@1+ (1,0) [0|255] "" Controller
+ SG_ S : 5|1@1- (1,0) [-1|0] "" Controller
+ SG_ R : 6|1@1+ (1,-1) [-1|0] "" Controller
+ SG_ Z : 7|1@1+ (1,0) [0|0] "" Controller
 VAL_ 512 Gear 0 "Unk" 1 "Park" 2 "Back" 3 "Idle" 4 "Go" 5 "Go" ;
 """
 DBC = DEMO_A + BODY
@@ -83,6 +87,9 @@ class EnumAndBooleanTargets(unittest.TestCase):
             "enum target with unit": dict(GEAR, unit="rpm"),
             "boolean target with unit": dict(FLAG, unit="rpm"),
             "boolean from a multi-bit field": dict(FLAG, field="Wide"),
+            "boolean from a signed one-bit field": dict(FLAG, field="S"),
+            "boolean from a one-bit field with range -1..0": dict(FLAG, field="R"),
+            "boolean from a one-bit field with range 0..0": dict(FLAG, field="Z"),
             "boolean from a number field": dict(FLAG, message="Engine", field="rpm"),
             "non-identity conversion on enum": dict(GEAR, conversion={"scale": "2", "offset": "0"}),
             "non-identity conversion on boolean": dict(FLAG, conversion={"scale": "1", "offset": "1"}),
@@ -91,6 +98,7 @@ class EnumAndBooleanTargets(unittest.TestCase):
             result = run(binding)
             self.assertIsNone(result.profile, name)
             self.assertIn("incompatible_target", codes(result), name)
+            self.assertEqual({i["stage"] for i in result.report["diagnostics"]}, {"mapping"}, name)
 
     def test_brake_pressure_to_brake_pressed_is_never_coerced(self):
         result = run({"target": "vehicle.brake_pressed", "message": "Engine",
@@ -185,6 +193,31 @@ class Locations(unittest.TestCase):
         self.assertEqual(caught.exception.location["path"], "$.bindings[0].conversion.scale")
 
 
+class ProfileDirectory(unittest.TestCase):
+    def stage(self, make, model, profile_id):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name, "vehicle-profiles", make, model)
+        directory.mkdir(parents=True)
+        (directory / "demo-a.dbc").write_text(DEMO_A)
+        document = json.loads(MAPPING.read_text())
+        document["profile_id"] = profile_id
+        (directory / "mapping.json").write_text(json.dumps(document, indent=1))
+        return directory / "mapping.json"
+
+    def test_profile_id_matches_the_make_model_directory(self):
+        self.assertIsNotNone(import_profile(self.stage("acme", "road", "acme.road")).profile)
+
+    def test_mismatched_profile_id_under_vehicle_profiles_is_rejected(self):
+        with self.assertRaises(MappingError) as caught:
+            import_profile(self.stage("acme", "road", "acme.other"))
+        self.assertEqual(caught.exception.code, "invalid_mapping")
+        self.assertEqual(caught.exception.location["path"], "$.profile_id")
+
+    def test_other_directories_are_unconstrained(self):
+        self.assertIsNotNone(import_profile(staged()).profile)
+
+
 class GoldenVectors(unittest.TestCase):
     PREIMAGE = (
         '{"bindings":[{"choices":{"Back":"reverse","Go":"drive","Park":"park"},'
@@ -192,6 +225,11 @@ class GoldenVectors(unittest.TestCase):
         '{"conversion":{"offset":"-40","scale":"0.1"},"field":"T","message":"Body",'
         '"target":"vehicle.speed_kph","timeout_ms":250,"unit":"degC"}],'
         '"profile_id":"synthetic.demo","selected_bus":"body","version":1}')
+
+    WHOLE_PREIMAGE = PREIMAGE[:-len('"version":1}')] + (
+        '"sources":[{"bus":"body","encoding":"utf-8","license":"Apache-2.0; synthetic fixture",'
+        '"path":"demo-a.dbc","sha256":'
+        '"b884d194c8f876930fac7dbb0834e2fabb1f727931a31f0ae677db6edc665b88"}],"version":1}')
 
     def mapping(self, reverse=False):
         document = json.loads(MAPPING.read_text())
@@ -216,6 +254,9 @@ class GoldenVectors(unittest.TestCase):
     def test_mapping_revision_adds_sources_and_a_choices_edit_changes_both(self):
         base = self.mapping()
         self.assertEqual(mapping_revision(base), GOLDEN_WHOLE)
+        self.assertEqual(mapping_revision(self.mapping(reverse=True)), GOLDEN_WHOLE)
+        self.assertEqual(GOLDEN_WHOLE, "mapping-v1:"
+                         + hashlib.sha256(self.WHOLE_PREIMAGE.encode()).hexdigest())
         edited = self.mapping()
         edited["bindings"][1]["choices"]["Go"] = "neutral"
         self.assertNotEqual(semantic_revision(edited), semantic_revision(base))
