@@ -20,7 +20,10 @@ _UNITS = {"": ("None", "none"), "km/h": ("KilometresPerHour", "km/h"),
           "rpm": ("RevolutionsPerMinute", "rpm"),
           "m/s^2": ("MetresPerSecondSquared", "m/s^2")}
 _TYPES = {"boolean": "Boolean", "number": "Number", "enum": "Enum"}
-_CONFIDENCE = {"Reference": "reference", "Observed": "observed", "Confirmed": "confirmed"}
+_CONFIDENCE = {"Reference": "reference", "Observed": "observed", "Confirmed": "confirmed",
+               "user_mapped": "reference"}
+# Imported user-mapped evidence is the lowest existing ValidationStatus.
+_STATUS = {"user_mapped": "Reference"}
 
 
 def _json(document: Any) -> bytes:
@@ -116,7 +119,8 @@ def project_profile(document: Any, *, policies: ValidationPolicies,
         lines.append("  {vehicle_signals::SignalId{" + str(binding["runtime_id"]) + "}, " +
                      _string_view(binding["key"]) + ", vehicle_signals::SignalType::" + _TYPES[binding["type"]] +
                      ", vehicle_signals::SignalUnit::" + _UNITS[binding["unit"]][0] +
-                     ", vehicle_signals::ValidationStatus::" + binding["evidence"]["confidence"] +
+                     ", vehicle_signals::ValidationStatus::" +
+                     _STATUS.get(binding["evidence"]["confidence"], binding["evidence"]["confidence"]) +
                      f", vehicle_signals::SignalCapabilities::from_bits({bits}), {choices}}},")
     lines += ["}};", "inline constexpr vehicle_signals::SignalCatalogView kCatalog{kSignals.data(), kSignals.size()};",
               'static_assert(kCatalog.well_formed(), "generated signal catalog must be well formed");',

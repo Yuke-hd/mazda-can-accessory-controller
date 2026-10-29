@@ -1,4 +1,4 @@
-"""End-to-end tests for the DBC import command and artifact-set publication."""
+"""End-to-end tests for the mapping-driven DBC import command."""
 
 import json
 from pathlib import Path
@@ -7,10 +7,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
 FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
 TOOL = ROOT / "tools/import_vehicle_profile.py"
+
+import import_vehicle_profile  # noqa: E402
+from generate_vehicle_profile import load_policies  # noqa: E402
+from vehicle_profiles.artifact_set import _write, publish  # noqa: E402
 
 
 class ImportCommandTests(unittest.TestCase):
@@ -22,11 +28,8 @@ class ImportCommandTests(unittest.TestCase):
         shutil.copytree(FIXTURES, self.inputs)
         self.out = self.work / "out"
 
-    def run_cli(self, *extra, out=None):
-        command = [sys.executable, str(TOOL),
-                   "--request", str(self.inputs / "request-demo-a.json"),
-                   "--pack", str(self.inputs / "synthetic-pack.json"),
-                   "--policies", str(self.inputs / "policies.json"),
+    def run_cli(self, *extra, out=None, mapping="mapping-demo-a.json"):
+        command = [sys.executable, str(TOOL), "--mapping", str(self.inputs / mapping),
                    "--output-dir", str(out or self.out), *extra]
         return subprocess.run(command, capture_output=True, text=True)
 
@@ -38,18 +41,39 @@ class ImportCommandTests(unittest.TestCase):
     def tree(self, directory):
         return {p.name: p.read_bytes() for p in sorted(directory.iterdir())}
 
-    def test_publishes_complete_set_with_source_report(self):
+    def test_publishes_complete_artifact_set(self):
         result = self.run_cli("--print-directory")
         self.assertEqual(result.returncode, 0, result.stderr)
         directory = self.current()
         self.assertEqual(result.stdout.strip(), str(directory.resolve()))
         names = set(self.tree(directory))
-        self.assertTrue({"controller_signal_catalog.json", "vehicle_profile_metadata.hpp",
-                         "capability_report.json", "artifact_set.json",
-                         "source_report.json"} <= names)
+        self.assertEqual(names, {
+            "controller_signal_catalog.json", "vehicle_profile_metadata.hpp",
+            "capability_report.json", "artifact_set.json", "vehicle_profile.json",
+            "validation_policies.json", "source_report.json"})
         report = json.loads((directory / "source_report.json").read_text())
         self.assertEqual(report["sources"][0]["id"], "demo-a")
         self.assertIn("unmapped_field", [d["code"] for d in report["diagnostics"]])
+        header = (directory / "vehicle_profile_metadata.hpp").read_text()
+        # user_mapped evidence is the lowest catalog status, never Confirmed.
+        self.assertIn("ValidationStatus::Reference", header)
+        profile = json.loads((directory / "vehicle_profile.json").read_text())
+        self.assertEqual(profile["profile_id"], "synthetic.demo")
+        listed = json.loads((directory / "artifact_set.json").read_text())["outputs"]
+        self.assertEqual(set(listed), names - {"artifact_set.json"})
+
+    def test_derived_registry_is_published_and_reloadable(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        policies = load_policies((self.current() / "validation_policies.json").read_bytes())
+        self.assertIn("synthetic.demo", policies.profile_revisions)
+        self.assertEqual(policies.handlers, {})
+        self.assertEqual(policies.invalid_value_policies, frozenset({"unavailable"}))
+
+    def test_empty_bindings_publishes_all_features_disabled(self):
+        result = self.run_cli(mapping="mapping-empty.json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads((self.current() / "capability_report.json").read_text())
+        self.assertTrue(report["all_features_disabled"])
 
     def test_repeat_runs_are_byte_identical_and_path_free(self):
         self.assertEqual(self.run_cli().returncode, 0)
@@ -66,8 +90,8 @@ class ImportCommandTests(unittest.TestCase):
         self.assertEqual(self.run_cli("--check").returncode, 0)
         before = self.tree(self.current())
         index = (self.out / "current.json").read_bytes()
-        source = self.inputs / "demo-a.dbc"
-        source.write_bytes(source.read_bytes() + b"\n")
+        mapping = self.inputs / "mapping-demo-a.json"
+        mapping.write_bytes(mapping.read_bytes() + b"\n")
         self.assertEqual(self.run_cli("--check").returncode, 1)
         self.assertEqual((self.out / "current.json").read_bytes(), index)
         self.assertEqual(self.tree(self.current()), before)
@@ -79,26 +103,41 @@ class ImportCommandTests(unittest.TestCase):
         (self.current() / "capability_report.json").write_bytes(b"{}\n")
         self.assertEqual(self.run_cli("--check").returncode, 1)
 
-    def test_changing_source_pack_or_request_changes_generation(self):
+    def test_mapping_bytes_change_generation(self):
         self.assertEqual(self.run_cli().returncode, 0)
         first = self.current().name
-        for name in ("demo-a.dbc", "synthetic-pack.json", "request-demo-a.json"):
-            path = self.inputs / name
-            original = path.read_bytes()
-            path.write_bytes(original + b"\n")
-            out = self.work / ("out-" + name)
-            result = self.run_cli(out=out)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertNotEqual(self.current(out).name, first, name)
-            path.write_bytes(original)
+        mapping = self.inputs / "mapping-demo-a.json"
+        mapping.write_bytes(mapping.read_bytes() + b"\n")
+        other = self.work / "other"
+        self.assertEqual(self.run_cli(out=other).returncode, 0)
+        self.assertNotEqual(self.current(other).name, first)
 
-    def test_importer_code_enters_the_generation_identity(self):
+    def test_changed_source_bytes_fail_the_pinned_digest(self):
+        source = self.inputs / "demo-a.dbc"
+        source.write_bytes(source.read_bytes() + b"\n")
+        failed = self.run_cli()
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("source_digest_mismatch", failed.stderr)
+
+    def test_every_importer_module_mapping_and_source_enter_identity(self):
         self.assertEqual(self.run_cli().returncode, 0)
         keys = json.loads((self.current() / "artifact_set.json").read_text())["inputs"]
-        for key in ("code:vehicle_profiles/dbc_import.py", "code:vehicle_profiles/recognition.py",
-                    "code:import_vehicle_profile.py", "request", "pack", "policies",
-                    "source:demo-a"):
+        modules = sorted(p.name for p in (ROOT / "tools/vehicle_profiles").glob("*.py"))
+        self.assertTrue(modules)
+        for module in modules:
+            self.assertIn("code:vehicle_profiles/" + module, keys)
+        for key in ("code:import_vehicle_profile.py", "mapping", "source:demo-a",
+                    "source-report", "vehicle-profile", "validation-policies"):
             self.assertIn(key, keys)
+
+    def test_importer_code_and_mapping_change_generator_identity(self):
+        files = import_vehicle_profile.generator_files()
+        base = import_vehicle_profile.generator_identity(b"{}", files)
+        victim = self.work / "dbc_import.py"
+        victim.write_text("# changed\n")
+        changed = dict(files, **{"vehicle_profiles/dbc_import.py": victim})
+        self.assertNotEqual(base, import_vehicle_profile.generator_identity(b"{}", changed))
+        self.assertNotEqual(base, import_vehicle_profile.generator_identity(b"{ }", files))
 
     def test_fatal_import_preserves_previous_generation_and_prints_codes(self):
         self.assertEqual(self.run_cli().returncode, 0)
@@ -107,23 +146,64 @@ class ImportCommandTests(unittest.TestCase):
         (self.inputs / "demo-a.dbc").write_bytes(b'VERSION "x\nBO_ junk\n')
         failed = self.run_cli()
         self.assertEqual(failed.returncode, 1)
-        self.assertIn("dbc_syntax_error", failed.stderr)
+        self.assertIn("source_digest_mismatch", failed.stderr)
         self.assertNotIn(str(self.work), failed.stderr)
         self.assertEqual((self.out / "current.json").read_bytes(), index)
         self.assertEqual(self.tree(self.current()), before)
 
-    def test_fatal_import_on_fresh_root_publishes_nothing(self):
-        (self.inputs / "demo-a.dbc").write_bytes(b"\xff\xfe")
+    def test_mapping_error_code_is_reported(self):
+        mapping = self.inputs / "mapping-demo-a.json"
+        mapping.write_text(mapping.read_text().replace("vehicle.engine_rpm", "vehicle.nope"))
         failed = self.run_cli()
         self.assertEqual(failed.returncode, 1)
-        self.assertIn("source_decode", failed.stderr)
+        self.assertIn("unknown_target", failed.stderr)
         self.assertFalse(self.out.exists())
 
-    def test_configuration_error_exits_nonzero(self):
-        (self.inputs / "request-demo-a.json").write_text("{}")
+    def test_malformed_mapping_exits_nonzero(self):
+        (self.inputs / "mapping-demo-a.json").write_text("{}")
         failed = self.run_cli()
         self.assertEqual(failed.returncode, 1)
         self.assertFalse(self.out.exists())
+
+    def test_removed_arguments_are_rejected(self):
+        for flag in ("--request", "--pack", "--policies"):
+            command = [sys.executable, str(TOOL), "--mapping",
+                       str(self.inputs / "mapping-demo-a.json"),
+                       "--output-dir", str(self.out), flag, "x"]
+            self.assertEqual(subprocess.run(command, capture_output=True).returncode, 2)
+
+    def test_output_inside_repository_must_be_under_build(self):
+        inside = ROOT / "tests" / "not-build-output"
+        failed = self.run_cli(out=inside)
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("build", failed.stderr)
+        self.assertFalse(inside.exists())
+
+    def test_late_failure_after_prior_publish_keeps_previous_generation(self):
+        mapping = self.inputs / "mapping-demo-a.json"
+        arguments = ["--mapping", str(mapping), "--output-dir", str(self.out)]
+        self.assertEqual(import_vehicle_profile.main(arguments), 0)
+        before = self.tree(self.current())
+        index = (self.out / "current.json").read_bytes()
+        mapping.write_bytes(mapping.read_bytes() + b"\n")  # a new generation to publish
+        calls = []
+
+        def failing_write(path, data):
+            calls.append(path.name)
+            if len(calls) == 5:
+                raise OSError("injected late failure")
+            _write(path, data)
+
+        def faulty_publish(root, outputs):
+            return publish(root, outputs, write=failing_write)
+
+        with patch.object(import_vehicle_profile, "publish", faulty_publish):
+            self.assertEqual(import_vehicle_profile.main(arguments), 1)
+        self.assertGreaterEqual(len(calls), 5)
+        self.assertEqual((self.out / "current.json").read_bytes(), index)
+        self.assertEqual(self.tree(self.current()), before)
+        self.assertEqual([p for p in (self.out / "sets").iterdir()
+                          if p.name.startswith(".staging-")], [])
 
 
 if __name__ == "__main__":
