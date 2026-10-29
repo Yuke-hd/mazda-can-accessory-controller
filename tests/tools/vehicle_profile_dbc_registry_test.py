@@ -46,6 +46,18 @@ def imported_profile():
     return copy.deepcopy(import_profile(DEMO_MAPPING).profile)
 
 
+def timed_import():
+    """Import demo-a with a 250 ms timeout; return (profile, its derived registry)."""
+    document = json.loads(DEMO_MAPPING.read_text())
+    document["bindings"][0]["timeout_ms"] = 250
+    with tempfile.TemporaryDirectory() as tmp:
+        shutil.copy(FIXTURES / "demo-a.dbc", tmp)
+        path = Path(tmp) / "mapping.json"
+        path.write_text(json.dumps(document))
+        profile = import_profile(path).profile
+    return copy.deepcopy(profile), derive_registry(load_mapping(json.dumps(document)), RPM_UNITS)
+
+
 class RegistryVectors(unittest.TestCase):
     def test_full_registry_golden(self):
         loaded = mapping(dict(RPM, timeout_ms=250), BRAKE, GEAR)
@@ -105,17 +117,11 @@ class Freshness(unittest.TestCase):
                 registry.freshness_policies[("synthetic.demo", RPM["target"])][0], value)
 
     def test_validator_needs_the_derived_row_for_declared_freshness(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            document = json.loads(DEMO_MAPPING.read_text())
-            document["bindings"][0]["timeout_ms"] = 250
-            shutil.copy(FIXTURES / "demo-a.dbc", tmp)
-            path = Path(tmp) / "mapping.json"
-            path.write_text(json.dumps(document))
-            profile = import_profile(path).profile
-        declared = derive_registry(load_mapping(json.dumps(document)), RPM_UNITS)
+        profile, declared = timed_import()
         validate_profile(profile, policies=declared)
-        with self.assertRaises(ProfileValidationError):
+        with self.assertRaises(ProfileValidationError) as caught:
             validate_profile(profile, policies=replace(declared, freshness_policies={}))
+        self.assertEqual(caught.exception.category, "invalid_freshness")
 
 
 class Isolation(unittest.TestCase):
@@ -144,12 +150,11 @@ class Isolation(unittest.TestCase):
         self.assertEqual({row[1] for row in registry.evidence}, {"user_mapped"})
 
     def test_validator_rejects_an_unverified_freshness_basis(self):
-        profile = imported_profile()
-        profile["bindings"][0]["freshness"] = {
-            "timeout_ms": 250, "basis": "fresh_or_unverified", "evidence_ref": REF}
-        registry = derive_registry(mapping(dict(RPM, timeout_ms=250)), RPM_UNITS)
-        with self.assertRaises(ProfileValidationError):
+        profile, registry = timed_import()
+        profile["bindings"][0]["freshness"]["basis"] = "fresh_or_unverified"
+        with self.assertRaises(ProfileValidationError) as caught:
             validate_profile(profile, policies=registry)
+        self.assertEqual(caught.exception.category, "invalid_freshness")
 
     def test_undeclared_timeout_stays_freshness_unverified(self):
         for binding in imported_profile()["bindings"]:
