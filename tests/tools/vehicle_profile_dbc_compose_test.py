@@ -139,6 +139,21 @@ class ConflictTests(unittest.TestCase):
     def test_changed_duplicate_scale(self):
         self.conflict(B.replace("(0.250,0.0)", "(0.5,0)"))
 
+    def test_changed_duplicate_offset(self):
+        self.conflict(B.replace("(0.250,0.0)", "(0.25,1)"))
+
+    def test_changed_duplicate_range(self):
+        self.conflict(B.replace("[0|16383.750]", "[0|100]"))
+
+    def test_changed_duplicate_range_minimum(self):
+        self.conflict(B.replace("[0|16383.750]", "[-1|16383.750]"))
+
+    def test_changed_duplicate_signedness(self):
+        self.conflict(B.replace("0|16@1+", "0|16@1-"))
+
+    def test_changed_duplicate_unit(self):
+        self.conflict(B.replace('"rpm"', '"RPM"'))
+
     def test_changed_dlc(self):
         self.conflict(B.replace("EngineExtra: 8", "EngineExtra: 7"), reason_part="payload length")
 
