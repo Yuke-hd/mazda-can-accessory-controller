@@ -2,6 +2,10 @@
 
 ## Scope and sources of truth
 
+- This is a hobbyist project which doesn't need commercial grade engineering.
+- Issues target AI coding agents. Use the
+  [agent task template](.github/ISSUE_TEMPLATE/agent-task.md) and keep detail
+  proportional to the task.
 - This repository is an ESP32 Mazda CAN accessory-lighting controller. Read
   `README.md` for orientation and `CONTRIBUTING.md` for contributor procedures.
 - Keep repository artifacts in English: source, comments, tests, docs,
