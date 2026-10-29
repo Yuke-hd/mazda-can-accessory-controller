@@ -193,6 +193,23 @@ class Locations(unittest.TestCase):
         self.assertEqual(caught.exception.location["path"], "$.bindings[0].conversion.scale")
 
 
+class MultiSourceLocations(unittest.TestCase):
+    def test_mapping_locations_and_alias_names_work_with_two_sources(self):
+        from vehicle_profile_dbc_compose_test import A, B, ALIAS, run as run_two
+        bad = dict(ALIAS, target="vehicle.nope")
+        result = run_two({"demo-a": A, "demo-b": B}, bindings=[ALIAS, bad])
+        found = item(result, "unknown_target")
+        self.assertEqual(found["source_ids"], ["demo-a", "demo-b"])
+        mapped = [l for l in found["locations"] if l.get("path")]
+        self.assertEqual([l["path"] for l in mapped], ["$.bindings[1].target"])
+        stale = run_two({"demo-a": A, "demo-b": B}, bindings=[dict(ALIAS, field="Gone")])
+        self.assertEqual([l["path"] for l in item(stale, "stale_mapping")["locations"]
+                          if l.get("path")], ["$.bindings[0].field"])
+        timeout = run_two({"demo-a": A, "demo-b": B},
+                          bindings=[dict(ALIAS, timeout_ms=0)])
+        self.assertEqual(item(timeout, "invalid_freshness")["source_ids"], ["demo-a", "demo-b"])
+
+
 class ProfileDirectory(unittest.TestCase):
     def stage(self, make, model, profile_id):
         tmp = tempfile.TemporaryDirectory()
