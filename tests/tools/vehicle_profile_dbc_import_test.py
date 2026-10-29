@@ -1,0 +1,523 @@
+"""Walking-skeleton import: demo-a through mapping.json to a validated v1 profile."""
+
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from vehicle_profiles.dbc_import import import_profile
+from vehicle_profiles.dbc_mapping import (MappingError, load_mapping, mapping_revision,
+                                           semantic_revision, strict_json)
+from vehicle_profiles.dbc_registry import derive_registry
+from vehicle_profiles.validation import validate_profile
+
+FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
+MAPPING = FIXTURES / "mapping-demo-a.json"
+DEMO_A = (FIXTURES / "demo-a.dbc").read_text()
+
+
+def snapshot(directory):
+    return sorted((str(p), p.stat().st_size, p.stat().st_mtime_ns)
+                  for p in directory.rglob("*") if p.is_file())
+
+
+def staged(mutate=None, dbc=None, mapping="mapping-demo-a.json", keep_digest=False):
+    """Copy a fixture mapping and demo-a into a temp dir; return the mapping path."""
+    tmp = tempfile.TemporaryDirectory()
+    root = Path(tmp.name)
+    text = DEMO_A if dbc is None else dbc
+    (root / "demo-a.dbc").write_text(text)
+    document = json.loads((FIXTURES / mapping).read_text())
+    if dbc is not None and not keep_digest:
+        import hashlib
+        document["sources"][0]["sha256"] = hashlib.sha256(text.encode()).hexdigest()
+    if mutate is not None:
+        mutate(document)
+    path = root / "mapping.json"
+    path.write_text(json.dumps(document))
+    staged.keep.append(tmp)
+    return path
+
+
+staged.keep = []
+
+
+def codes(result):
+    return [item["code"] for item in result.report["diagnostics"]]
+
+
+class AcceptanceTests(unittest.TestCase):
+    def test_demo_a_binds_engine_rpm_and_leaves_pressure_unmapped(self):
+        result = import_profile(MAPPING)
+        profile = result.profile
+        (binding,) = profile["bindings"]
+        self.assertEqual(binding["key"], "vehicle.engine_rpm")
+        (message,) = profile["messages"]
+        by_name = {field["name"]: field for field in message["fields"]}
+        self.assertEqual(binding["inputs"], [by_name["rpm"]["id"]])
+        self.assertTrue(by_name["rpm"]["id"].startswith("dbc-field-v1:"))
+        unmapped = [d for d in profile["diagnostics"] if d["category"] == "unmapped"]
+        self.assertEqual([d["affected"] for d in unmapped], [by_name["BrakePressure"]["id"]])
+        self.assertEqual(codes(result), ["unmapped_field"])
+        self.assertEqual(result.report["diagnostics"][0]["severity"], "info")
+        self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
+
+    def test_empty_bindings_yield_explicit_all_features_disabled_without_fallback(self):
+        result = import_profile(FIXTURES / "mapping-empty.json")
+        self.assertEqual(result.profile["bindings"], [])
+        categories = [d["category"] for d in result.profile["diagnostics"]]
+        self.assertEqual(categories.count("all_features_disabled"), 1)
+        self.assertEqual(categories.count("unmapped"), 2)
+        self.assertNotIn("vehicle.", json.dumps(result.profile))
+        self.assertEqual(codes(result)[-1], "all_features_disabled")
+
+    def test_output_passes_unmodified_validator_and_has_identities(self):
+        result = import_profile(MAPPING)
+        validate_profile(result.profile, policies=derive_registry(
+            load_mapping(MAPPING.read_text()), {"vehicle.engine_rpm": "rpm"}))
+        self.assertRegex(result.profile["compatibility_identity"], r"^[0-9a-f]{64}$")
+        self.assertRegex(result.profile["artifact_identity"], r"^[0-9a-f]{64}$")
+        self.assertEqual(result.identity.profile, result.profile)
+        mapping = load_mapping(MAPPING.read_text())
+        self.assertEqual(result.profile["semantic_policy_revision"], semantic_revision(mapping))
+        self.assertEqual(result.profile["recognition_rule_revision"], mapping_revision(mapping))
+        self.assertNotEqual(semantic_revision(mapping), mapping_revision(mapping))
+
+    def test_v1_diagnostic_shape_is_not_extended(self):
+        for diagnostic in import_profile(MAPPING).profile["diagnostics"]:
+            self.assertEqual(set(diagnostic), {"category", "affected", "sources", "reason"})
+
+    def test_run_is_deterministic_and_leaves_no_path_or_tree_change(self):
+        before = snapshot(FIXTURES)
+        first, second = import_profile(MAPPING), import_profile(MAPPING)
+        self.assertEqual(snapshot(FIXTURES), before)
+        self.assertEqual(first.identity.artifact_preimage, second.identity.artifact_preimage)
+        text = json.dumps([first.profile, first.report])
+        self.assertNotIn(str(FIXTURES), text)
+        self.assertEqual(first.profile["sources"][0]["path"], "demo-a.dbc")
+
+    def test_no_registry_request_or_pack_file_is_committed(self):
+        names = sorted(p.name for p in FIXTURES.iterdir())
+        self.assertEqual(names, ["PROVENANCE.md", "demo-a.dbc", "demo-b.dbc",
+                                 "mapping-demo-a.json", "mapping-empty.json"])
+
+
+BRAKE = {"target": "vehicle.brake_pressure", "message": "Engine", "field": "BrakePressure",
+         "unit": "bar", "conversion": {"scale": "0.01", "offset": "0"}}
+UNITS = {"vehicle.engine_rpm": "rpm", "vehicle.brake_pressure": "kPa"}
+
+
+def with_bindings(*extra, timeout=None):
+    document = json.loads(MAPPING.read_text())
+    document["bindings"].extend(json.loads(json.dumps(list(extra))))
+    if timeout is not None:
+        document["bindings"][0]["timeout_ms"] = timeout
+    return document
+
+
+class DerivedRegistryTests(unittest.TestCase):
+    def test_registry_contains_only_the_derived_entries(self):
+        mapping = load_mapping(MAPPING.read_text())
+        registry = derive_registry(mapping, {"vehicle.engine_rpm": "rpm"})
+        self.assertRegex(mapping_revision(mapping), r"^mapping-v1:[0-9a-f]{64}$")
+        self.assertEqual(registry.profile_revisions, {"synthetic.demo": (
+            semantic_revision(mapping), mapping_revision(mapping))})
+        self.assertEqual(registry.handlers, {})
+        self.assertEqual(registry.evidence,
+                         frozenset({("mapping:synthetic.demo", "user_mapped", "source_only")}))
+        self.assertEqual(registry.units, frozenset({"rpm"}))
+        self.assertEqual(registry.unit_conversions, {("rpm", "rpm"): ("1", "0")})
+        self.assertEqual(registry.invalid_value_policies, frozenset({"unavailable"}))
+        self.assertEqual(registry.freshness_policies, {})
+
+    def test_registry_rows_follow_the_resolved_pairs(self):
+        mapping = load_mapping(json.dumps(with_bindings(BRAKE)))
+        registry = derive_registry(mapping, UNITS)
+        self.assertEqual(registry.units, frozenset({"rpm", "bar"}))
+        self.assertEqual(registry.unit_conversions,
+                         {("rpm", "rpm"): ("1", "0"), ("kPa", "bar"): ("0.01", "0")})
+
+    def test_timeout_adds_freshness_row_and_operational_evidence_only_when_declared(self):
+        mapping = load_mapping(json.dumps(with_bindings(timeout=250)))
+        registry = derive_registry(mapping, UNITS)
+        self.assertEqual(registry.freshness_policies, {
+            ("synthetic.demo", "vehicle.engine_rpm"):
+                (250, "reviewed_operational", "mapping:synthetic.demo")})
+        self.assertEqual(registry.evidence, frozenset({
+            ("mapping:synthetic.demo", "user_mapped", "source_only"),
+            ("mapping:synthetic.demo", "user_mapped", "operational")}))
+        plain = derive_registry(load_mapping(MAPPING.read_text()), UNITS)
+        self.assertEqual(plain.freshness_policies, {})
+        self.assertNotIn(("mapping:synthetic.demo", "user_mapped", "operational"), plain.evidence)
+
+    def test_semantic_revision_excludes_sources(self):
+        base = load_mapping(MAPPING.read_text())
+        other = json.loads(MAPPING.read_text())
+        other["sources"][0]["license"] = "another note"
+        other["sources"][0]["path"] = "sub/demo-a.dbc"
+        other = load_mapping(json.dumps(other))
+        self.assertEqual(semantic_revision(other), semantic_revision(base))
+        self.assertNotEqual(mapping_revision(other), mapping_revision(base))
+
+    def test_digests_ignore_binding_order(self):
+        document = with_bindings(BRAKE)
+        base = load_mapping(json.dumps(document))
+        document["bindings"].reverse()
+        shuffled = load_mapping(json.dumps(document))
+        self.assertEqual(semantic_revision(shuffled), semantic_revision(base))
+        self.assertEqual(mapping_revision(shuffled), mapping_revision(base))
+        sources = [dict(base["sources"][0], path="b.dbc"), dict(base["sources"][0], path="a.dbc")]
+        self.assertEqual(mapping_revision(dict(base, sources=sources)),
+                         mapping_revision(dict(base, sources=sources[::-1])))
+
+    def test_identity_conversion_hashes_like_omission_and_decimals_are_canonical(self):
+        omitted = load_mapping(MAPPING.read_text())
+        for conversion in ({"scale": "1", "offset": "0"}, {"scale": "1.0", "offset": "-0.00"},
+                           {"scale": "+01.", "offset": ".0"}):
+            document = json.loads(MAPPING.read_text())
+            document["bindings"][0]["conversion"] = conversion
+            explicit = load_mapping(json.dumps(document))
+            self.assertEqual(semantic_revision(explicit), semantic_revision(omitted))
+            self.assertEqual(mapping_revision(explicit), mapping_revision(omitted))
+        a = load_mapping(json.dumps(with_bindings(BRAKE)))
+        document = with_bindings(BRAKE)
+        document["bindings"][1]["conversion"] = {"scale": "1e-2", "offset": "0.0"}
+        b = load_mapping(json.dumps(document))
+        self.assertEqual(semantic_revision(a), semantic_revision(b))
+        document["bindings"][1]["conversion"]["scale"] = "0.02"
+        self.assertNotEqual(semantic_revision(load_mapping(json.dumps(document))),
+                            semantic_revision(a))
+
+    def test_timeout_and_binding_fields_are_part_of_the_semantic_digest(self):
+        base = load_mapping(MAPPING.read_text())
+        for key, value in (("timeout_ms", 250), ("unit", "rpm "), ("message", "Other"),
+                           ("field", "other"), ("target", "vehicle.speed_kph")):
+            document = json.loads(MAPPING.read_text())
+            document["bindings"][0][key] = value
+            self.assertNotEqual(semantic_revision(load_mapping(json.dumps(document))),
+                                semantic_revision(base), key)
+
+    def test_omitted_encoding_defaults_to_utf8_and_hashes_like_explicit(self):
+        explicit = load_mapping(MAPPING.read_text())
+        document = json.loads(MAPPING.read_text())
+        del document["sources"][0]["encoding"]
+        omitted = load_mapping(json.dumps(document))
+        self.assertEqual(omitted["sources"][0]["encoding"], "utf-8")
+        self.assertEqual(mapping_revision(omitted), mapping_revision(explicit))
+        self.assertIsNotNone(import_profile(staged(
+            lambda d: d["sources"][0].pop("encoding"))).profile)
+
+    def test_license_or_path_edit_changes_artifact_but_not_compatibility_identity(self):
+        base = import_profile(MAPPING)
+        edited = import_profile(staged(
+            lambda d: d["sources"][0].update(license="Apache-2.0; edited note")))
+        self.assertEqual(edited.profile["compatibility_identity"],
+                         base.profile["compatibility_identity"])
+        self.assertNotEqual(import_profile(staged(
+            lambda d: d["sources"][0].update(license="edited"))).profile["artifact_identity"],
+            base.profile["artifact_identity"])
+
+    def test_path_edit_changes_artifact_but_not_compatibility_identity(self):
+        base = import_profile(MAPPING)
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "sub").mkdir()
+            Path(tmp, "sub", "demo-a.dbc").write_text(DEMO_A)
+            document = json.loads(MAPPING.read_text())
+            document["sources"][0]["path"] = "sub/demo-a.dbc"
+            Path(tmp, "mapping.json").write_text(json.dumps(document))
+            moved = import_profile(Path(tmp, "mapping.json"))
+        self.assertEqual(moved.profile["compatibility_identity"],
+                         base.profile["compatibility_identity"])
+        self.assertNotEqual(moved.profile["artifact_identity"], base.profile["artifact_identity"])
+
+    def test_conversion_edit_changes_compatibility_identity(self):
+        base = import_profile(staged(lambda d: d["bindings"].append(BRAKE)))
+        other = dict(BRAKE, conversion={"scale": "0.02", "offset": "0"})
+        edited = import_profile(staged(lambda d: d["bindings"].append(other)))
+        self.assertNotEqual(edited.profile["compatibility_identity"],
+                            base.profile["compatibility_identity"])
+
+    def test_timeout_edit_changes_compatibility_identity_and_license_edit_does_not(self):
+        base = import_profile(staged(lambda d: d["bindings"][0].update(timeout_ms=250)))
+        later = import_profile(staged(lambda d: d["bindings"][0].update(timeout_ms=300)))
+        self.assertNotEqual(later.profile["compatibility_identity"],
+                            base.profile["compatibility_identity"])
+        relicensed = import_profile(staged(lambda d: (
+            d["bindings"][0].update(timeout_ms=250), d["sources"][0].update(license="x"))))
+        self.assertEqual(relicensed.profile["compatibility_identity"],
+                         base.profile["compatibility_identity"])
+        self.assertNotEqual(relicensed.profile["artifact_identity"],
+                            base.profile["artifact_identity"])
+
+    def test_imported_profile_cannot_carry_native_handler_or_brake_opt_in(self):
+        text = json.dumps(import_profile(MAPPING).profile)
+        for word in ("native", "fresh_or_unverified", "handler"):
+            self.assertNotIn(word, text)
+
+
+class LoaderTests(unittest.TestCase):
+    def good(self):
+        return json.loads(MAPPING.read_text())
+
+    def rejects(self, text):
+        with self.assertRaises(MappingError):
+            load_mapping(text)
+
+    def test_strict_json_rejects_duplicate_keys_and_nonfinite_numbers(self):
+        with self.assertRaisesRegex(MappingError, "duplicate key a"):
+            strict_json('{"a": 1, "a": 2}')
+        with self.assertRaisesRegex(MappingError, "non-finite number NaN"):
+            strict_json('{"a": NaN}')
+        for constant in ("Infinity", "-Infinity"):
+            with self.assertRaisesRegex(MappingError, "non-finite number"):
+                strict_json('{"a": [%s]}' % constant)
+        with self.assertRaisesRegex(MappingError, "malformed JSON"):
+            strict_json("{")
+
+    def test_full_mapping_with_duplicate_nested_key_or_nan_is_rejected_for_that_reason(self):
+        text = MAPPING.read_text()
+        duplicated = text.replace('"target": "vehicle.engine_rpm",',
+                                  '"target": "vehicle.engine_rpm", "target": "vehicle.speed_kph",')
+        self.assertNotEqual(duplicated, text)
+        with self.assertRaisesRegex(MappingError, "duplicate key target"):
+            load_mapping(duplicated)
+        nonfinite = text.replace('"unit": "rpm"', '"unit": "rpm", "timeout_ms": NaN')
+        self.assertNotEqual(nonfinite, text)
+        with self.assertRaisesRegex(MappingError, "non-finite number NaN"):
+            load_mapping(nonfinite)
+        for bad in ("[]", "{"):
+            self.rejects(bad)
+
+    def test_exact_shape(self):
+        for mutate in (lambda d: d.update(extra=1), lambda d: d.pop("bindings"),
+                       lambda d: d.update(version=2), lambda d: d.update(version=True),
+                       lambda d: d["bindings"][0].update(extra=1),
+                       lambda d: d["bindings"][0].update(choices={}),
+                       lambda d: d["sources"][0].pop("sha256"),
+                       lambda d: d["sources"][0].update(sha256="ABC"),
+                       lambda d: d["sources"][0].update(bus="other"),
+                       lambda d: d["sources"][0].update(encoding="latin-1"),
+                       lambda d: d.update(sources=[])):
+            document = self.good()
+            mutate(document)
+            self.rejects(json.dumps(document))
+
+    def test_removed_top_level_arrays_are_rejected(self):
+        for key, value in (("units", ["rpm"]), ("unit_conversions", []),
+                           ("freshness_policies", [])):
+            document = self.good()
+            document[key] = value
+            with self.assertRaisesRegex(MappingError, "fields"):
+                load_mapping(json.dumps(document))
+
+    def test_conversion_shape(self):
+        bad = ({"scale": 1, "offset": "0"}, {"scale": "1", "offset": 0},
+               {"scale": 1.5, "offset": "0"}, {"scale": "0", "offset": "0"},
+               {"scale": "0.0e5", "offset": "0"}, {"scale": "1"}, {"scale": "1", "offset": "0", "x": "1"},
+               {"scale": "NaN", "offset": "0"}, {"scale": "1", "offset": "0x10"},
+               {"scale": "1e99999", "offset": "0"}, {"scale": "1", "offset": "1e2000"},{"scale": "1", "offset": " 1"}, "1", None)
+        for conversion in bad:
+            document = self.good()
+            document["bindings"][0]["conversion"] = conversion
+            self.rejects(json.dumps(document))
+        document = self.good()
+        document["bindings"][0]["conversion"] = {"scale": "-.5e+1", "offset": "+2."}
+        self.assertEqual(load_mapping(json.dumps(document))["bindings"][0]["conversion"],
+                         {"scale": "-5", "offset": "2"})
+
+    def test_timeout_must_be_a_bounded_integer(self):
+        for value in (0, -1, 4294967296, True, False, "100", 1.5, None, [100]):
+            document = self.good()
+            document["bindings"][0]["timeout_ms"] = value
+            with self.assertRaises(MappingError) as caught:
+                load_mapping(json.dumps(document))
+            self.assertEqual(caught.exception.code, "invalid_freshness", value)
+        for value in (1, 4294967295):
+            document = self.good()
+            document["bindings"][0]["timeout_ms"] = value
+            self.assertEqual(load_mapping(json.dumps(document))["bindings"][0]["timeout_ms"],
+                             value)
+
+    def test_source_paths_stay_inside_the_profile_directory(self):
+        for path in ("/etc/x.dbc", "../x.dbc", "a/../../x.dbc", "a\\b.dbc", "", "C:x.dbc"):
+            document = self.good()
+            document["sources"][0]["path"] = path
+            self.rejects(json.dumps(document))
+
+    def test_dbc_text_is_never_evaluated(self):
+        dbc = DEMO_A.replace("synthetic-a-v1", "__import__('os')")
+        self.assertEqual(len(import_profile(staged(dbc=dbc)).profile["bindings"]), 1)
+
+
+class MappingResolutionTests(unittest.TestCase):
+    def fatal(self, result, code):
+        self.assertIsNone(result.profile)
+        self.assertIsNone(result.identity)
+        self.assertIn(code, codes(result))
+        for item in result.report["diagnostics"]:
+            self.assertEqual(item["severity"], "error")
+        self.assertNotIn(str(FIXTURES), json.dumps(result.report))
+        self.assertNotIn(tempfile.gettempdir(), json.dumps(result.report))
+
+    def test_unknown_target(self):
+        result = import_profile(staged(lambda d: d["bindings"][0].update(target="vehicle.nope")))
+        self.fatal(result, "unknown_target")
+
+    def test_duplicate_target(self):
+        def mutate(d):
+            d["bindings"].append(dict(d["bindings"][0], field="BrakePressure"))
+        self.fatal(import_profile(staged(mutate)), "duplicate_target")
+
+    def test_stale_message_and_field(self):
+        self.fatal(import_profile(staged(lambda d: d["bindings"][0].update(message="Gone"))),
+                   "stale_mapping")
+        self.fatal(import_profile(staged(lambda d: d["bindings"][0].update(field="Gone"))),
+                   "stale_mapping")
+
+    def test_number_field_cannot_feed_a_boolean_target(self):
+        def mutate(d):
+            d["bindings"][0].update(target="vehicle.brake_pressed", field="BrakePressure")
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_different_units_require_a_conversion(self):
+        def mutate(d):
+            d["bindings"][0].update(field="BrakePressure", unit="bar")
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_non_identity_conversion_on_equal_units_is_incompatible(self):
+        def mutate(d):
+            d["bindings"][0]["conversion"] = {"scale": "2", "offset": "0"}
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_explicit_identity_is_accepted_for_equal_and_different_units(self):
+        identity = {"scale": "1.0", "offset": "0"}
+        result = import_profile(staged(lambda d: d["bindings"][0].update(conversion=identity)))
+        self.assertEqual(len(result.profile["bindings"]), 1)
+        def mutate(d):
+            d["bindings"][0].update(field="BrakePressure", unit="bar", conversion=identity)
+        self.assertIsNotNone(import_profile(staged(mutate)).profile)
+
+    def test_conversion_is_applied_to_the_binding_and_registry(self):
+        result = import_profile(staged(lambda d: d["bindings"].append(BRAKE)))
+        by_key = {b["key"]: b for b in result.profile["bindings"]}
+        conversion = by_key["vehicle.brake_pressure"]["policy"]["conversion"]
+        self.assertEqual((conversion["source_unit"], conversion["target_unit"],
+                          conversion["scale"], conversion["offset"]), ("kPa", "bar", "0.01", "0"))
+        self.assertEqual(by_key["vehicle.brake_pressure"]["unit"], "bar")
+
+    def test_conflicting_conversions_for_one_pair_list_every_target(self):
+        def mutate(d):
+            d["bindings"].append(dict(BRAKE))
+            d["bindings"].append(dict(BRAKE, target="vehicle.acceleration.longitudinal",
+                                      conversion={"scale": "0.02", "offset": "0"}))
+        result = import_profile(staged(mutate))
+        self.fatal(result, "conflicting_conversion")
+        (item,) = [i for i in result.report["diagnostics"] if i["code"] == "conflicting_conversion"]
+        for target in ("vehicle.acceleration.longitudinal", "vehicle.brake_pressure"):
+            self.assertIn(target, item["reason"])
+        self.assertLess(item["reason"].index("vehicle.acceleration.longitudinal"),
+                        item["reason"].index("vehicle.brake_pressure"))
+
+    def test_second_equal_unit_binding_with_other_scale_fails_as_incompatible(self):
+        def mutate(d):
+            d["bindings"].append({"target": "vehicle.speed_kph", "message": "Engine",
+                                  "field": "rpm", "unit": "rpm",
+                                  "conversion": {"scale": "2", "offset": "0"}})
+        self.fatal(import_profile(staged(mutate)), "incompatible_target")
+
+    def test_agreeing_decimals_share_one_row_whatever_the_order(self):
+        def build(first, second):
+            def mutate(d):
+                d["bindings"].append(dict(BRAKE, conversion={"scale": first, "offset": "0"}))
+                d["bindings"].append(dict(BRAKE, target="vehicle.acceleration.longitudinal",
+                                          conversion={"scale": second, "offset": "0.0"}))
+            return import_profile(staged(mutate))
+        one, two = build("0.01", "1e-2"), build("1E-2", "0.010")
+        self.assertIsNotNone(one.profile)
+        self.assertEqual(one.identity.artifact_preimage, two.identity.artifact_preimage)
+
+    def test_valid_timeout_yields_binding_freshness_and_passes_the_validator(self):
+        result = import_profile(staged(lambda d: d["bindings"][0].update(timeout_ms=250)))
+        (binding,) = result.profile["bindings"]
+        self.assertEqual(binding["freshness"], {"timeout_ms": 250, "basis": "reviewed_operational",
+                                                "evidence_ref": "mapping:synthetic.demo"})
+        mapping = load_mapping(staged(lambda d: d["bindings"][0].update(timeout_ms=250)).read_text())
+        validate_profile(result.profile, policies=derive_registry(mapping, UNITS))
+
+    def test_no_timeout_leaves_freshness_unverified(self):
+        (binding,) = import_profile(MAPPING).profile["bindings"]
+        self.assertIsNone(binding["freshness"])
+
+    def test_digest_mismatch_is_fatal(self):
+        result = import_profile(staged(lambda d: d["sources"][0].update(sha256="0" * 64)))
+        self.fatal(result, "source_digest_mismatch")
+        self.assertEqual(result.report["diagnostics"][0]["stage"], "acquisition")
+
+    def test_missing_source_is_source_io_without_a_path(self):
+        result = import_profile(staged(lambda d: d["sources"][0].update(path="missing.dbc")))
+        self.fatal(result, "source_io")
+
+    def test_syntax_error_is_fatal_with_location(self):
+        result = import_profile(staged(dbc='VERSION "x"\nBO_ nonsense\n'))
+        self.fatal(result, "dbc_syntax_error")
+        self.assertEqual(result.report["diagnostics"][0]["locations"][0]["source_id"], "demo-a")
+
+    def test_validator_category_is_forwarded(self):
+        huge = dict(BRAKE, conversion={"scale": "1e300", "offset": "0"})
+        result = import_profile(staged(lambda d: d["bindings"].append(huge)))
+        self.fatal(result, "invalid_conversion")
+        self.assertEqual(result.report["diagnostics"][0]["source_ids"], ["demo-a"])
+
+    def test_unreadable_or_malformed_mapping_is_a_configuration_error(self):
+        with self.assertRaises(MappingError):
+            import_profile(FIXTURES / "does-not-exist.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "m.json").write_text("{")
+            with self.assertRaises(MappingError):
+                import_profile(Path(tmp, "m.json"))
+
+
+class SourceReportTests(unittest.TestCase):
+    WIDE = 'BO_ 2147483905 Wide: 8 ECU\n SG_ X : 0|8@1+ (1,0) [0|255] "" Controller\n'
+
+    def test_unsupported_message_is_inventory_only(self):
+        result = import_profile(staged(dbc=DEMO_A + self.WIDE))
+        self.assertEqual(len(result.profile["messages"]), 1)
+        self.assertIn("unsupported", [d["category"] for d in result.profile["diagnostics"]])
+        self.assertEqual(codes(result), ["unsupported_message", "unmapped_field"])
+
+    def test_mapping_an_unsupported_message_fails_required_binding(self):
+        def mutate(d):
+            d["bindings"].append({"target": "vehicle.speed_kph", "message": "Wide",
+                                  "field": "X", "unit": "rpm"})
+        result = import_profile(staged(mutate, dbc=DEMO_A + self.WIDE))
+        self.assertIsNone(result.profile)
+        self.assertIn("unsupported_required_binding", codes(result))
+
+    def test_report_shape_and_sort_order(self):
+        result = import_profile(staged(dbc=DEMO_A + self.WIDE, mapping="mapping-empty.json"))
+        stages = ["acquisition", "parse", "mapping", "validation", "result"]
+        keys = [(stages.index(i["stage"]), i["source_ids"],
+                 [(l["line"], l["column"], l["end_line"], l["end_column"]) for l in i["locations"]],
+                 i["code"], i["affected"]) for i in result.report["diagnostics"]]
+        self.assertEqual(keys, sorted(keys))
+        self.assertEqual(codes(result)[-1], "all_features_disabled")
+        for item in result.report["diagnostics"]:
+            self.assertEqual(set(item), {"code", "severity", "stage", "affected", "source_ids",
+                                         "locations", "reason"})
+        self.assertEqual(set(result.report), {"profile_id", "semantic_revision",
+                                              "mapping_revision", "sources", "diagnostics"})
+
+    def test_report_lists_source_with_digest_and_no_path(self):
+        (source,) = import_profile(MAPPING).report["sources"]
+        self.assertEqual(set(source), {"id", "logical_path", "bus", "sha256", "version"})
+        self.assertEqual((source["id"], source["logical_path"]), ("demo-a", "demo-a.dbc"))
+        self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
+
+
+if __name__ == "__main__":
+    unittest.main()
