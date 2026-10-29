@@ -119,13 +119,18 @@ compatibility. Incompatible mappings fail and are never coerced.
 #### Conversion pairs
 
 The validator keeps one conversion per (source unit, target unit) per profile,
-so the importer groups bindings by their resolved pair, identity pairs
-included. It compares scale and offset as exact rationals (`"1.0"` equals
-`"1"`). If every binding in a group agrees, it emits one row in canonical
-decimal text, so the bytes do not depend on binding order. If any disagree,
-the import fails with `conflicting_conversion`, listing every binding target in
-the group, sorted, with their mapping locations. There is no first-wins rule
-and no per-binding row.
+so the importer groups bindings by their resolved pair and emits exactly one
+row per pair, identity pairs included. It compares scale and offset as exact
+rationals (`"1.0"` equals `"1"`) and writes the row in canonical decimal text,
+so the bytes do not depend on binding order. There is no first-wins rule and
+no per-binding row.
+
+Per-binding rules (`incompatible_target`) already force the identity on
+equal-unit pairs and on boolean or enum targets, so those pairs cannot
+disagree. Only number bindings whose field and target units differ can: if
+their conversions in one pair disagree, the import fails with
+`conflicting_conversion`, listing every binding target in the group, sorted,
+with their mapping locations.
 
 ### Deferred
 
@@ -258,7 +263,7 @@ Mapping errors are fatal, stable-coded and carry the binding's JSON location:
 | `duplicate_target` | Two bindings name one target. This replaces recognition ambiguity: nothing is ranked or tie-broken. |
 | `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`, or different units with no `conversion`). |
 | `stale_mapping` | `message` or `field` does not exist in the pinned sources. |
-| `conflicting_conversion` | Bindings that resolve to one unit pair declare different exact scale or offset; the report lists every target in the group, sorted. |
+| `conflicting_conversion` | Number bindings with different field and target units that resolve to one unit pair declare different exact scale or offset; the report lists every target in the group, sorted. |
 | `invalid_freshness` | `timeout_ms` is not an integer, is a boolean, or is outside `0 < timeout_ms <= 4294967295`. |
 
 A structurally malformed `conversion` (a JSON number instead of a string, a
