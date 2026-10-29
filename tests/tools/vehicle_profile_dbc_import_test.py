@@ -510,7 +510,8 @@ class SourceReportTests(unittest.TestCase):
             self.assertEqual(set(item), {"code", "severity", "stage", "affected", "source_ids",
                                          "locations", "reason"})
         self.assertEqual(set(result.report), {"profile_id", "semantic_revision",
-                                              "mapping_revision", "sources", "diagnostics"})
+                                              "mapping_revision", "sources", "diagnostics",
+                                              "aliases"})
 
     def test_report_lists_source_with_digest_and_no_path(self):
         (source,) = import_profile(MAPPING).report["sources"]

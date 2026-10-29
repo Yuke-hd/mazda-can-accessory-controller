@@ -140,19 +140,23 @@ def load_mapping(text: str) -> dict:
     _text(mapping["profile_id"], "profile_id", identifier=True)
     bus = _text(mapping["selected_bus"], "selected_bus", identifier=True)
     sources = _list(mapping["sources"], "sources")
-    if len(sources) != 1:
-        raise MappingError("exactly one source is supported")
+    if not sources:
+        raise MappingError("at least one source is required")
     for source in sources:
         _object(source, SOURCE_KEYS, "source", "encoding")
         source.setdefault("encoding", DEFAULT_ENCODING)
         _source_path(source["path"])
         if type(source["sha256"]) is not str or not _SHA256.match(source["sha256"]):
             raise MappingError("source sha256 must be 64 lowercase hex digits")
-        if source["bus"] != bus:
-            raise MappingError("the source must be on the selected bus")
+        _text(source["bus"], "source bus", identifier=True)
         _text(source["license"], "source license", empty=True)
         if source["encoding"] not in ENCODINGS:
             raise MappingError("source encoding must be utf-8 or cp1252")
+    if not any(source["bus"] == bus for source in sources):
+        raise MappingError("at least one source must be on the selected bus")
+    ids = [PurePosixPath(source["path"]).stem for source in sources]
+    if len(set(ids)) != len(ids):
+        raise MappingError("source file names must be unique; they supply the source ids")
     for binding in _list(mapping["bindings"], "bindings"):
         _binding(binding)
     return mapping
