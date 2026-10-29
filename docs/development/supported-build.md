@@ -167,3 +167,135 @@ consumers together. The focused CMake regression tests this failure and recovery
 Use the direct CLI `--check` for non-mutating checks: CMake's automatic reconfigure
 is intentionally a generation step. No production composition root invokes this
 module yet, and the generated catalogs alone provide no decoding or runtime support.
+
+## Importing a DBC profile
+
+`tools/import_vehicle_profile.py` turns one `mapping.json` and the DBC files it
+pins into a complete artifact set: the normalized profile, the derived
+validation-policy registry, a source report and the catalog outputs described
+above. It uses the Python standard library only, needs no network and never
+opens a CAN interface. The full contract is the
+[offline DBC import spec](../specs/vehicle-profiles/dbc-import.md).
+
+```sh
+python3 tools/import_vehicle_profile.py \
+  --mapping vehicle-profiles/<make>/<model>/mapping.json \
+  --output-dir build/vehicle-profile/<make>.<model> --print-directory
+python3 tools/import_vehicle_profile.py \
+  --mapping vehicle-profiles/<make>/<model>/mapping.json \
+  --output-dir build/vehicle-profile/<make>.<model> --check
+```
+
+`--output-dir` inside the repository must be under `build/`; any other path in
+the repository is rejected. Use `build/` or a directory outside the repository.
+The tool writes `sets/<digest>/` generations and an atomic `current.json` index
+as described in the previous section, and `--print-directory` prints the
+resolved generation directory. `--check` generates the set in memory and
+compares it with the published one without writing, creating directories or
+changing mtimes; it returns 1 when the set is missing, corrupt or stale.
+
+Exit codes: `0` success; `1` a failed import, a mapping error, a refused
+output directory, an I/O error, or a failed `--check`; `2` an invalid command
+line. A failed import publishes nothing and leaves the previously published
+generation usable. Each error is one stderr line that starts with
+`vehicle profile import failed: ` followed by one of these shapes:
+
+- Source, composition and mapping-binding errors:
+  `<code> <affected>[ at <locations>]: <reason>`. The ` at ` part appears only
+  when the error has locations; several locations are joined with `, `. Each is
+  `<source>:<line>:<column>` for a DBC span, or `mapping.json:<line>:<column>`
+  for a binding.
+- Mapping-file errors (including `invalid_freshness` and `invalid_mapping`):
+  `<code>[ at mapping.json:<line>:<column>]: <reason>`.
+- Validation and projection errors (for example `projection_limit`):
+  `<code> at <json path>: <reason>`, with no source location.
+- Other failures (an I/O error or a refused output directory): the bare
+  message.
+
+### Repository layout
+
+A real profile lives in `vehicle-profiles/<make>/<model>/` (the directory
+appears with the first real profile). Commit only the licensable DBC files and
+`mapping.json`; never commit the derived registry, profile, report or generated
+code, which are build products. The `profile_id` is `<make>.<model>` and must
+match the directory; a mismatch fails the import. A `sources[].path` is
+relative to the mapping file and cannot leave the profile directory. Follow the
+[vehicle-data and licensing policy](license-and-vehicle-data.md) before
+committing any DBC, and never commit raw captures or VINs. Test fixtures are
+synthetic and live in `tests/fixtures/vehicle-profiles/dbc/`.
+
+### Writing a `mapping.json`
+
+```json
+{
+  "version": 1,
+  "profile_id": "synthetic.demo",
+  "selected_bus": "body",
+  "sources": [
+    {"path": "demo-a.dbc", "sha256": "<64 lowercase hex digits>", "bus": "body",
+     "license": "Apache-2.0; synthetic fixture"}
+  ],
+  "bindings": [
+    {"target": "vehicle.engine_rpm", "message": "Engine", "field": "rpm", "unit": "rpm",
+     "timeout_ms": 500}
+  ]
+}
+```
+
+The loader is strict: unknown members, duplicate keys, nonfinite numbers and
+wrong types fail. All members below are required unless marked optional.
+
+- `version` is `1`. `profile_id` names the profile. `selected_bus` is the one
+  logical bus whose fields can bind.
+- `sources[]` pins every DBC: `path` (relative), `sha256` of the exact bytes
+  (compute it with `shasum -a 256 <file>`; editing a DBC means updating this
+  pin), `bus` (the logical bus the mapping assigns to that file), `license` (a
+  provenance note, required even for private sources) and optional `encoding`
+  (`utf-8` default, or `cp1252`). The source id is the file name without its
+  extension. A wrong digest fails `source_digest_mismatch`. Sources on another
+  bus are parsed and listed in the report but are not composed and cannot
+  bind.
+- `bindings[]` maps a DBC field to a controller signal. `target` must be in
+  `tools/controller_signal_catalog.json`; `message` and `field` are names from
+  the DBC (any original name of a duplicated message or field works); `unit` is
+  the target unit. Units the generated catalog can represent are `""` (boolean
+  and enum targets), `km/h`, `rpm` and `m/s^2`; another unit fails import with
+  `projection_limit`.
+- `conversion` (optional) is `{"scale": "<decimal>", "offset": "<decimal>"}`
+  with both values as JSON strings. With equal field and target units omit it
+  (or give the identity `1`/`0`); with different units it is required and never
+  inferred, and every number binding of one unit pair must agree on it
+  (`conflicting_conversion`). A non-identity conversion between equal units
+  fails `incompatible_target`.
+- A boolean target needs an unsigned one-bit field with declared range `0..1`.
+  A boolean or enum target has unit `""`; if its DBC field has a unit, give the
+  explicit identity conversion.
+- `choices` (an enum target's only extra member) maps `VAL_` labels of the DBC
+  field to the target's catalog choice keys, for example
+  `{"Idle": "off", "Left": "left"}`. Labels not listed are left unmapped.
+- `timeout_ms` (optional) is a freshness timeout that you declare: an integer
+  with `0 < timeout_ms <= 4294967295`. The importer never derives one (not from
+  `GenMsgCycleTime` either). It is your claim, backed only by `user_mapped`
+  evidence, not reviewed evidence. A signal without it stays
+  freshness-unverified, so features that require `Fresh` stay off for it. An
+  invalid value fails the import with `invalid_freshness`.
+
+An empty `bindings` list is valid: the result reports `all_features_disabled`
+and the lighting stays black. Imported profiles have no native handlers and
+cannot carry the `fresh_or_unverified` brake opt-in. Nothing selects a target
+from names, units or file order; a field with no binding is reported
+`unmapped`, and a binding to a multiplexed, IEEE-typed, extended-id, CAN FD or
+over-8-byte message fails `unsupported_required_binding`.
+
+### Validation
+
+```sh
+python3 -m unittest discover -s tests/tools -p '*_test.py'
+python3 tools/check_architecture.py
+```
+
+`tests/tools/vehicle_profile_dbc_acceptance_test.py` runs the five synthetic
+acceptance cases through the command. Its optional differential check against
+`cantools` is skipped when that package is absent; `cantools` is not a
+dependency of the importer or of CI. These are host software checks only: they
+are not hardware, bench or vehicle validation.
