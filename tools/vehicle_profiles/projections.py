@@ -73,11 +73,12 @@ class ProfileProjections:
 
 
 def project_profile(document: Any, *, policies: ValidationPolicies,
-                    generator_revision: str) -> ProfileProjections:
+                    generator_revision: str,
+                    validation_limits: Any = CATALOG_LIMITS) -> ProfileProjections:
     """Validate, identify, and project without mutating inputs or writing files."""
     profile = identify_profile(document, policies=policies,
                                generator_revision=generator_revision,
-                               validation_limits=CATALOG_LIMITS).profile
+                               validation_limits=validation_limits).profile
     bindings = sorted(profile["bindings"], key=lambda b: b["key"])
     if len(bindings) > CATALOG_LIMITS["signals"]:
         _fail("$.bindings", "signal count exceeds existing catalog capacity")

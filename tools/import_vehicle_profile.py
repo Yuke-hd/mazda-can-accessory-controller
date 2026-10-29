@@ -68,16 +68,18 @@ def generate(mapping_path):
     mapping = load_mapping(mapping_data.decode("utf-8"))
     files = generator_files()
     hashes = generator_hashes(mapping_data, files)
-    effective = "artifact-set-v1:" + sha256(json_bytes(hashes))
+    effective = generator_identity(mapping_data, files)
     result = import_profile(mapping_path)
     if result.profile is None:
         raise ImportFailed(result.report["diagnostics"])
     field_units = {b["key"]: b["policy"]["conversion"]["source_unit"]
                    for b in result.profile["bindings"]}
     policies = derive_registry(mapping, field_units)
-    projected = project_profile(result.profile, policies=policies, generator_revision=effective)
+    limits = {**CATALOG_LIMITS, **LIMITS}  # import limits enter the artifact identity
+    projected = project_profile(result.profile, policies=policies, generator_revision=effective,
+                                validation_limits=limits)
     profile = identify_profile(result.profile, policies=policies, generator_revision=effective,
-                               validation_limits=CATALOG_LIMITS).profile
+                               validation_limits=limits).profile
     extras = {"vehicle_profile.json": json_bytes(profile),
               "validation_policies.json": registry_bytes(policies),
               "source_report.json": json_bytes(result.report)}

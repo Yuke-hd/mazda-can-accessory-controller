@@ -16,6 +16,7 @@ TOOL = ROOT / "tools/import_vehicle_profile.py"
 
 import import_vehicle_profile  # noqa: E402
 from generate_vehicle_profile import load_policies  # noqa: E402
+from vehicle_profiles import dbc_import  # noqa: E402
 from vehicle_profiles.artifact_set import _write, publish  # noqa: E402
 
 
@@ -138,6 +139,26 @@ class ImportCommandTests(unittest.TestCase):
         changed = dict(files, **{"vehicle_profiles/dbc_import.py": victim})
         self.assertNotEqual(base, import_vehicle_profile.generator_identity(b"{}", changed))
         self.assertNotEqual(base, import_vehicle_profile.generator_identity(b"{ }", files))
+
+    def test_import_limits_enter_artifact_identity_only(self):
+        arguments = ["--mapping", str(self.inputs / "mapping-demo-a.json")]
+        self.assertEqual(import_vehicle_profile.main(arguments + ["--output-dir", str(self.out)]), 0)
+
+        def identities(root):
+            files = self.tree(self.current(root))
+            report = json.loads(files["capability_report.json"])
+            profile = json.loads(files["vehicle_profile.json"])
+            self.assertEqual(profile["artifact_identity"], report["artifact_identity"])
+            self.assertEqual(profile["compatibility_identity"], report["compatibility_identity"])
+            return report["artifact_identity"], report["compatibility_identity"]
+
+        base = identities(self.out)
+        other = self.work / "limits"
+        with patch.dict(dbc_import.LIMITS, {"max_records": 65535}):
+            self.assertEqual(import_vehicle_profile.main(arguments + ["--output-dir", str(other)]), 0)
+        changed = identities(other)
+        self.assertNotEqual(base[0], changed[0])
+        self.assertEqual(base[1], changed[1])
 
     def test_fatal_import_preserves_previous_generation_and_prints_codes(self):
         self.assertEqual(self.run_cli().returncode, 0)
