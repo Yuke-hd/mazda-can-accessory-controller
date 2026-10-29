@@ -331,7 +331,8 @@ is the mapping author's (D6). No validator code change is required, and the vali
 timeout bounds and basis checks apply unchanged. A signal without a declared
 timeout stays freshness-unverified, and features that require `Fresh` stay off for it.
 Nothing derives a timeout, for example from `GenMsgCycleTime`. The source
-report states that imported-profile freshness is user-declared. Source timing,
+report states that imported-profile freshness is user-declared
+through its `freshness` member, always `"user_declared"`. Source timing,
 operational freshness, confidence and current availability stay distinct.
 
 This applies to imported profiles only. The Mazda compiled catalog, its unset

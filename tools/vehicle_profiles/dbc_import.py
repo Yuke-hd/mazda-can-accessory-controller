@@ -19,7 +19,7 @@ from .dbc_mapping import (IDENTITY, MappingError, conversion_of, decimal_text, l
                           strict_json)
 from .dbc_parser import Message, ParserLimits, Signal, parse_tokens
 from .dbc_registry import (ELIGIBILITY_SOURCE, EVIDENCE_CONFIDENCE, FRESHNESS_BASIS,
-                           conflicts, conversion_groups, derive_registry, evidence_ref)
+                           FRESHNESS_DECLARATION, conflicts, conversion_groups, derive_registry, evidence_ref)
 from .model import FORMAT, VERSION
 from .validation import ProfileValidationError
 
@@ -272,7 +272,8 @@ def _freshness_failure(text: str, error: MappingError, place) -> ImportResult:
     index = int(re.search(r"\[(\d+)\]", error.path)[1])
     source_ids = [PurePosixPath(source["path"]).stem for source in document["sources"]]
     report = {"profile_id": document["profile_id"], "semantic_revision": None,
-              "mapping_revision": None, "sources": []}
+              "mapping_revision": None, "sources": [],
+              "freshness": FRESHNESS_DECLARATION}
     return _failure(report, [_item(
         "invalid_freshness", "mapping", document["bindings"][index]["target"], source_ids, [],
         str(error), "error", place(error.path))])
@@ -318,7 +319,7 @@ def import_profile(mapping_path: Path | str) -> ImportResult:
     semantic, whole = semantic_revision(mapping), mapping_revision(mapping)
     base_report = {"profile_id": mapping["profile_id"], "semantic_revision": semantic,
                    "mapping_revision": whole,
-                   "sources": []}
+                   "sources": [], "freshness": FRESHNESS_DECLARATION}
     try:
         records = load_sources(
             [SourceRequest(source_id, str(path.parent / source["path"]), source["path"],
