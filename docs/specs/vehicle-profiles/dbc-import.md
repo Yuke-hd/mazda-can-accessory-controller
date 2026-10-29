@@ -1,10 +1,13 @@
 # Offline DBC import with explicit mapping
 
-Status: proposed module contract for owner review, revised for explicit
-`mapping.json` import (milestone-6 decisions D1-D6, tracked in #310). This
-document specifies the `dbc-import` module; it does not add a parser, mapping
-loader, dependency, or vehicle support. Importer implementation tickets may
-start only after the owner accepts this contract and its acceptance examples.
+Status: implemented for explicit `mapping.json` import (milestone-6 decisions
+D1-D6, tracked in #310). The command-line importer
+`tools/import_vehicle_profile.py`, the repository-owned lexer/parser and the
+mapping loader in `tools/vehicle_profiles/` implement this contract, and
+`tests/tools/vehicle_profile_dbc_acceptance_test.py` runs the synthetic
+acceptance cases below through the command. This is software evidence only: no
+bench or vehicle run exists, and the document adds no vehicle support. For
+usage, see [Importing a DBC profile](../../development/supported-build.md#importing-a-dbc-profile).
 
 ## Boundary and inputs
 
@@ -19,7 +22,11 @@ transmit code.
 The only per-profile inputs are the DBC source files and one user-authored
 `mapping.json`. There is no request file, recognition pack, vehicle context or
 hand-written registry. The mapping author explicitly maps DBC fields to
-signals the controller recognizes; the importer does not guess.
+signals the controller recognizes; the importer does not guess. A binding names
+its message and field by any original name the pinned sources give them: a
+message or field defined under several names across sources (a composed
+duplicate) resolves through any of those names, and the report's alias
+inventory lists them all.
 
 ### `mapping.json`
 
@@ -62,6 +69,11 @@ records, fields, total diagnostics) and the `utf-8` encoding default are
 constants in importer code (the version-one values) and are not mapping
 input; the effective limits still enter artifact identity through
 `validation_limits`.
+
+Sources whose bus is not `selected_bus` are still read, hashed, fully parsed and
+listed in the report's source inventory, so a parse error in them is fatal. They
+are not composed with the selected bus and cannot conflict with it or supply
+bindings.
 
 A source's logical bus comes from the mapping. A DBC filename, node name,
 sender or `BS_` value does not select a physical CAN interface, bitrate,
@@ -106,7 +118,7 @@ enum choices.
 | --- | --- |
 | `profile_revisions` | `profile_id` to (`semantic_policy_revision`, `recognition_rule_revision`), each `mapping-v1:<hash>` over a different preimage (see Revision). |
 | `handlers` | Empty; imported profiles have no native handlers. |
-| `evidence` | Always `("mapping:<profile_id>", "user_mapped", "source_only")`; plus `("mapping:<profile_id>", "user_mapped", "operational")` only when at least one binding declares a `timeout_ms`. |
+| `evidence` | Always `("mapping:<profile_id>", "user_mapped", "source_only")` (the `user_mapped` confidence projects to `ValidationStatus::Reference` and the catalog evidence token `reference`, the lowest existing status, never `Confirmed`); plus `("mapping:<profile_id>", "user_mapped", "operational")` only when at least one binding declares a `timeout_ms`. |
 | `units` | The set of binding `unit` values, including `""` when any boolean or enum binding exists. |
 | `unit_conversions` | One row (`field_unit`, `binding_unit`, `scale`, `offset`) per resolved unit pair; an omitted conversion on equal units is scale 1, offset 0. See Conversion pairs. |
 | `invalid_value_policies` | `["unavailable"]`, the only value the validator accepts. |
@@ -231,8 +243,13 @@ Strings retain their decoded exact value, integer ids use JSON integers and
 there is no ASCII escaping. Repeated equivalent records in one source share
 an id and keep multiple inventory spans. Delimiter concatenation is forbidden.
 
-Known unsupported wire forms (extended id, length above eight, multiplexing,
-IEEE payload values) remain in the report, never in executable v1 messages.
+Known unsupported wire forms remain in the report, never in executable v1 messages. The report names them
+`extended_id`, `length_over_8`, `can_fd`, `multiplex`, `ieee_float` and
+`ieee_double` (the `unsupported_message` reason lists every form a message has,
+sorted when fragments are merged). Fragments of one composition key are
+non-executable when any fragment is: a classic fragment and an FD fragment of
+the same key compose as one non-executable message, so a binding to it fails
+`unsupported_required_binding`.
 Do not decode the plain fields of a multiplexed message as an apparent
 nonmultiplexed subset. An unused unsupported message produces an `unsupported`
 diagnostic. If a mapping binding names such a message or
@@ -261,7 +278,7 @@ Mapping errors are fatal, stable-coded and carry the binding's JSON location:
 | --- | --- |
 | `unknown_target` | `target` is not in the controller signal catalog. |
 | `duplicate_target` | Two bindings name one target. This replaces recognition ambiguity: nothing is ranked or tie-broken. |
-| `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`, or different units with no `conversion`). |
+| `incompatible_target` | The field's type, unit or conversion, or its `VAL_` labels versus the catalog choices, do not fit the target (for example a number field on `vehicle.brake_pressed`, or different units with no `conversion`). A boolean target needs an unsigned one-bit field whose declared range is exactly `0..1`; a signed field, a wider field, or a one-bit field with an undeclared `[0|0]` range is rejected. |
 | `stale_mapping` | `message` or `field` does not exist in the pinned sources. |
 | `conflicting_conversion` | Number bindings with different field and target units that resolve to one unit pair declare different exact scale or offset; the report lists every target in the group, sorted. |
 | `invalid_freshness` | `timeout_ms` is not an integer, is a boolean, or is outside `0 < timeout_ms <= 4294967295`. |
@@ -425,13 +442,16 @@ BO_ 256 EngineExtra: 8 ECU
  SG_ CoolantRaw : 32|8@1+ (1,-40) [-40|215] "degC" Controller
 ```
 
-Before importer implementation is accepted, independent fixtures, using these
-files and in-memory variants of them, must prove:
+The independent fixtures, using these files and in-memory variants of them,
+prove the following through the import command:
 
 1. **Mapping and merge.** `demo-a` plus `demo-b` with a mapping of `rpm` to
    `vehicle.engine_rpm` binds it with both source references (the duplicate
    composes), while `BrakePressure` and `CoolantRaw` are `unmapped`. Reversing
-   source order gives identical normalized bytes and identities.
+   source order gives identical normalized bytes and compatibility identity.
+   Through the command, the artifact identity also covers the raw mapping bytes
+   (via the generator identity), so a reordered `mapping.json` differs there
+   alone; the importer-level profile identities are identical.
 2. **Conflicts.** A changed duplicate scale or DLC fails `source_conflict`
    with both spans, including in a message no mapping uses.
 3. **Unsupported forms.** Multiplex, IEEE, extended-id and FD messages are
@@ -458,10 +478,8 @@ files and in-memory variants of them, must prove:
    byte-identical. A late failure preserves the prior complete artifact set.
 
 Host tests, firmware builds, bench measurements and vehicle evidence are
-reported separately; this docs-only change claims none of those runtime
-results.
-
-Owner review must accept the subset/rejection rules, parser proposal, mapping
-and derived-registry contract, evidence boundaries and these acceptance cases.
-Only then rework the dependent importer tickets. A real second vehicle and its
-licensed DBC package remain unselected.
+reported separately; the acceptance module is host software evidence and claims
+none of the others. A real second vehicle and its licensed DBC package remain
+unselected. The optional differential check against cantools in the same
+module is test-only, is skipped when cantools is absent and excludes
+binary-rounding comparisons.
