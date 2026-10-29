@@ -15,6 +15,7 @@ ELIGIBILITY_SOURCE = "source_only"
 ELIGIBILITY_OPERATIONAL = "operational"
 FRESHNESS_BASIS = "reviewed_operational"
 EVIDENCE_ELIGIBILITY = ELIGIBILITY_SOURCE
+FRESHNESS_DECLARATION = "user_declared"  # source-report statement (D6)
 
 
 def evidence_ref(profile_id: str) -> str:

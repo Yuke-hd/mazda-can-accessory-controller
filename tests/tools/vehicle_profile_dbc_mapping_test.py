@@ -182,7 +182,8 @@ class Locations(unittest.TestCase):
             (location,) = found["locations"]
             self.assertEqual(location["path"], "$.bindings[0].timeout_ms")
             self.assertEqual(set(result.report), {"profile_id", "semantic_revision",
-                                                  "mapping_revision", "sources", "diagnostics"})
+                                                  "mapping_revision", "sources", "freshness",
+                                                  "diagnostics"})
 
     def test_zero_scale_is_a_plain_mapping_file_error(self):
         document = json.loads(MAPPING.read_text())
