@@ -101,7 +101,7 @@ class Message:
     name: str
     length: int
     sender: str
-    executable: bool  # standard id, length <= 8 and not a CAN FD frame format only
+    executable: bool  # standard id, length <= 8, not CAN FD, no multiplex or IEEE forms
     signals: tuple[Signal, ...]
     spans: tuple[Span, ...]
     cycle_time_ms: int | None = None  # source-declared GenMsgCycleTime; timing record only

@@ -339,6 +339,8 @@ class MultiplexAndValueTypeTests(unittest.TestCase):
         self.assertEqual(message.unsupported_forms, ("ieee_float",))
         inv = parse(IEEE + "SIG_VALTYPE_ 301 f : 2;\n")
         self.assertEqual(inv.messages[0].signals[0].value_type, 2)
+        self.assertFalse(inv.messages[0].executable)
+        self.assertEqual(inv.messages[0].unsupported_forms, ("ieee_double",))
 
     def test_other_codes_and_bad_references_fail(self):
         for line in ("SIG_VALTYPE_ 301 f : 3;\n", "SIG_VALTYPE_ 301 f : -1;\n",
