@@ -142,7 +142,11 @@ def main(argv=None):
         report_failure(failure.diagnostics)
         return 1
     except MappingError as error:
-        print(f"vehicle profile import failed: mapping_error: {error}", file=sys.stderr)
+        location = error.location
+        place = (f" at mapping.json:{location['line']}:{location['column']}"
+                 if location else "")
+        print(f"vehicle profile import failed: {error.code}{place}: {error}",
+              file=sys.stderr)
         return 1
     except (OSError, ValueError, TypeError, OverflowError) as error:
         print(f"vehicle profile import failed: {error}", file=sys.stderr)

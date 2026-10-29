@@ -180,6 +180,37 @@ class ImportCommandTests(unittest.TestCase):
         self.assertIn("unknown_target", failed.stderr)
         self.assertFalse(self.out.exists())
 
+    def test_invalid_timeout_prints_stable_freshness_code_and_location(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        before = self.tree(self.current())
+        index = (self.out / "current.json").read_bytes()
+        mapping = self.inputs / "mapping-demo-a.json"
+        original = json.loads(mapping.read_text())
+        for value in (0, -1, True, 1.5, "10", 4294967296):
+            with self.subTest(value=value):
+                data = json.loads(json.dumps(original))
+                data["bindings"][0]["timeout_ms"] = value
+                mapping.write_text(json.dumps(data, indent=2))
+                failed = self.run_cli()
+                self.assertEqual(failed.returncode, 1)
+                self.assertIn("invalid_freshness", failed.stderr)
+                self.assertNotIn("mapping_error", failed.stderr)
+                text = mapping.read_text().splitlines()
+                line = next(i for i, t in enumerate(text, 1) if '"timeout_ms"' in t)
+                column = text[line - 1].index(":") + 3  # one-based start of the value
+                self.assertIn(f"invalid_freshness at mapping.json:{line}:{column}: "
+                              "timeout_ms must be an integer in 1..4294967295", failed.stderr)
+                self.assertNotIn(str(self.work), failed.stderr)
+                self.assertEqual((self.out / "current.json").read_bytes(), index)
+                self.assertEqual(self.tree(self.current()), before)
+
+    def test_file_shape_mapping_error_prints_invalid_mapping(self):
+        (self.inputs / "mapping-demo-a.json").write_text("{}")
+        failed = self.run_cli()
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("invalid_mapping at mapping.json:1:1:", failed.stderr)
+        self.assertNotIn("mapping_error", failed.stderr)
+
     def test_malformed_mapping_exits_nonzero(self):
         (self.inputs / "mapping-demo-a.json").write_text("{}")
         failed = self.run_cli()
