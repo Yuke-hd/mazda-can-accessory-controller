@@ -126,6 +126,8 @@ def compose(inventories: list[SourceInventory]) -> tuple[tuple[Message, ...], tu
         fields, field_aliases = _compose_fields([s for item in fragments for s in item.signals])
         messages.append(replace(rep, signals=fields,
                                 executable=all(item.executable for item in fragments),
+                                unsupported_forms=tuple(sorted(
+                                    {f for item in fragments for f in item.unsupported_forms})),
                                 spans=_spans(s for item in fragments for s in item.spans)))
         aliases += [Alias("message", rep.message_id, item.spans[0].source_id, item.name,
                           item.message_id, item.spans) for item in fragments]

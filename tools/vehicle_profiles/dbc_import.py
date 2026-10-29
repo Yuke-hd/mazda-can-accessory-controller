@@ -181,7 +181,7 @@ def _resolve(mapping: dict, messages: tuple[Message, ...], aliases: tuple[Alias,
         message = found[0]
         if not message.executable:
             error("unsupported_required_binding", target, at, message.spans,
-                  "mapped message is not standard classic CAN with length 0-8")
+                  _unsupported_reason(message, "mapped message"))
             continue
         signals = [s for s in message.signals if binding["field"] in s.names]
         if len(signals) != 1:
@@ -241,6 +241,13 @@ def _alias_report(aliases: tuple[Alias, ...]) -> list[dict]:
         for (kind, rep), found in sorted(entries.items())]
 
 
+def _unsupported_reason(message: Message, subject: str = "message") -> str:
+    forms = ", ".join(message.unsupported_forms)
+    return (f"{subject} is not standard classic CAN with length 0-8"
+            + (f" (unsupported forms: {forms})" if forms else "")
+            + ("" if subject != "message" else "; kept as inventory only"))
+
+
 def _diagnostics(messages: tuple[Message, ...], bound: set[str],
                  source_ids: list[str]) -> list[dict]:
     items = []
@@ -248,8 +255,7 @@ def _diagnostics(messages: tuple[Message, ...], bound: set[str],
         if not message.executable:
             items.append(_item("unsupported_message", "parse", message.message_id,
                                sorted({span.source_id for span in message.spans}),
-                               message.spans, "message is not standard classic CAN with length "
-                               "0-8; kept as inventory only"))
+                               message.spans, _unsupported_reason(message)))
             continue
         for signal in message.signals:
             if signal.field_id not in bound:

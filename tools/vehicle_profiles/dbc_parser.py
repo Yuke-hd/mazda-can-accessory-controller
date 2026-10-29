@@ -569,7 +569,14 @@ def _resolve_multiplex_ranges(pending: list, messages: dict) -> tuple[MultiplexR
 def _mark_unsupported_forms(messages: dict) -> None:
     """Multiplexed or IEEE-typed messages stay in the report and are never executable."""
     for builder in messages.values():
+        message = builder.message
         forms = []
+        if message["identifier_format"] == "extended":
+            forms.append("extended_id")
+        if message["length"] > EXECUTABLE_LENGTH:
+            forms.append("length_over_8")
+        if (message.get("frame_format") or "").endswith("_FD"):
+            forms.append("can_fd")
         if any(sig["multiplex"] for sig in builder.signals.values()):
             forms.append("multiplex")
         for code, form in VALUE_TYPE_FORMS.items():
