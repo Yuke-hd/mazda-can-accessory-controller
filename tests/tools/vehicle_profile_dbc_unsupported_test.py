@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from vehicle_profiles.dbc_import import import_profile
+from vehicle_profile_dbc_compose_test import RPM, run as compose_run
 
 FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
 DEMO_A = (FIXTURES / "demo-a.dbc").read_text()
@@ -79,6 +80,7 @@ class UnsupportedFormTests(unittest.TestCase):
                            if i["code"] == "unsupported_required_binding"]
                 self.assertEqual(item["severity"], "error")
                 self.assertTrue(item["locations"])
+                self.assertIn(_form, item["reason"])
 
     def test_unsupported_message_with_no_bindings_is_all_features_disabled(self):
         result = run(FORMS["multiplex"][0], mapping="mapping-empty.json")
@@ -93,6 +95,38 @@ class UnsupportedFormTests(unittest.TestCase):
         (item,) = [i for i in result.report["diagnostics"] if i["code"] == "unsupported_message"]
         for form in ("extended_id", "length_over_8", "multiplex"):
             self.assertIn(form, item["reason"])
+
+
+PLAIN = 'BO_ 700 Mix: 8 ECU\n SG_ X : 0|8@1+ (1,0) [0|255] "" Controller\n'
+MUX = ('BO_ 700 Mix: 8 ECU\n SG_ sel M : 40|8@1+ (1,0) [0|0] "" Controller\n'
+       ' SG_ Z m0 : 48|8@1+ (1,0) [0|0] "" Controller\n')
+IEEE = ('BO_ 700 Mix: 8 ECU\n SG_ X : 0|8@1+ (1,0) [0|255] "" Controller\n'
+        ' SG_ Y : 8|32@1- (1,0) [0|0] "" Controller\n SIG_VALTYPE_ 700 Y : 1;\n')
+FD = FD_DEFS + PLAIN + 'BA_ "VFrameFormat" BO_ 700 2;\n'
+BIND = [{"target": "vehicle.speed_kph", "message": "Mix", "field": "X", "unit": "rpm"}]
+
+
+class ComposedFragmentTests(unittest.TestCase):
+    def pair(self, first, second, bindings=None):
+        return compose_run({"a": DEMO_A + first, "b": DEMO_A + second},
+                           bindings=[RPM] + (bindings or []))
+
+    def test_supported_plus_unsupported_fragment_is_not_executable(self):
+        for name, other in (("fd", FD), ("ieee", IEEE), ("multiplex", MUX)):
+            with self.subTest(name):
+                result = self.pair(PLAIN, other)
+                self.assertEqual([m["identifier"] for m in result.profile["messages"]], [256])
+                self.assertIn("unsupported_message", codes(result))
+                result = self.pair(PLAIN, other, BIND)
+                self.assertIsNone(result.profile)
+                self.assertIn("unsupported_required_binding", codes(result))
+
+    def test_forms_of_both_fragments_are_a_sorted_union(self):
+        for first, second in ((MUX, IEEE), (IEEE, MUX)):
+            result = self.pair(first, second)
+            (item,) = [i for i in result.report["diagnostics"]
+                       if i["code"] == "unsupported_message"]
+            self.assertIn("(unsupported forms: ieee_float, multiplex)", item["reason"])
 
 
 if __name__ == "__main__":
