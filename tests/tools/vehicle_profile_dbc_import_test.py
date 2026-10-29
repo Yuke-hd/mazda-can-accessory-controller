@@ -452,6 +452,16 @@ class MappingResolutionTests(unittest.TestCase):
         (binding,) = import_profile(MAPPING).profile["bindings"]
         self.assertIsNone(binding["freshness"])
 
+    def test_dbc_cycle_time_never_becomes_freshness_only_mapping_timeout_does(self):
+        meta = ('BA_DEF_ BO_ "GenMsgCycleTime" INT 0 65535;\nBA_DEF_DEF_ "GenMsgCycleTime" 0;\n'
+                'BA_ "GenMsgCycleTime" BO_ 256 10;\nCM_ SG_ 256 rpm "note";\n')
+        dbc = DEMO_A + meta
+        (binding,) = import_profile(staged(dbc=dbc)).profile["bindings"]
+        self.assertIsNone(binding["freshness"])
+        declared = import_profile(staged(lambda d: d["bindings"][0].update(timeout_ms=250),
+                                         dbc=dbc))
+        self.assertEqual(declared.profile["bindings"][0]["freshness"]["timeout_ms"], 250)
+
     def test_digest_mismatch_is_fatal(self):
         result = import_profile(staged(lambda d: d["sources"][0].update(sha256="0" * 64)))
         self.fatal(result, "source_digest_mismatch")
