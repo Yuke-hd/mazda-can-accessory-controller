@@ -14,6 +14,11 @@ if(NOT WEACT_CAN_PROFILE_LINK_PROBE MATCHES "^(off|empty|populated|max)$")
   message(FATAL_ERROR
     "WEACT_CAN_PROFILE_LINK_PROBE must be off, empty, populated, or max")
 endif()
+if("${WEACT_CAN_PROFILE_LINK_PROBE}" STREQUAL "off")
+  set(PROFILE_LINK_PROBE_ENABLED OFF)
+else()
+  set(PROFILE_LINK_PROBE_ENABLED ON)
+endif()
 
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/board"
@@ -31,7 +36,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")
 
-if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+if(PROFILE_LINK_PROBE_ENABLED)
   list(APPEND EXTRA_COMPONENT_DIRS
        "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_profile_runtime")
 endif()
@@ -59,9 +64,11 @@ output_catalog_generate(
 # YAML fail the firmware configure immediately; the matching build rule keeps
 # the embedded artifact current when the source document changes.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+if(PROFILE_LINK_PROBE_ENABLED)
   set(PROFILE_LINK_PROBE_GENERATED_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/vehicle_profile_link_probe/${WEACT_CAN_PROFILE_LINK_PROBE}")
+  # Host generator modules are configure invalidation inputs only; they do not
+  # enter a firmware target. Generated C++ stays under the external build tree.
   file(GLOB _profile_runtime_codegen_sources CONFIGURE_DEPENDS
        "${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profiles/*.py")
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -157,7 +164,7 @@ target_compile_options(${_mazda_telemetry_lib} PRIVATE
 # when any hot_code.lf symbol is missing from the ELF or outside IRAM.
 idf_build_get_property(_idf_python PYTHON)
 idf_build_get_property(_project_elf EXECUTABLE)
-if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+if(PROFILE_LINK_PROBE_ENABLED)
   # The anchor is test-only and is not called by app_main. Force extraction so
   # generated function pointers and their runtime caller graph survive gc-sections.
   target_link_options(${_project_elf} PRIVATE "-Wl,-u,vehicle_profile_link_probe_anchor")

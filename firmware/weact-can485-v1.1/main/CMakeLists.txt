@@ -11,13 +11,9 @@ else()
   endif()
 endif()
 
-set(main_requires board local_argb local_argb_sink_contract local_argb_actions action_engine
-                  controller_config vehicle_can_rx mazda_telemetry freertos vehicle_core
-                  esp_timer companion_ble companion_config esp_app_format)
-if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+if(PROFILE_LINK_PROBE_ENABLED)
   list(APPEND main_sources
        "${CMAKE_CURRENT_LIST_DIR}/../../../tests/support/vehicle_profile_link_probe.cpp")
-  list(APPEND main_requires vehicle_profile_runtime)
 endif()
 
 if(CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS)
@@ -27,13 +23,16 @@ endif()
 idf_component_register(
   SRCS ${main_sources}
   INCLUDE_DIRS "."
-  REQUIRES ${main_requires}
+  REQUIRES board local_argb local_argb_sink_contract local_argb_actions action_engine
+           controller_config vehicle_can_rx mazda_telemetry freertos vehicle_core esp_timer
+           companion_ble companion_config esp_app_format
   PRIV_REQUIRES esp_driver_twai
   EMBED_FILES "${OUTPUT_CATALOG_JSON}"
   # Flash-cache layout; see docs/development/flash-cache-layout.md.
   LDFRAGMENTS "hot_rodata.lf" "hot_code.lf"
 )
 add_dependencies(${COMPONENT_LIB} output_catalog)
-if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+if(PROFILE_LINK_PROBE_ENABLED)
   target_include_directories(${COMPONENT_LIB} PRIVATE "${PROFILE_LINK_PROBE_GENERATED_DIR}")
+  idf_component_optional_requires(PRIVATE vehicle_profile_runtime)
 endif()
