@@ -4,6 +4,17 @@ cmake_minimum_required(VERSION 3.16)
 # frame, and runtime components are supplied by the pinned vehicle-core
 # dependency; Mazda adaptation remains in components/mazda_telemetry.
 
+# R6-only compile/link probe. The default keeps production composition intact;
+# selected synthetic profiles generate headers under the external build tree.
+set(WEACT_CAN_PROFILE_LINK_PROBE "off" CACHE STRING
+    "Retain one synthetic vehicle-profile runtime for resource measurement")
+set_property(CACHE WEACT_CAN_PROFILE_LINK_PROBE PROPERTY STRINGS
+             off empty populated max)
+if(NOT WEACT_CAN_PROFILE_LINK_PROBE MATCHES "^(off|empty|populated|max)$")
+  message(FATAL_ERROR
+    "WEACT_CAN_PROFILE_LINK_PROBE must be off, empty, populated, or max")
+endif()
+
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/board"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/companion_ble"
@@ -19,6 +30,11 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")
+
+if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+  list(APPEND EXTRA_COMPONENT_DIRS
+       "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_profile_runtime")
+endif()
 
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_LIST_DIR}/../../third_party/esp32-vehicle-can-core"
@@ -43,6 +59,31 @@ output_catalog_generate(
 # YAML fail the firmware configure immediately; the matching build rule keeps
 # the embedded artifact current when the source document changes.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+  set(PROFILE_LINK_PROBE_GENERATED_DIR
+      "${CMAKE_CURRENT_BINARY_DIR}/vehicle_profile_link_probe/${WEACT_CAN_PROFILE_LINK_PROBE}")
+  file(GLOB _profile_runtime_codegen_sources CONFIGURE_DEPENDS
+       "${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profiles/*.py")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+       "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate_profile_runtime_link_probe.py"
+       "${CMAKE_CURRENT_LIST_DIR}/../../tests/fixtures/vehicle-profiles/synthetic-empty.json"
+       "${CMAKE_CURRENT_LIST_DIR}/../../tests/fixtures/vehicle-profiles/synthetic-river.json"
+       "${CMAKE_CURRENT_LIST_DIR}/../../tests/fixtures/vehicle-profiles/runtime-limits.json"
+       ${_profile_runtime_codegen_sources})
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_LIST_DIR}/../../tools/generate_profile_runtime_link_probe.py"
+            --selection "${WEACT_CAN_PROFILE_LINK_PROBE}"
+            --output-dir "${PROFILE_LINK_PROBE_GENERATED_DIR}"
+    RESULT_VARIABLE _profile_link_probe_result
+    OUTPUT_VARIABLE _profile_link_probe_output
+    ERROR_VARIABLE _profile_link_probe_error)
+  if(NOT _profile_link_probe_result EQUAL 0)
+    message(FATAL_ERROR
+      "Synthetic profile link-probe generation failed:\n"
+      "${_profile_link_probe_output}${_profile_link_probe_error}")
+  endif()
+endif()
 set(_controller_config_default_yaml
     "${CMAKE_CURRENT_LIST_DIR}/../../config/default.yaml")
 set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
@@ -116,6 +157,11 @@ target_compile_options(${_mazda_telemetry_lib} PRIVATE
 # when any hot_code.lf symbol is missing from the ELF or outside IRAM.
 idf_build_get_property(_idf_python PYTHON)
 idf_build_get_property(_project_elf EXECUTABLE)
+if(NOT WEACT_CAN_PROFILE_LINK_PROBE STREQUAL "off")
+  # The anchor is test-only and is not called by app_main. Force extraction so
+  # generated function pointers and their runtime caller graph survive gc-sections.
+  target_link_options(${_project_elf} PRIVATE "-Wl,-u,vehicle_profile_link_probe_anchor")
+endif()
 add_custom_command(TARGET ${_project_elf} POST_BUILD
   COMMAND "${_idf_python}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/check_iram_placement.py"
           --fragment "${CMAKE_CURRENT_LIST_DIR}/main/hot_code.lf"

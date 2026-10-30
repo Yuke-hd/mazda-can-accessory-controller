@@ -676,6 +676,17 @@ static_assert(alignof(ProfileRuntimeServiceImplementation) <= alignof(ProfileRun
 
 } // namespace
 
+#if defined(WEACT_PROFILE_LINK_PROBE)
+extern "C" {
+__attribute__((used)) volatile const std::uint32_t
+    vehicle_profile_link_probe_service_implementation_bytes =
+        static_cast<std::uint32_t>(sizeof(ProfileRuntimeServiceImplementation));
+__attribute__((used)) volatile const std::uint32_t
+    vehicle_profile_link_probe_service_implementation_alignment =
+        static_cast<std::uint32_t>(alignof(ProfileRuntimeServiceImplementation));
+}
+#endif
+
 ProfileRuntimeService::ProfileRuntimeService(
     const ProfileTables &tables, vehicle_core::MonotonicClock &clock,
     vehicle_telemetry::AcquisitionSource &source) noexcept {
