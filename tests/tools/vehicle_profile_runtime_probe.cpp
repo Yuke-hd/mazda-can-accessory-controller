@@ -68,11 +68,16 @@ int main() {
   std::size_t count = 0;
   std::array<std::uint8_t, 8> data{};
 
-  // raw = 2^63 + 51. The DBC offset cancels 2^61 exactly; the result is 12.75.
+  // raw = 2^63 + 51; pivot-centered conversion preserves the exact offset cancellation.
   data[0] = 0x33;
   data[7] = 0x80;
+#if defined(PROFILE_NEGATIVE_SCALE)
+  constexpr float expected_number = -12.75F;
+#else
+  constexpr float expected_number = 12.75F;
+#endif
   if (!decode(0x100, data, 8, results, count) || count != 1 || !results[0].valid ||
-      results[0].id.value() != 3 || results[0].value.as_number() != 12.75F) {
+      results[0].id.value() != 3 || results[0].value.as_number() != expected_number) {
     return 3;
   }
 

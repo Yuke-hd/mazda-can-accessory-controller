@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -89,8 +90,10 @@ def populated_profile():
     enum_field = "runtime.raw_enum"
     profile["messages"] = [
         {"id": "runtime.number", "bus": "body", "identifier_format": "standard", "identifier": 0x100,
-         "dlc": 8, "fields": [field(number_field, start=0, length=64, scale="0.25",
-             offset="-2305843009213693952", minimum="0", maximum="25", unit="km/h")]},
+         "dlc": 8, "fields": [field(number_field, start=0, length=64,
+             scale="0.250000000000000000001",
+             offset="-2305843009213693952.009223372036854775808",
+             minimum="0", maximum="25.0000000000000000001", unit="km/h")]},
         {"id": "runtime.boolean", "bus": "body", "identifier_format": "standard", "identifier": 0x101,
          "dlc": 1, "fields": [field(boolean_field, start=0, length=1)]},
         {"id": "runtime.enum", "bus": "body", "identifier_format": "standard", "identifier": 0x102,
@@ -116,15 +119,21 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
         cls.root = Path(cls.temporary.name)
-        configured = subprocess.run(
-            ["cmake", "-S", str(ROOT), "-B", str(cls.root / "build"),
-             "-DBUILD_TESTING=OFF", "-DMAZDA_BUILD_HOST_TESTS=OFF"],
-            capture_output=True, text=True)
-        if configured.returncode:
-            raise AssertionError(configured.stdout + configured.stderr)
-        cache = (cls.root / "build/CMakeCache.txt").read_text()
-        cls.core = Path(next(line.split("=", 1)[1] for line in cache.splitlines()
-                             if line.startswith("MAZDA_VEHICLE_CAN_CORE_ROOT:PATH=")))
+        configured_core = os.environ.get("MAZDA_VEHICLE_CAN_CORE_ROOT")
+        if configured_core:
+            cls.core = Path(configured_core)
+        else:
+            configured = subprocess.run(
+                ["cmake", "-S", str(ROOT), "-B", str(cls.root / "build"),
+                 "-DBUILD_TESTING=OFF", "-DMAZDA_BUILD_HOST_TESTS=OFF"],
+                capture_output=True, text=True)
+            if configured.returncode:
+                raise AssertionError(configured.stdout + configured.stderr)
+            cache = (cls.root / "build/CMakeCache.txt").read_text()
+            cls.core = Path(next(line.split("=", 1)[1] for line in cache.splitlines()
+                                 if line.startswith("MAZDA_VEHICLE_CAN_CORE_ROOT:PATH=")))
+        if not cls.core.is_dir():
+            raise AssertionError(f"vehicle CAN core source is missing: {cls.core}")
         cls.compiler = shutil.which("c++")
         if not cls.compiler:
             raise AssertionError("C++17 compiler is required for profile runtime verification")
@@ -133,7 +142,7 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def compile_and_run(self, projections, *, empty=False):
+    def compile_and_run(self, projections, *, empty=False, negative=False):
         generated = self.root / ("empty" if empty else "populated")
         generated.mkdir(exist_ok=True)
         (generated / "vehicle_profile_metadata.hpp").write_bytes(projections.metadata_header)
@@ -149,6 +158,8 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
         ]
         if empty:
             command.append("-DPROFILE_EMPTY=1")
+        if negative:
+            command.append("-DPROFILE_NEGATIVE_SCALE=1")
         command += [
             str(ROOT / "tests/tools/vehicle_profile_runtime_probe.cpp"),
             str(ROOT / "lib/vehicle_profile_runtime/src/extract.cpp"),
@@ -183,6 +194,16 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
         profile = json.loads((FIXTURES / "synthetic-empty.json").read_text())
         projections = self.project(profile)
         self.compile_and_run(projections, empty=True)
+
+    def test_negative_source_scale_reverses_exact_raw_intervals(self):
+        profile = populated_profile()
+        number_field = profile["messages"][0]["fields"][0]
+        number_field.update(scale="-0.25", offset="2305843009213693952",
+                            minimum="-25", maximum="0")
+        profile["bindings"][2]["policy"]["conversion"]["invalid_ranges"] = [
+            {"minimum": "-12.6", "maximum": "-12.5"},
+        ]
+        self.compile_and_run(self.project(profile), negative=True)
 
     def test_reordering_preserves_generated_bytes_and_identities(self):
         profile = populated_profile()

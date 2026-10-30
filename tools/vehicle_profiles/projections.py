@@ -1,7 +1,7 @@
-"""Pure consumer projections of one validated, identified vehicle profile.
+"""Pure catalog and runtime projections of one validated vehicle profile.
 
-Publication and build selection belong to the artifact-set layer. None of these
-outputs implements extraction, recognition, native handlers, or freshness.
+Publication and build selection belong to the artifact-set layer. Generated
+runtime code supports direct DBC bindings; native handlers remain unsupported.
 """
 
 from dataclasses import dataclass

@@ -50,7 +50,7 @@ class ImportCommandTests(unittest.TestCase):
         names = set(self.tree(directory))
         self.assertEqual(names, {
             "controller_signal_catalog.json", "vehicle_profile_metadata.hpp",
-            "capability_report.json", "artifact_set.json", "vehicle_profile.json",
+            "vehicle_profile_runtime.hpp", "capability_report.json", "artifact_set.json", "vehicle_profile.json",
             "validation_policies.json", "source_report.json"})
         report = json.loads((directory / "source_report.json").read_text())
         self.assertEqual(report["sources"][0]["id"], "demo-a")
@@ -58,6 +58,9 @@ class ImportCommandTests(unittest.TestCase):
         header = (directory / "vehicle_profile_metadata.hpp").read_text()
         # user_mapped evidence is the lowest catalog status, never Confirmed.
         self.assertIn("ValidationStatus::Reference", header)
+        runtime = (directory / "vehicle_profile_runtime.hpp").read_text()
+        self.assertIn("kDispatchTable", runtime)
+        self.assertIn("kFreshnessPolicies", runtime)
         profile = json.loads((directory / "vehicle_profile.json").read_text())
         self.assertEqual(profile["profile_id"], "synthetic.demo")
         listed = json.loads((directory / "artifact_set.json").read_text())["outputs"]

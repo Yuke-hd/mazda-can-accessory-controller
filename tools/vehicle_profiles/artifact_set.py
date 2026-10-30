@@ -11,7 +11,7 @@ from typing import Callable
 from .projections import ProfileProjections
 
 OUTPUT_NAMES = ("controller_signal_catalog.json", "vehicle_profile_metadata.hpp",
-                "capability_report.json")
+                "vehicle_profile_runtime.hpp", "capability_report.json")
 INDEX_NAME = "current.json"
 
 
@@ -22,8 +22,11 @@ def json_bytes(value: object) -> bytes:
 
 def contents(projections: ProfileProjections, inputs: dict[str, str]) -> dict[str, bytes]:
     """Materialize and fingerprint the complete set before touching output files."""
+    if projections.runtime_header is None:
+        raise ValueError("runtime decoder header is required for a complete artifact set")
     outputs = dict(zip(OUTPUT_NAMES, (projections.compiler_catalog,
                                      projections.metadata_header,
+                                     projections.runtime_header,
                                      projections.capability_report)))
     outputs["artifact_set.json"] = json_bytes({
         "format": "vehicle-profile-artifact-set-v1", "inputs": inputs,
