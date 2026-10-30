@@ -18,6 +18,8 @@ public:
   // Ok; DuplicateSink when `sink` is already registered; CapacityExceeded
   // when kCapacity sinks are registered.
   [[nodiscard]] ConfigStatus add(ActionSink &sink) noexcept;
+  // Removes all registered sinks. Safe only while the owning engine is detached.
+  void clear() noexcept;
   void execute(const ActionCommand &command) noexcept override;
 
 private:

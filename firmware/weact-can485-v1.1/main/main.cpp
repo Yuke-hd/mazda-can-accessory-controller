@@ -148,6 +148,17 @@ void log_configuration_diagnostic(
            diagnostic.path.c_str(), diagnostic.message.c_str());
 }
 
+void log_apply_failure(const char *const source,
+                       const controller_config::persisted::ApplyStatus &status) {
+  ESP_LOGE(kTag,
+           "%s configuration setup failed: stage=%u index=%u binding=%u engine=%u "
+           "validation=%u validation_index=%u",
+           source, static_cast<unsigned>(status.stage), static_cast<unsigned>(status.index),
+           static_cast<unsigned>(status.binding), static_cast<unsigned>(status.engine),
+           static_cast<unsigned>(status.validation.error),
+           static_cast<unsigned>(status.validation.index));
+}
+
 constexpr char kHardwareId[] = "weact-can485-v1.1";
 static_assert(controller_config::persisted::kSchemaVersion >= 0 &&
                   controller_config::persisted::kSchemaVersion <= UINT16_MAX,
@@ -213,8 +224,8 @@ bool configure_engine_lighting(
   auto selected = controller_config::persisted::load_boot_configuration(
       store ? &*store : nullptr, controller_config::factory_default_config_json());
   // `backend` is null or the static config_backend, which outlives the service.
-  config_service.record_boot(selected, backend);
   if (!selected.ok()) {
+    config_service.record_boot(selected, backend);
     (void)local_argb::start(); // Clear the full strip even when no document is usable.
     if (selected.override_diagnostic.has_value())
       log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);
@@ -233,28 +244,49 @@ bool configure_engine_lighting(
   if (!selected.override_storage_message.empty())
     ESP_LOGE(kTag, "persisted override read failed; using factory configuration: %s",
              selected.override_storage_message.c_str());
+
+  active_configuration = std::move(*selected.configuration);
+  if (!local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))) {
+    config_service.record_boot(selected, backend);
+    ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
+    return false;
+  }
+
+  bool applied = false;
+  if (selected.source == controller_config::persisted::ConfigurationSource::PersistedOverride) {
+    const auto result =
+        controller_config::persisted::apply_persisted_override_with_factory_fallback(
+            active_configuration, controller_config::factory_default_config_json(), led_actions,
+            engine);
+    if (!result.override_status.ok())
+      log_apply_failure("PersistedOverride", result.override_status);
+    if (result.factory_diagnostic.has_value()) {
+      selected.source = controller_config::persisted::ConfigurationSource::FactoryDefault;
+      selected.factory_diagnostic = result.factory_diagnostic;
+      log_configuration_diagnostic("factory configuration rejected after override apply failure",
+                                   *result.factory_diagnostic);
+    } else if (result.fell_back) {
+      selected.source = controller_config::persisted::ConfigurationSource::FactoryDefault;
+      if (!result.factory_status.ok())
+        log_apply_failure("FactoryDefault", result.factory_status);
+    }
+    applied = result.ok();
+  } else {
+    const auto status = controller_config::persisted::apply_controller_config(active_configuration,
+                                                                              led_actions, engine);
+    if (!status.ok())
+      log_apply_failure("FactoryDefault", status);
+    applied = status.ok();
+  }
+
+  config_service.record_boot(selected, backend);
+  if (!applied)
+    return false;
+
   if (selected.source == controller_config::persisted::ConfigurationSource::PersistedOverride)
     ESP_LOGI(kTag, "using valid persisted controller configuration override");
   else
     ESP_LOGI(kTag, "using embedded factory controller configuration");
-
-  active_configuration = std::move(*selected.configuration);
-  if (!local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))) {
-    ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
-    return false;
-  }
-  const auto status = controller_config::persisted::apply_controller_config(active_configuration,
-                                                                            led_actions, engine);
-  if (!status.ok()) {
-    ESP_LOGE(kTag,
-             "factory configuration setup failed: stage=%u index=%u binding=%u engine=%u "
-             "validation=%u validation_index=%u",
-             static_cast<unsigned>(status.stage), static_cast<unsigned>(status.index),
-             static_cast<unsigned>(status.binding), static_cast<unsigned>(status.engine),
-             static_cast<unsigned>(status.validation.error),
-             static_cast<unsigned>(status.validation.index));
-    return false;
-  }
   return true;
 }
 } // namespace

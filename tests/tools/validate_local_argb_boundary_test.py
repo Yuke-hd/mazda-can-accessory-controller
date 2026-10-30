@@ -431,9 +431,12 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_missing_shared_profile_application_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "controller_config::persisted::apply_controller_config(active_configuration,\n"
-            "                                                                            led_actions, engine);",
-            "(void)led_actions;",
+            "    const auto status = controller_config::persisted::apply_controller_config("
+            "active_configuration,\n"
+            "                                                                              "
+            "led_actions, engine);",
+            "    const auto status = controller_config::persisted::validate_controller_config("
+            "active_configuration);",
         )
         self.assert_rejected("must call controller_config::persisted::apply_controller_config()")
 
