@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 from .canonical import identify_profile
+from .runtime_codegen import RUNTIME_LIMITS, generate_runtime_header
 from .validation import ProfileValidationError, ValidationPolicies
 
 # Existing SignalCatalogExport v1 bounds, checked against the real C++ exporter
@@ -65,11 +66,12 @@ def _compiler_signals(bindings: list[dict[str, Any]]) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class ProfileProjections:
-    """Complete in-memory results; consumers publish all three together."""
+    """Profile outputs; consumers publish complete runtime sets together."""
 
     compiler_catalog: bytes
     metadata_header: bytes
     capability_report: bytes
+    runtime_header: bytes | None = None
 
 
 def project_profile(document: Any, *, policies: ValidationPolicies,
@@ -137,6 +139,25 @@ def project_profile(document: Any, *, policies: ValidationPolicies,
                                      for d in profile["diagnostics"]), key=_json)}
     return ProfileProjections(_json({"version": 1, "signals": _compiler_signals(bindings)}),
                               "\n".join(lines).encode("utf-8"), _json(report))
+
+
+def project_runtime_profile(document: Any, *, policies: ValidationPolicies,
+                            generator_revision: str,
+                            validation_limits: Any = CATALOG_LIMITS) -> ProfileProjections:
+    """Project catalog metadata and executable decoders as one runtime result."""
+    limits = {**CATALOG_LIMITS, **dict(validation_limits), **RUNTIME_LIMITS}
+    identity = identify_profile(document, policies=policies,
+                                generator_revision=generator_revision,
+                                validation_limits=limits)
+    projections = project_profile(document, policies=policies,
+                                  generator_revision=generator_revision,
+                                  validation_limits=limits)
+    return ProfileProjections(
+        projections.compiler_catalog,
+        projections.metadata_header,
+        projections.capability_report,
+        generate_runtime_header(identity.profile),
+    )
 
 
 def catalog_only_compiler_json(signals: dict[str, Any]) -> bytes:
