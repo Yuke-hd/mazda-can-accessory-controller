@@ -128,8 +128,8 @@ constexpr SignalMetadata kSignals[]{
      ValidationStatus::Confirmed, SignalCapability::Read | SignalCapability::Notify, nullptr, 0},
     {SignalId{2}, "notify_secondary", SignalType::Boolean, SignalUnit::None,
      ValidationStatus::Reference, SignalCapability::Read | SignalCapability::Notify, nullptr, 0},
-    {SignalId{3}, "read_only", SignalType::Boolean, SignalUnit::None,
-     ValidationStatus::Reference, SignalCapability::Read, nullptr, 0},
+    {SignalId{3}, "read_only", SignalType::Boolean, SignalUnit::None, ValidationStatus::Reference,
+     SignalCapability::Read, nullptr, 0},
 };
 constexpr SignalFreshnessPolicy kFreshness[]{
     {SignalId{1}, true, 10},
@@ -145,11 +145,11 @@ void decode(const vehicle_core::RawCanFrame &frame, DecodeResult *results,
       DecodeResult::success(SignalId{1}, SignalValue::boolean(frame.data[0] != 0U)));
 }
 
-constexpr DispatchEntry kDispatch[]{
-    {0x101U, 1U, &decode, kOutputs, std::size(kOutputs)}};
+constexpr DispatchEntry kDispatch[]{{0x101U, 1U, &decode, kOutputs, std::size(kOutputs)}};
 
-const ProfileTables kTables{SignalCatalogView{kSignals}, kFreshness, std::size(kFreshness),
-                            kDispatch, std::size(kDispatch), std::size(kOutputs)};
+const ProfileTables kTables{SignalCatalogView{kSignals}, kFreshness,
+                            std::size(kFreshness),       kDispatch,
+                            std::size(kDispatch),        std::size(kOutputs)};
 
 vehicle_core::RawCanFrame frame(const vehicle_core::MonotonicTimestamp timestamp_us,
                                 const std::uint8_t value) noexcept {
@@ -170,8 +170,7 @@ struct NotificationLog final {
 
 void capture(void *context, const SignalNotification &notice) noexcept {
   auto &log = *static_cast<NotificationLog *>(context);
-  if (log.synchronization != nullptr &&
-      !log.synchronization->available_to_callback()) {
+  if (log.synchronization != nullptr && !log.synchronization->available_to_callback()) {
     log.callback_lock_free = false;
   }
   if (log.count < log.notices.size()) {
@@ -190,8 +189,7 @@ struct MutationContext final {
 void attempt_mutation(void *context, const SignalNotification &) noexcept {
   auto &mutation = *static_cast<MutationContext *>(context);
   mutation.callback_active = ProviderAccess::callback_active(*mutation.provider);
-  const auto subscribed =
-      mutation.provider->subscribe(SignalId{1}, &capture, nullptr);
+  const auto subscribed = mutation.provider->subscribe(SignalId{1}, &capture, nullptr);
   mutation.subscribe_status = subscribed.status;
   mutation.unsubscribe_status = mutation.provider->unsubscribe(mutation.handle).status;
 }
@@ -216,8 +214,7 @@ TEST_CASE("Notify registrations use two shared bounded slots and preserve replac
   CHECK(provider.unsubscribe(*first_handle.value).ok());
   const auto replacement_handle = provider.subscribe(SignalId{1}, &capture, &replacement);
   REQUIRE(replacement_handle.ok());
-  CHECK(provider.unsubscribe(*first_handle.value).status ==
-        SignalStatus::InvalidSubscription);
+  CHECK(provider.unsubscribe(*first_handle.value).status == SignalStatus::InvalidSubscription);
 
   ProviderAccess::set_running(provider, true);
   ProviderAccess::deliver(provider, {});
@@ -377,22 +374,31 @@ TEST_CASE("Notify registration enforces the 17-binding generated limit") {
   std::array<SignalFreshnessPolicy, 18> freshness{};
   for (std::size_t index = 0; index < signals.size(); ++index) {
     const auto id = SignalId{static_cast<std::uint16_t>(index + 1U)};
-    signals[index] = SignalMetadata{id, keys[index], SignalType::Boolean, SignalUnit::None,
-                                    ValidationStatus::Reference, SignalCapability::Notify,
-                                    nullptr, 0};
+    signals[index] = SignalMetadata{id,
+                                    keys[index],
+                                    SignalType::Boolean,
+                                    SignalUnit::None,
+                                    ValidationStatus::Reference,
+                                    SignalCapability::Notify,
+                                    nullptr,
+                                    0};
     freshness[index] = SignalFreshnessPolicy{id, false, 0};
   }
 
   FakeClock clock;
   FakeSynchronization synchronization;
-  ProfileTables at_limit{SignalCatalogView{signals.data(), 17U}, freshness.data(), 17U, nullptr,
-                         0U, 0U};
+  ProfileTables at_limit{
+      SignalCatalogView{signals.data(), 17U}, freshness.data(), 17U, nullptr, 0U, 0U};
   ProfileProvider supported{at_limit, clock, synchronization.binding()};
   NotificationLog log{};
   CHECK(supported.subscribe(SignalId{17}, &capture, &log).ok());
 
-  ProfileTables over_limit{SignalCatalogView{signals.data(), signals.size()}, freshness.data(),
-                           freshness.size(), nullptr, 0U, 0U};
+  ProfileTables over_limit{SignalCatalogView{signals.data(), signals.size()},
+                           freshness.data(),
+                           freshness.size(),
+                           nullptr,
+                           0U,
+                           0U};
   ProfileProvider rejected{over_limit, clock, synchronization.binding()};
   CHECK(rejected.subscribe(SignalId{1}, &capture, &log).status == SignalStatus::Faulted);
 }

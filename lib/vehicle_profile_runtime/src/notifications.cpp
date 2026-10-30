@@ -93,8 +93,8 @@ map_notification_status(const NotificationStatus status) noexcept {
   return SignalStatus::Faulted;
 }
 
-[[nodiscard]] Availability to_core_availability(
-    const vehicle_signals::Availability availability) noexcept {
+[[nodiscard]] Availability
+to_core_availability(const vehicle_signals::Availability availability) noexcept {
   switch (availability) {
   case vehicle_signals::Availability::NoData:
     return Availability::NoData;
@@ -163,9 +163,8 @@ to_core_reading(const vehicle_signals::SignalReading &reading) noexcept {
 }
 
 [[nodiscard]] bool available(const Reading<SignalValue> &reading) noexcept {
-  return reading.value.has_value() &&
-         (reading.availability == Availability::Fresh ||
-          reading.availability == Availability::FreshnessUnverified);
+  return reading.value.has_value() && (reading.availability == Availability::Fresh ||
+                                       reading.availability == Availability::FreshnessUnverified);
 }
 
 void notification_trampoline(void *context, const Notification<SignalValue> &notice) noexcept {
@@ -439,8 +438,7 @@ void ProviderAccess::deliver(ProfileProvider &provider,
   // Each core channel detaches a copied notice and releases its lock before
   // invoking this provider's trampoline.
   for (std::size_t index = 0; index < notifications.channel_count; ++index) {
-    (void)notifications.channels[index].channel.dispatch_pending(
-        kNotifySubscribersPerBinding);
+    (void)notifications.channels[index].channel.dispatch_pending(kNotifySubscribersPerBinding);
   }
 }
 

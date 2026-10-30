@@ -42,8 +42,7 @@ struct PublicationSynchronization final {
 
   [[nodiscard]] constexpr bool well_formed() const noexcept {
     return enter != nullptr && leave != nullptr &&
-           ((lifecycle_owner_context == nullptr) ==
-            (claim_or_validate_lifecycle_owner == nullptr));
+           ((lifecycle_owner_context == nullptr) == (claim_or_validate_lifecycle_owner == nullptr));
   }
 };
 

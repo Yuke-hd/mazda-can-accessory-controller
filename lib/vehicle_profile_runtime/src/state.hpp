@@ -3,8 +3,8 @@
 #include <array>
 #include <cstdint>
 
-#include "vehicle_profile_runtime/provider.hpp"
 #include "notifications.hpp"
+#include "vehicle_profile_runtime/provider.hpp"
 
 namespace vehicle_profile_runtime {
 
