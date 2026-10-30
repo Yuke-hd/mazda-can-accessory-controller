@@ -16,11 +16,17 @@ used `sdkconfig.runtime-stats.defaults` and enabled
 
 Each row's external sdkconfig is `<build-directory>/sdkconfig`; no generated
 firmware files are tracked. All six probe artifacts were built from source
-commit `090d2a6f0a9dc9952dafff601446aa61145e429f`. An independent reviewer
-rebuilt `service.cpp` and the probe translation unit from each probe's compile
-command; all 12 objects matched the corresponding build objects byte-for-byte.
-The reviewer's local hash manifest is
-`/tmp/mazda-review375-final-object-proof/manifest.json`.
+commit `090d2a6f0a9dc9952dafff601446aa61145e429f`. At that source, an independent
+reviewer rebuilt `service.cpp` and the probe translation unit from each probe's
+compile command; all 12 full objects matched byte-for-byte. The later
+formatting-only source commit `48ab7ad7391790dfeb7a4063ab06473578b83e1c` changes
+full object bytes because debug metadata reflects the reformatted source, but
+independent recompilation confirmed that every allocated section's bytes,
+flags, and alignment, every relocation targeting allocated sections, and every
+allocated symbol definition match the measured objects. The linked runtime
+content and measurements therefore remain unchanged. The reviewer's local
+manifests are `/tmp/mazda-review375-final-object-proof/manifest.json` and
+`/tmp/mazda-review375-format-proof/manifest.json`.
 
 The probe generates C++ only below the external build directory. Its
 linker-rooted anchor is never called by `app_main`. The anchor uses borrowed,
