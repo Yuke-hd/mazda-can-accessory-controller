@@ -311,9 +311,12 @@ class PortableLayer:
     target_links: Tuple[str, ...]
     # Repository include roots the target may export (the core root is implied).
     include_roots: Tuple[str, ...]
-    # Core headers the layer may reach. Existing layers default to value-only
-    # telemetry contracts; the decoder layer also needs the immutable frame.
+    # Core headers the public consumer closure may reach. Existing layers
+    # default to value-only telemetry contracts; the decoder layer also needs
+    # the immutable frame.
     core_headers: Tuple[str, ...] = ()
+    # Additional core headers allowed only in the layer's private sources.
+    private_core_headers: Tuple[str, ...] = ()
     # Repository directory whose compiled sources are checked, if any.
     source_dir: Optional[str] = None
     # Repository files that may hold vehicle catalog key literals. Every other
@@ -630,7 +633,7 @@ VEHICLE_SIGNALS_LAYER = PortableLayer(
 VEHICLE_PROFILE_RUNTIME_LAYER = PortableLayer(
     name="vehicle_profile_runtime",
     directories=("lib/vehicle_signals", "lib/vehicle_profile_runtime"),
-    headers=("vehicle_profile_runtime/tables.hpp",),
+    headers=("vehicle_profile_runtime/tables.hpp", "vehicle_profile_runtime/provider.hpp"),
     probe_body=_VEHICLE_PROFILE_RUNTIME_PROBE_BODY,
     target_links=("vehicle_core", "vehicle_signals"),
     # The source root is private to this portable library and contains its
@@ -639,6 +642,7 @@ VEHICLE_PROFILE_RUNTIME_LAYER = PortableLayer(
                    "lib/vehicle_profile_runtime/src"),
     core_headers=("vehicle_core/frame.hpp", "vehicle_core/telemetry_contracts.hpp",
                   "vehicle_core/time.hpp"),
+    private_core_headers=("vehicle_core/notification_channel.hpp",),
     source_dir="lib/vehicle_profile_runtime/src",
 )
 ACTION_ENGINE_LAYER = PortableLayer(
@@ -886,7 +890,10 @@ def _layer_dependency_violations(
     include_roots = _layer_include_roots(root, core_root, layer)
     core_include = include_roots[-1]
     core_headers = layer.core_headers or VEHICLE_SIGNALS_CORE_ALLOWED
-    allowed_core = {(core_include / name).resolve() for name in core_headers}
+    allowed_public_core = {(core_include / name).resolve() for name in core_headers}
+    allowed_private_core = {
+        (core_include / name).resolve() for name in layer.private_core_headers
+    }
     violations: List[str] = []
     for index, (label, entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
@@ -915,6 +922,9 @@ def _layer_dependency_violations(
             ):
                 continue
             if _is_within(dependency, core_root):
+                allowed_core = allowed_public_core
+                if source != consumer_source:
+                    allowed_core = allowed_core | allowed_private_core
                 if dependency not in allowed_core:
                     violations.append(f"forbidden {layer.name} core dependency: {dependency}")
                 continue

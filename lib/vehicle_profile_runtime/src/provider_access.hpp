@@ -42,6 +42,12 @@ struct ProviderAccess final {
   [[nodiscard]] static ProviderProcessResult service(ProfileProvider &provider) noexcept;
   [[nodiscard]] static ProviderProcessResult fault(ProfileProvider &provider) noexcept;
   [[nodiscard]] static ProviderProcessResult reset(ProfileProvider &provider) noexcept;
+
+  // The adapter calls these on its serialized lifecycle/dispatch path. Stop
+  // may mark the provider stopped only after worker callbacks are quiescent.
+  static void set_running(ProfileProvider &provider, bool running) noexcept;
+  [[nodiscard]] static bool callback_active(const ProfileProvider &provider) noexcept;
+  static void deliver(ProfileProvider &provider, const ProviderProcessResult &result) noexcept;
 };
 
 } // namespace vehicle_profile_runtime
