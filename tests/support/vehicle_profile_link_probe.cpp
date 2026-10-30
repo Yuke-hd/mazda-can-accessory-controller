@@ -2,26 +2,25 @@
 #include <cstdint>
 #include <new>
 
+#include "vehicle_core/time.hpp"
 #include "vehicle_profile_metadata.hpp"
 #include "vehicle_profile_runtime.hpp"
 #include "vehicle_profile_runtime/provider.hpp"
 #include "vehicle_profile_runtime/service.hpp"
 #include "vehicle_profile_runtime/tables.hpp"
 #include "vehicle_telemetry/receive.hpp"
-#include "vehicle_core/time.hpp"
 
 extern "C" {
 extern volatile const std::uint32_t vehicle_profile_link_probe_service_implementation_bytes;
-extern volatile const std::uint32_t
-    vehicle_profile_link_probe_service_implementation_alignment;
+extern volatile const std::uint32_t vehicle_profile_link_probe_service_implementation_alignment;
 extern volatile const std::uint32_t vehicle_profile_link_probe_service_storage_bytes;
 extern volatile const std::uint32_t vehicle_profile_link_probe_service_storage_alignment;
 }
 
 namespace {
 
-using vehicle_profile_runtime::ProfileTables;
 using vehicle_profile_runtime::ProfileRuntimeService;
+using vehicle_profile_runtime::ProfileTables;
 using vehicle_signals::SignalNotification;
 
 constexpr ProfileTables kTables{
@@ -46,8 +45,8 @@ public:
   [[nodiscard]] vehicle_telemetry::StatusResult stop() noexcept override {
     return {vehicle_telemetry::ResultCode::NotRunning};
   }
-  [[nodiscard]] vehicle_telemetry::ReceiveStatus
-  receive(vehicle_core::RawCanFrame &, std::uint32_t) noexcept override {
+  [[nodiscard]] vehicle_telemetry::ReceiveStatus receive(vehicle_core::RawCanFrame &,
+                                                         std::uint32_t) noexcept override {
     return vehicle_telemetry::ReceiveStatus::NotStarted;
   }
   [[nodiscard]] vehicle_telemetry::AcquisitionStatistics statistics() const noexcept override {
@@ -73,8 +72,7 @@ vehicle_profile_link_probe_anchor(void *borrowed_service_storage) {
   // graph. If called by a standalone probe, the caller supplies aligned,
   // preallocated storage; this does not reserve a second service in the
   // firmware image alongside the native Mazda provider.
-  auto *service = ::new (borrowed_service_storage)
-      ProfileRuntimeService{kTables, clock, source};
+  auto *service = ::new (borrowed_service_storage) ProfileRuntimeService{kTables, clock, source};
 
   auto &provider = service->provider();
   const auto catalog = provider.catalog();
