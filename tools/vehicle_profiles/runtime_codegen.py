@@ -139,6 +139,16 @@ def _binding_conversion(binding: dict[str, Any], field: dict[str, Any],
     return target_scale, target_at_pivot
 
 
+def _conversion_pivot(binding: dict[str, Any], field: dict[str, Any],
+                      permitted: tuple[int, int]) -> int:
+    """Choose the permitted integer raw value nearest the target affine zero."""
+    scale, target_offset = _binding_conversion(binding, field, 0)
+    if scale == 0:
+        return permitted[0]
+    zero = round(-target_offset / scale)
+    return min(permitted[1], max(permitted[0], zero))
+
+
 def _array(name: str, element_type: str, items: list[str]) -> list[str]:
     lines = [f"inline constexpr std::array<{element_type}, {len(items)}> {name}{{{{"]
     lines.extend(f"  {item}," for item in items)
@@ -154,7 +164,7 @@ def _binding_code(index: int, binding: dict[str, Any], field: dict[str, Any]) ->
     lines += _array(f"kInvalidRanges{index}", "vehicle_profile_runtime::RawRange", ranges)
 
     if binding["type"] in ("number", "boolean"):
-        pivot = (permitted[0] + permitted[1]) // 2
+        pivot = _conversion_pivot(binding, field, permitted)
         scale, target_at_pivot = _binding_conversion(binding, field, pivot)
         lines.append(
             f"inline constexpr auto kConversion{index} = vehicle_profile_runtime::NumberConversion{{"

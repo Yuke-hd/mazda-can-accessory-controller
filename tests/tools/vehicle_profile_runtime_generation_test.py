@@ -142,7 +142,8 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def compile_and_run(self, projections, *, empty=False, negative=False):
+    def compile_and_run(self, projections, *, empty=False, negative=False,
+                        small_scale_wide=False, signed_negative_scale=False):
         generated = self.root / ("empty" if empty else "populated")
         generated.mkdir(exist_ok=True)
         (generated / "vehicle_profile_metadata.hpp").write_bytes(projections.metadata_header)
@@ -160,6 +161,10 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
             command.append("-DPROFILE_EMPTY=1")
         if negative:
             command.append("-DPROFILE_NEGATIVE_SCALE=1")
+        if small_scale_wide:
+            command.append("-DPROFILE_SMALL_SCALE_WIDE=1")
+        if signed_negative_scale:
+            command.append("-DPROFILE_SIGNED_NEGATIVE_SCALE=1")
         command += [
             str(ROOT / "tests/tools/vehicle_profile_runtime_probe.cpp"),
             str(ROOT / "lib/vehicle_profile_runtime/src/extract.cpp"),
@@ -204,6 +209,24 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
             {"minimum": "-12.6", "maximum": "-12.5"},
         ]
         self.compile_and_run(self.project(profile), negative=True)
+
+    def test_wide_u64_small_scale_preserves_zero_and_unit_increment(self):
+        profile = populated_profile()
+        number_field = profile["messages"][0]["fields"][0]
+        number_field.update(scale="0.1", offset="0", minimum="0",
+                            maximum="1844674407370955161.5")
+        self.compile_and_run(self.project(profile), small_scale_wide=True)
+
+    def test_signed64_extrema_and_negative_scale_invalid_interval(self):
+        profile = populated_profile()
+        number_field = profile["messages"][0]["fields"][0]
+        number_field.update(signed=True, scale="-0.25", offset="0",
+                            minimum="-2305843009213693951.75",
+                            maximum="2305843009213693952")
+        profile["bindings"][2]["policy"]["conversion"]["invalid_ranges"] = [
+            {"minimum": "-0.5", "maximum": "0"},
+        ]
+        self.compile_and_run(self.project(profile), signed_negative_scale=True)
 
     def test_reordering_preserves_generated_bytes_and_identities(self):
         profile = populated_profile()

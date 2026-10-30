@@ -68,6 +68,51 @@ int main() {
   std::size_t count = 0;
   std::array<std::uint8_t, 8> data{};
 
+  // These vectors are independent of generated pivot constants.
+#if defined(PROFILE_SMALL_SCALE_WIDE)
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || !results[0].valid ||
+      results[0].id.value() != 3 || results[0].value.as_number() != 0.0F) {
+    return 3;
+  }
+  data[0] = 1;
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || !results[0].valid ||
+      results[0].id.value() != 3 || results[0].value.as_number() != 0.1F) {
+    return 4;
+  }
+  data = {};
+  data[0] = 125;
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || results[0].valid ||
+      results[0].id.value() != 3) {
+    return 5;
+  }
+#elif defined(PROFILE_SIGNED_NEGATIVE_SCALE)
+  // INT64_MIN under scale -0.25 maps exactly to +2^61.
+  data[7] = 0x80;
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || !results[0].valid ||
+      results[0].id.value() != 3 || results[0].value.as_number() != 2305843009213693952.0F) {
+    return 3;
+  }
+  // INT64_MAX maps to -2^61 after the required float32 rounding.
+  data.fill(0xff);
+  data[7] = 0x7f;
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || !results[0].valid ||
+      results[0].id.value() != 3 || results[0].value.as_number() != -2305843009213693952.0F) {
+    return 4;
+  }
+  // The source-physical invalid interval [-0.5, 0] maps to signed raw [0, 2].
+  data = {};
+  data[0] = 1;
+  count = 0;
+  if (!decode(0x100, data, 8, results, count) || count != 1 || results[0].valid ||
+      results[0].id.value() != 3) {
+    return 5;
+  }
+#else
   // raw = 2^63 + 51; pivot-centered conversion preserves the exact offset cancellation.
   data[0] = 0x33;
   data[7] = 0x80;
@@ -88,6 +133,7 @@ int main() {
       results[0].id.value() != 3) {
     return 4;
   }
+#endif
 
   data = {};
   data[0] = 1;
