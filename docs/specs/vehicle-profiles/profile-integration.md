@@ -8,6 +8,22 @@ It adds no selection option, importer, runtime, storage format or firmware
 composition today. Implementation starts only after the owner accepts the
 interfaces, migration policy and acceptance examples below.
 
+**Milestone 6 supersession:** this draft predates the accepted explicit-mapping
+importer. Its build-request JSON and per-profile `context`, `policy_pack`,
+recognition-pack and automatic-recognition concepts are obsolete and must not
+be implemented as current importer inputs. The current importer takes DBC
+sources plus one user-authored `mapping.json`, which declares the selected bus,
+field-to-target bindings, conversions, enum choices and optional user-claimed
+freshness; it derives the validation registry from that mapping and the target
+catalog. It has no request file, recognition pack, vehicle context or
+hand-written registry. `recognition_rule_revision` remains a normalized-profile
+identity field, but Milestone 6 derives it from the normalized mapping and
+sources; it does not represent recognition rules or a recognition pack. See
+[DBC import](dbc-import.md) for the current contract. Milestone 8 owns the
+complete integration rewrite, including build selection, factory configuration
+and persistence, against the accepted Milestone 6 importer and Milestone 7
+runtime.
+
 ## One selection at the composition root
 
 Introduce one CMake cache string, `VEHICLE_PROFILE`, shared by host and ESP-IDF
