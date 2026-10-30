@@ -496,33 +496,27 @@ void process(ProfileProvider &provider, FakeClock &clock,
 void check_populated_consumers(
     ProfileProvider &provider, FakeClock &clock,
     const std::array<vehicle_core::RawCanFrame, 3> &frames, const char *boolean_key,
-    const char *number_key, const SignalId boolean_id, const SignalId number_id,
-    const SignalId enum_id, const float expected_number, const std::uint16_t strict_action,
-    const std::uint16_t lenient_action, const Availability number_availability,
-    const std::uint16_t expected_enum_value, const std::uint16_t enum_choice_handle,
-    const bool check_declared_deadline) {
+    const char *number_key, const char *enum_key, const char *enum_choice_key,
+    const SignalId boolean_id, const SignalId number_id, const SignalId enum_id,
+    const float expected_number, const std::uint16_t action_base,
+    const Availability number_availability, const std::uint16_t expected_enum_value,
+    const std::uint16_t enum_choice_handle, const bool check_declared_deadline) {
   RecordingActionSink sink;
   ActionEngine engine{provider};
   REQUIRE(engine.add_sink(sink) == ConfigStatus::Ok);
   REQUIRE(engine.add_sampled_state_rule(SampledStateRuleConfig{
               SignalCondition{boolean_key, Comparison::Equal, RuleOperand::boolean(true)},
-              ActionId{strict_action}, FreshnessRequirement::Fresh}) == ConfigStatus::Ok);
+              ActionId{action_base}, FreshnessRequirement::Fresh}) == ConfigStatus::Ok);
   REQUIRE(engine.add_sampled_state_rule(SampledStateRuleConfig{
-              SignalCondition{boolean_key, Comparison::Equal, RuleOperand::boolean(true)},
-              ActionId{static_cast<std::uint16_t>(strict_action + 1U)},
-              FreshnessRequirement::FreshOrUnverified}) == ConfigStatus::Ok);
-  REQUIRE(engine.add_range_rule(RangeRuleConfig{number_key,
-                                                {0.0F, 100.0F},
-                                                {0.0F, 1.0F},
-                                                ActionId{lenient_action},
-                                                FreshnessRequirement::FreshOrUnverified}) ==
-          ConfigStatus::Ok);
-  REQUIRE(engine.add_range_rule(
-              RangeRuleConfig{number_key,
-                              {0.0F, 100.0F},
-                              {0.0F, 1.0F},
-                              ActionId{static_cast<std::uint16_t>(lenient_action + 1U)},
-                              FreshnessRequirement::Fresh}) == ConfigStatus::Ok);
+              SignalCondition{enum_key, Comparison::Equal, RuleOperand::choice(enum_choice_key)},
+              ActionId{static_cast<std::uint16_t>(action_base + 1U)},
+              FreshnessRequirement::Fresh}) == ConfigStatus::Ok);
+  REQUIRE(
+      engine.add_range_rule(RangeRuleConfig{number_key,
+                                            {0.0F, 100.0F},
+                                            {0.0F, 1.0F},
+                                            ActionId{static_cast<std::uint16_t>(action_base + 2U)},
+                                            FreshnessRequirement::Fresh}) == ConfigStatus::Ok);
 
   RecordingObserver observer;
   replay::SignalObserverFanOut fan_out{provider, clock, {&observer}};
@@ -553,17 +547,12 @@ void check_populated_consumers(
   CHECK(enum_reading.value->value->as_enumeration() == expected_enum_value);
 
   REQUIRE(engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
-  CHECK(sink.contains(ActionId{strict_action}, ActionCommandKind::Deactivate));
-  CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(strict_action + 1U)},
-                      ActionCommandKind::Activate));
-  CHECK(sink.contains(ActionId{lenient_action}, ActionCommandKind::SetLevel));
-  if (number_availability == Availability::FreshnessUnverified) {
-    CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(lenient_action + 1U)},
-                        ActionCommandKind::Deactivate));
-  } else {
-    CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(lenient_action + 1U)},
-                        ActionCommandKind::SetLevel));
-  }
+  CHECK(sink.contains(ActionId{action_base}, ActionCommandKind::Deactivate));
+  CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(action_base + 1U)},
+                      ActionCommandKind::Deactivate));
+  CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(action_base + 2U)},
+                      number_availability == Availability::Fresh ? ActionCommandKind::SetLevel
+                                                                 : ActionCommandKind::Deactivate));
 
   CHECK(fan_out.sample());
   CHECK(observer.catalog_calls() == 1U);
@@ -612,7 +601,7 @@ void check_populated_consumers(
     REQUIRE(expired.ok());
     CHECK(expired.value->availability == Availability::Stale);
     REQUIRE(engine.sample_polled_rules() == vehicle_signals::SignalStatus::Ok);
-    CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(lenient_action + 1U)},
+    CHECK(sink.contains(ActionId{static_cast<std::uint16_t>(action_base + 2U)},
                         ActionCommandKind::Deactivate));
   }
 
@@ -688,11 +677,13 @@ TEST_CASE("generated populated profiles and an empty profile use generic rule, r
                                     make_frame(0x203U, 6'000U, 3U)};
 
   check_populated_consumers(profile_a, clock_a, profile_a_frames, "vehicle.boolean",
-                            "vehicle.number", SignalId{101U}, SignalId{102U}, SignalId{103U}, 17.0F,
-                            71U, 73U, Availability::Fresh, 7U, 2U, true);
+                            "vehicle.number", "vehicle.enum", "stopped", SignalId{101U},
+                            SignalId{102U}, SignalId{103U}, 17.0F, 71U, Availability::Fresh, 7U, 2U,
+                            true);
   check_populated_consumers(profile_b, clock_b, profile_b_frames, "profile_b.active",
-                            "profile_b.level", SignalId{201U}, SignalId{202U}, SignalId{203U},
-                            15.0F, 81U, 83U, Availability::FreshnessUnverified, 22U, 1U, false);
+                            "profile_b.level", "profile_b.mode", "drive", SignalId{201U},
+                            SignalId{202U}, SignalId{203U}, 15.0F, 81U,
+                            Availability::FreshnessUnverified, 22U, 1U, false);
   check_empty_consumers(empty, empty_clock);
 }
 

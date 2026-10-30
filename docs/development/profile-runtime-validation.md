@@ -142,10 +142,12 @@ The empty profile emits an empty catalog and the exact header-only live packet;
 it has no Mazda fallback.
 
 The declared 500 ms timeout remains Fresh at its inclusive deadline and becomes
-Stale one microsecond later. A profile signal with undeclared freshness fails
-off under the default Fresh rule; the explicit FreshOrUnverified rule can
-activate on the same value. No Mazda freshness exception or decoder
-comparison is used.
+Stale one microsecond later. The declared number is actionable under Fresh at
+the inclusive deadline and deactivates after expiry. Signals with undeclared
+freshness remain unverified and fail off under Fresh. The generated imported
+profiles use only Fresh action rules; no Mazda freshness exception or decoder
+comparison is used. Future profile application/config selection must preserve
+the import contract and never confer the Mazda brake opt-in on imported signals.
 
 The allocation guard instruments C++ `operator new` and `operator new[]`.
 Against the exact pinned vehicle-core `0.2.1` source at
