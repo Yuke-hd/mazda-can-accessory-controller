@@ -130,17 +130,22 @@ row. For example, a populated production build uses:
 
 ```sh
 source /path/to/esp-idf/v5.5.4/export.sh
-idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-r6-populated-production \
+task_repo_root="$PWD"
+idf.py -C "$task_repo_root/firmware/weact-can485-v1.1" \
+  -B /tmp/mazda-r6-populated-production \
   -D SDKCONFIG=/tmp/mazda-r6-populated-production/sdkconfig \
-  -D SDKCONFIG_DEFAULTS=firmware/weact-can485-v1.1/sdkconfig.defaults \
+  -D SDKCONFIG_DEFAULTS="$task_repo_root/firmware/weact-can485-v1.1/sdkconfig.defaults" \
   -D WEACT_CAN_PROFILE_LINK_PROBE=populated set-target esp32
-idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-r6-populated-production \
+idf.py -C "$task_repo_root/firmware/weact-can485-v1.1" \
+  -B /tmp/mazda-r6-populated-production \
   -D WEACT_CAN_PROFILE_LINK_PROBE=populated build
-idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-r6-populated-production \
+idf.py -C "$task_repo_root/firmware/weact-can485-v1.1" \
+  -B /tmp/mazda-r6-populated-production \
   -D WEACT_CAN_PROFILE_LINK_PROBE=populated size
 ```
 
-For worst-case profiling, add
-`sdkconfig.runtime-stats.defaults` and a defaults file containing the two
-profiling options listed above. Select `empty` or `max` for the other synthetic
-profiles. Leave the option at its default `off` for the no-probe baseline.
+For worst-case profiling, set `SDKCONFIG_DEFAULTS` to the semicolon-separated
+absolute paths for `sdkconfig.defaults`, `sdkconfig.runtime-stats.defaults`,
+and the external defaults file containing the two profiling options listed
+above. Select `empty` or `max` for the other synthetic profiles. Leave the
+option at its default `off` for the no-probe baseline.
