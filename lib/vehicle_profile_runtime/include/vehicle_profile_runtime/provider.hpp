@@ -10,7 +10,8 @@ namespace vehicle_profile_runtime {
 
 inline constexpr std::size_t kMaxRuntimeSignals = 64;
 inline constexpr std::size_t kMaxRuntimeMessages = 64;
-inline constexpr std::size_t kProviderStorageBytes = 4096;
+// Includes the provider state and up to 17 fixed two-subscriber Notify channels.
+inline constexpr std::size_t kProviderStorageBytes = 9216;
 
 // Non-owning view over one immutable generated profile. The view and every
 // table it references must outlive the provider.
@@ -23,19 +24,25 @@ struct ProfileTables final {
   std::size_t max_decode_results{0};
 };
 
-// Borrowed synchronization binding for short publication copies and commits.
-// Its context and callbacks must outlive the provider. Both callbacks are
-// required and must use fixed, non-allocating storage safe for the provider's
-// concurrent read context and single processing owner.
+// Borrowed synchronization and lifecycle-owner binding. Its contexts and
+// callbacks must outlive the provider. Publication callbacks use fixed,
+// non-allocating storage safe for concurrent reads and the single processing
+// owner. Notify subscriptions require the lifecycle check; the adapter shares
+// that owner check with start/stop so the first lifecycle mutation claims one
+// stable owner across later stop/start cycles.
 struct PublicationSynchronization final {
   using Operation = void (*)(void *context) noexcept;
+  using LifecycleOwnerCheck = bool (*)(void *context) noexcept;
 
   void *context{nullptr};
   Operation enter{nullptr};
   Operation leave{nullptr};
+  void *lifecycle_owner_context{nullptr};
+  LifecycleOwnerCheck claim_or_validate_lifecycle_owner{nullptr};
 
   [[nodiscard]] constexpr bool well_formed() const noexcept {
-    return enter != nullptr && leave != nullptr;
+    return enter != nullptr && leave != nullptr &&
+           ((lifecycle_owner_context == nullptr) == (claim_or_validate_lifecycle_owner == nullptr));
   }
 };
 

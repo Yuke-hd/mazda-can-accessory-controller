@@ -58,6 +58,15 @@ freshness_for(const ProfileTables &tables, const vehicle_signals::SignalId id) n
     return false;
   }
 
+  std::size_t notify_count = 0;
+  for (std::size_t index = 0; index < tables.catalog.size(); ++index) {
+    const SignalMetadata *const metadata = tables.catalog.at(index);
+    if (metadata->capabilities.has(SignalCapability::Notify) &&
+        ++notify_count > kMaxNotifyBindings) {
+      return false;
+    }
+  }
+
   for (std::size_t index = 0; index < tables.freshness_policy_count; ++index) {
     const SignalFreshnessPolicy &policy = tables.freshness_policies[index];
     if (tables.catalog.find(policy.id) == nullptr ||
@@ -281,6 +290,9 @@ ProfileProvider::ProfileProvider(const ProfileTables tables, vehicle_core::Monot
   (void)new (static_cast<void *>(storage_)) ProfileState{tables, clock, synchronization};
   ProviderAccess::state(*this).valid_tables =
       table_well_formed(tables) && synchronization.well_formed();
+  if (ProviderAccess::state(*this).valid_tables) {
+    initialize_notification_channels(ProviderAccess::state(*this));
+  }
 }
 
 ProfileProvider::~ProfileProvider() noexcept { ProviderAccess::state(*this).~ProfileState(); }
@@ -327,32 +339,6 @@ ProfileProvider::read(const vehicle_signals::SignalId id) const noexcept {
     reading.value = sample.value;
   }
   return Result::success(reading);
-}
-
-vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>
-ProfileProvider::subscribe(const vehicle_signals::SignalId id,
-                           const vehicle_signals::SignalCallback callback,
-                           void *const context) noexcept {
-  (void)callback;
-  (void)context;
-  const ProfileState &provider_state = ProviderAccess::state(*this);
-  const SignalMetadata *const metadata = provider_state.tables.catalog.find(id);
-  if (metadata == nullptr) {
-    return vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>::failure(
-        SignalStatus::InvalidSignal);
-  }
-  if (!metadata->capabilities.has(SignalCapability::Notify)) {
-    return vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>::failure(
-        SignalStatus::UnsupportedCapability);
-  }
-  return vehicle_signals::SignalResult<vehicle_signals::SignalSubscription>::failure(
-      SignalStatus::UnsupportedCapability);
-}
-
-vehicle_signals::SignalStatusResult
-ProfileProvider::unsubscribe(const vehicle_signals::SignalSubscription subscription) noexcept {
-  (void)subscription;
-  return vehicle_signals::SignalStatusResult::failure(SignalStatus::InvalidSubscription);
 }
 
 ProviderProcessResult ProviderAccess::service(ProfileProvider &provider) noexcept {

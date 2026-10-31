@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 
+#include "notifications.hpp"
 #include "vehicle_profile_runtime/provider.hpp"
 
 namespace vehicle_profile_runtime {
@@ -49,6 +50,7 @@ struct ProfileState final {
   vehicle_core::MonotonicTimestamp receive_watermark_us{0};
   bool has_receive_watermark{false};
   std::uint32_t generation{0};
+  NotificationState notifications{};
 };
 
 } // namespace vehicle_profile_runtime
