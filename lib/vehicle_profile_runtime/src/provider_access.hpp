@@ -47,6 +47,11 @@ struct ProviderAccess final {
   // may mark the provider stopped only after worker callbacks are quiescent.
   static void set_running(ProfileProvider &provider, bool running) noexcept;
   [[nodiscard]] static bool callback_active(const ProfileProvider &provider) noexcept;
+  // Publish each processing result immediately on the serialized owner path;
+  // callbacks are detached later by the single dispatcher context.
+  static void publish(ProfileProvider &provider, const ProviderProcessResult &result) noexcept;
+  static void dispatch_pending(ProfileProvider &provider) noexcept;
+  // Convenience operation for single-threaded provider tests and adapters.
   static void deliver(ProfileProvider &provider, const ProviderProcessResult &result) noexcept;
 };
 

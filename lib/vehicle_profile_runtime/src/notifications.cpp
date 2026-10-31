@@ -401,7 +401,7 @@ bool ProviderAccess::callback_active(const ProfileProvider &provider) noexcept {
   return state(provider).notifications.callback_active.load(std::memory_order_acquire);
 }
 
-void ProviderAccess::deliver(ProfileProvider &provider,
+void ProviderAccess::publish(ProfileProvider &provider,
                              const ProviderProcessResult &result) noexcept {
   ProfileState &provider_state = state(provider);
   if (!provider_state.valid_tables ||
@@ -433,13 +433,27 @@ void ProviderAccess::deliver(ProfileProvider &provider,
     }
     (void)binding.channel.publish(to_core_reading(*current.value));
   }
+}
 
-  // The service adapter owns one serialized delivery path across channels.
+void ProviderAccess::dispatch_pending(ProfileProvider &provider) noexcept {
+  ProfileState &provider_state = state(provider);
+  if (!provider_state.valid_tables ||
+      !provider_state.notifications.running.load(std::memory_order_acquire)) {
+    return;
+  }
+
+  NotificationState &notifications = provider_state.notifications;
   // Each core channel detaches a copied notice and releases its lock before
   // invoking this provider's trampoline.
   for (std::size_t index = 0; index < notifications.channel_count; ++index) {
     (void)notifications.channels[index].channel.dispatch_pending(kNotifySubscribersPerBinding);
   }
+}
+
+void ProviderAccess::deliver(ProfileProvider &provider,
+                             const ProviderProcessResult &result) noexcept {
+  publish(provider, result);
+  dispatch_pending(provider);
 }
 
 } // namespace vehicle_profile_runtime
