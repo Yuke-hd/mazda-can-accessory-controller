@@ -173,6 +173,12 @@ maximum profile fits: generation rejects declared limit violations, and
 size/alignment/link failures block the build. Truncation or silent budget
 increases cannot resolve an overflow.
 
+On ESP32, the notification dispatcher uses one shared static 4096-byte task
+stack and a static task control block outside each service's opaque storage.
+The pool supports one active profile service at a time; a second concurrent
+start returns `InvalidState`. The pinned runtime retains its separate receive
+worker resource.
+
 Pass all effective limits to the identity stage's explicit validation_limits
 mapping, so validation-bound changes affect artifact identity. They do not
 change semantic compatibility.
