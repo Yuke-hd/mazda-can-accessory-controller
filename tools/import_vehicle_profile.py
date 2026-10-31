@@ -12,7 +12,8 @@ from vehicle_profiles.canonical import identify_profile
 from vehicle_profiles.dbc_import import LIMITS, import_profile
 from vehicle_profiles.dbc_mapping import MappingError, load_mapping
 from vehicle_profiles.dbc_registry import derive_registry
-from vehicle_profiles.projections import CATALOG_LIMITS, project_profile
+from vehicle_profiles.projections import CATALOG_LIMITS, project_runtime_profile
+from vehicle_profiles.runtime_codegen import RUNTIME_LIMITS
 
 TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent
@@ -75,9 +76,9 @@ def generate(mapping_path):
     field_units = {b["key"]: b["policy"]["conversion"]["source_unit"]
                    for b in result.profile["bindings"]}
     policies = derive_registry(mapping, field_units)
-    limits = {**CATALOG_LIMITS, **LIMITS}  # import limits enter the artifact identity
-    projected = project_profile(result.profile, policies=policies, generator_revision=effective,
-                                validation_limits=limits)
+    limits = {**CATALOG_LIMITS, **LIMITS, **RUNTIME_LIMITS}
+    projected = project_runtime_profile(result.profile, policies=policies, generator_revision=effective,
+                                        validation_limits=limits)
     profile = identify_profile(result.profile, policies=policies, generator_revision=effective,
                                validation_limits=limits).profile
     extras = {"vehicle_profile.json": json_bytes(profile),

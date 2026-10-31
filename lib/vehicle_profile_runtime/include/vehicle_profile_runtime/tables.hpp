@@ -80,6 +80,15 @@ struct DispatchEntry final {
   DecodeFunction decode{nullptr};
 };
 
+// One row per catalog signal. Imported profiles carry only the user's optional
+// timeout claim; an undeclared timeout leaves freshness unverified. This type
+// has no Mazda-specific exception or reviewed-timing implication.
+struct SignalFreshnessPolicy final {
+  vehicle_signals::SignalId id{};
+  bool declared{false};
+  std::uint32_t timeout_ms{0};
+};
+
 // Extracts one field from a standard classic-CAN data frame. On failure,
 // output remains unchanged. Intel start bits identify the LSB; Motorola start
 // bits identify the MSB and follow the DBC sawtooth walk.
