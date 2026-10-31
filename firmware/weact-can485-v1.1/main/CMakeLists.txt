@@ -11,6 +11,11 @@ else()
   endif()
 endif()
 
+if(PROFILE_LINK_PROBE_ENABLED)
+  list(APPEND main_sources
+       "${CMAKE_CURRENT_LIST_DIR}/../../../tests/support/vehicle_profile_link_probe.cpp")
+endif()
+
 if(CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS)
   list(APPEND main_sources "freertos_runtime_stats_logger.cpp")
 endif()
@@ -27,3 +32,7 @@ idf_component_register(
   LDFRAGMENTS "hot_rodata.lf" "hot_code.lf"
 )
 add_dependencies(${COMPONENT_LIB} output_catalog)
+if(PROFILE_LINK_PROBE_ENABLED)
+  target_include_directories(${COMPONENT_LIB} PRIVATE "${PROFILE_LINK_PROBE_GENERATED_DIR}")
+  idf_component_optional_requires(PRIVATE vehicle_profile_runtime)
+endif()

@@ -1351,6 +1351,60 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 check_architecture._check_host_only_tooling(root)
             self.assertIn("OK   firmware, components/ and lib/ builds", output.getvalue())
 
+            probe_cmake = root / "firmware/weact-can485-v1.1/CMakeLists.txt"
+            probe_cmake.parent.mkdir(parents=True, exist_ok=True)
+            allowed_probe = (
+                'set(WEACT_CAN_PROFILE_LINK_PROBE "off" CACHE STRING "test only")\n'
+                "if(PROFILE_LINK_PROBE_ENABLED)\n"
+                '  list(APPEND EXTRA_COMPONENT_DIRS "${ROOT}/components/vehicle_profile_runtime")\n'
+                "endif()\n"
+                "if(PROFILE_LINK_PROBE_ENABLED)\n"
+                "  file(GLOB _profile_runtime_codegen_sources CONFIGURE_DEPENDS\n"
+                '       "${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profiles/*.py")\n'
+                "  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS\n"
+                "       ${_profile_runtime_codegen_sources})\n"
+                "  execute_process(COMMAND python tools/generate_profile_runtime_link_probe.py)\n"
+                "endif()\n"
+            )
+            probe_cmake.write_text(allowed_probe, encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                check_architecture._check_host_only_tooling(root)
+
+            probe_cmake.write_text(
+                allowed_probe.replace(
+                    "if(PROFILE_LINK_PROBE_ENABLED)", "if(OTHER_OPTION)"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure):
+                check_architecture._check_host_only_tooling(root)
+
+            probe_cmake.write_text(
+                allowed_probe
+                + "target_sources(main PRIVATE ${_profile_runtime_codegen_sources})\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_host_only_tooling(root)
+            self.assertIn(
+                "firmware/weact-can485-v1.1/CMakeLists.txt references host-only tool "
+                "vehicle_profiles",
+                str(raised.exception),
+            )
+
+            probe_cmake.write_text(
+                allowed_probe
+                + 'target_sources(main PRIVATE "${ROOT}/tools/vehicle_profiles/link_probe.cpp")\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                check_architecture._check_host_only_tooling(root)
+            self.assertIn(
+                "firmware/weact-can485-v1.1/CMakeLists.txt references host-only tool "
+                "vehicle_profiles",
+                str(raised.exception),
+            )
+
             forbidden = (
                 (root / "firmware/example/main/CMakeLists.txt", "vehicle_profiles"),
                 (root / "components/example/CMakeLists.txt", "export_controller_signal_catalog"),
