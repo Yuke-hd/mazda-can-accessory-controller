@@ -810,6 +810,52 @@ else()
 endif()
 doctest_discover_tests(vehicle_profile_service_tests TEST_PREFIX "profile_runtime_service.")
 
+set(vehicle_profile_consumer_fixture_dir
+    "${CMAKE_CURRENT_BINARY_DIR}/vehicle_profile_consumer_fixtures")
+set(vehicle_profile_consumer_fixture_outputs
+    "${vehicle_profile_consumer_fixture_dir}/profile_a/vehicle_profile_metadata.hpp"
+    "${vehicle_profile_consumer_fixture_dir}/profile_a/vehicle_profile_runtime.hpp"
+    "${vehicle_profile_consumer_fixture_dir}/profile_b/vehicle_profile_metadata.hpp"
+    "${vehicle_profile_consumer_fixture_dir}/profile_b/vehicle_profile_runtime.hpp"
+    "${vehicle_profile_consumer_fixture_dir}/profile_empty/vehicle_profile_metadata.hpp"
+    "${vehicle_profile_consumer_fixture_dir}/profile_empty/vehicle_profile_runtime.hpp")
+file(GLOB vehicle_profile_consumer_generator_inputs CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/tools/vehicle_profiles/*.py")
+add_custom_command(
+  OUTPUT ${vehicle_profile_consumer_fixture_outputs}
+  COMMAND ${Python3_EXECUTABLE} -B
+          ${CMAKE_SOURCE_DIR}/tests/tools/generate_vehicle_profile_consumer_fixtures.py
+          --output-dir ${vehicle_profile_consumer_fixture_dir}
+  DEPENDS
+    ${CMAKE_SOURCE_DIR}/tests/tools/generate_vehicle_profile_consumer_fixtures.py
+    ${CMAKE_SOURCE_DIR}/tests/tools/vehicle_profile_runtime_generation_test.py
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/vehicle-profiles/synthetic-river.json
+    ${CMAKE_SOURCE_DIR}/tests/fixtures/vehicle-profiles/synthetic-empty.json
+    ${vehicle_profile_consumer_generator_inputs}
+  VERBATIM)
+add_custom_target(vehicle_profile_consumer_fixtures
+  DEPENDS ${vehicle_profile_consumer_fixture_outputs})
+
+add_executable(vehicle_profile_consumer_tests vehicle_profile_consumer_test.cpp)
+add_dependencies(vehicle_profile_consumer_tests vehicle_profile_consumer_fixtures)
+target_include_directories(vehicle_profile_consumer_tests PRIVATE
+  ${vehicle_profile_consumer_fixture_dir}
+  ${CMAKE_SOURCE_DIR}/lib/vehicle_profile_runtime/src
+  ${CMAKE_SOURCE_DIR}/lib/replay/src)
+target_link_libraries(vehicle_profile_consumer_tests PRIVATE
+  vehicle_profile_runtime_service
+  action_engine
+  replay_controller
+  companion_protocol
+  doctest::doctest)
+target_compile_features(vehicle_profile_consumer_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_profile_consumer_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_profile_consumer_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(vehicle_profile_consumer_tests TEST_PREFIX "profile_runtime_consumer.")
+
 add_test(
   NAME profile_runtime_generated_decoder_codegen
   COMMAND ${Python3_EXECUTABLE} -m unittest discover
