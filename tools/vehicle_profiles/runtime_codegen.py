@@ -300,15 +300,25 @@ def generate_runtime_header(profile: dict[str, Any]) -> bytes:
     for function_index, message in enumerate(selected_messages):
         bindings = sorted(bindings_by_message[message["id"]], key=lambda entry: entry[1]["runtime_id"])
         function_indices[message["id"]] = function_index
+        lines += [
+            f"inline constexpr std::array<vehicle_signals::SignalId, {len(bindings)}> "
+            f"kMessageOutputs_{function_index}{{{{",
+        ]
+        for _, binding, _ in bindings:
+            lines.append(f"  vehicle_signals::SignalId{{{binding['runtime_id']}U}},")
+        lines += ["}};", ""]
         for index, binding, field in bindings:
             lines += _binding_code(index, binding, field)
         lines += _decoder_code(function_index, message, bindings)
 
     lines += ["} // namespace detail", "", f"inline constexpr std::array<vehicle_profile_runtime::DispatchEntry, {len(selected_messages)}> kDispatchTable{{{{"]
     for message in selected_messages:
+        function_index = function_indices[message["id"]]
         lines.append(
             f"  {{{message['identifier']}U, {message['dlc']}U, "
-            f"&detail::decode_message_{function_indices[message['id']]}}},")
+            f"&detail::decode_message_{function_index}, "
+            f"detail::kMessageOutputs_{function_index}.data(), "
+            f"detail::kMessageOutputs_{function_index}.size()}},")
     lines += [
         "}};",
         "",

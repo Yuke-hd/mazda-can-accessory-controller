@@ -63,10 +63,13 @@ from checked normalized profiles; they may call common extraction, conversion
 and enum helpers. Imported profiles use direct DBC bindings; runtime generation
 rejects native-handler bindings and never omits them silently.
 
-Each dispatch entry records the message identifier, expected payload length and
-decoder function. The runtime checks the frame shape before dispatch and verifies
-that the reported result count stays within capacity before committing results
-through its common publication path.
+Each dispatch entry records the message identifier, expected payload length,
+decoder function and exact output signal ids. Those ids have static lifetime
+and identify the bindings affected by malformed frames or decoder faults. The
+runtime checks the frame shape before dispatch, then requires one unique result
+for each declared output id. Foreign, duplicate, missing or over-capacity
+results invalidate the affected message outputs before the runtime commits
+valid typed values through its common publication path.
 
 The composition root injects one immutable compiled table at construction;
 runtime loading and profile switching are out of scope. A small synthetic
@@ -82,8 +85,10 @@ errors, distinct from successful readings carrying NoData, Stale or Unavailable.
 One processing owner performs extraction, result validation, health updates,
 freshness servicing and publication. It atomically commits one coherent
 generation of signal state, message health, transport health and diagnostics.
-Reads copy one publication under a short private critical section and evaluate
-clock-based availability after unlocking. Callbacks run after locks release.
+Reads copy one signal publication under a short synchronization binding and
+evaluate clock-based availability after leaving it. The composition root
+provides the borrowed binding and fixed, non-allocating context; both outlive
+the provider. Decoders, clocks and callbacks run outside this binding.
 
 Acquisition's local monotonic receive watermark measures transport silence.
 The frame observation timestamp orders decoder observations. These remain

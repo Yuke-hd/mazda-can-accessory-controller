@@ -633,7 +633,10 @@ VEHICLE_PROFILE_RUNTIME_LAYER = PortableLayer(
     headers=("vehicle_profile_runtime/tables.hpp",),
     probe_body=_VEHICLE_PROFILE_RUNTIME_PROBE_BODY,
     target_links=("vehicle_core", "vehicle_signals"),
-    include_roots=("lib/vehicle_profile_runtime/include", "lib/vehicle_signals/include"),
+    # The source root is private to this portable library and contains its
+    # bounded provider-state implementation headers.
+    include_roots=("lib/vehicle_profile_runtime/include", "lib/vehicle_signals/include",
+                   "lib/vehicle_profile_runtime/src"),
     core_headers=("vehicle_core/frame.hpp", "vehicle_core/telemetry_contracts.hpp",
                   "vehicle_core/time.hpp"),
     source_dir="lib/vehicle_profile_runtime/src",

@@ -78,6 +78,11 @@ struct DispatchEntry final {
   std::uint32_t identifier{0};
   std::uint8_t expected_dlc{0};
   DecodeFunction decode{nullptr};
+  // Exact result ownership for this message. Generated tables keep this array
+  // static so the provider can invalidate only the affected bindings when a
+  // frame or decoder result is malformed.
+  const vehicle_signals::SignalId *output_ids{nullptr};
+  std::size_t output_count{0};
 };
 
 // One row per catalog signal. Imported profiles carry only the user's optional
