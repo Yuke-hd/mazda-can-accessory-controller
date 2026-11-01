@@ -47,6 +47,28 @@ class PublicHeaderCheckerTests(unittest.TestCase):
     def copy_fixture(self, temporary: Path) -> Path:
         destination = temporary / "fixture"
         shutil.copytree(FIXTURE, destination)
+        runtime_header = (
+            destination
+            / "components/vehicle_profile_runtime/include/vehicle_profile_runtime/service.hpp"
+        )
+        runtime_header.parent.mkdir(parents=True)
+        shutil.copy2(
+            ROOT / "components/vehicle_profile_runtime/include/vehicle_profile_runtime/service.hpp",
+            runtime_header,
+        )
+        lifecycle_header = (
+            destination / "components/vehicle_telemetry/include/vehicle_telemetry/lifecycle.hpp"
+        )
+        lifecycle_header.parent.mkdir(parents=True)
+        lifecycle_header.write_text(
+            "#pragma once\n"
+            "#include <cstdint>\n"
+            "namespace vehicle_telemetry {\n"
+            "enum class ResultCode : std::uint8_t { Ok };\n"
+            "struct StatusResult final { ResultCode status{ResultCode::Ok}; };\n"
+            "} // namespace vehicle_telemetry\n",
+            encoding="utf-8",
+        )
         (destination / "lib/companion_protocol/include").mkdir(parents=True)
         shutil.copytree(
             ROOT / "lib/companion_protocol/include/companion_protocol",

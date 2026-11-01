@@ -1010,6 +1010,38 @@ def _check_vehicle_profile_runtime_only(
     )
 
 
+def _check_vehicle_profile_runtime_adapter(root: Path) -> None:
+    header = root / "components/vehicle_profile_runtime/include/vehicle_profile_runtime/service.hpp"
+    cmake = root / "components/vehicle_profile_runtime/CMakeLists.txt"
+    if not header.is_file() or not cmake.is_file():
+        raise ArchitectureFailure("generated-profile runtime adapter boundary is missing")
+
+    header_text = header.read_text(encoding="utf-8")
+    forbidden_headers = (
+        "mazda/",
+        "freertos/",
+        "driver/twai.h",
+        "can_bus/can_bus_source.hpp",
+        "vehicle_telemetry/runtime.hpp",
+        "vehicle_telemetry/observer.hpp",
+        "vehicle_telemetry/receive.hpp",
+        "private_include",
+    )
+    for forbidden in forbidden_headers:
+        if forbidden in header_text:
+            raise ArchitectureFailure(
+                f"generated-profile service public header exposes forbidden dependency: {forbidden}"
+            )
+
+    cmake_text = cmake.read_text(encoding="utf-8")
+    for dependency in ("vehicle_core", "vehicle_signals", "vehicle_telemetry"):
+        if dependency not in cmake_text:
+            raise ArchitectureFailure(
+                f"generated-profile adapter does not declare pinned runtime dependency: {dependency}"
+            )
+    print("OK   generated-profile service keeps acquisition and runtime ports private")
+
+
 def _check_action_engine_only(
     root: Path,
     cmake: str,
@@ -1821,6 +1853,7 @@ def check(
             _check_core_only(root, cmake, compiler, work_dir, core_root)
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
             _check_vehicle_profile_runtime_only(root, cmake, compiler, work_dir, core_root)
+            _check_vehicle_profile_runtime_adapter(root)
             _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
             _check_companion_protocol_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)

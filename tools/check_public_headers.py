@@ -141,6 +141,10 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
         "portable signal provider port",
         VEHICLE_SIGNALS_FORBIDDEN_DEPENDENCIES,
     ),
+    PublicHeader(
+        "vehicle_profile_runtime/service.hpp",
+        "portable generated-profile runtime service",
+    ),
     *(
         PublicHeader(
             header, "portable companion protocol", COMPANION_PROTOCOL_FORBIDDEN_DEPENDENCIES
@@ -226,10 +230,12 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
     candidates = (
         root / "components/mazda_telemetry/include",
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
+        root / "components/vehicle_profile_runtime/include",
         root / "lib/mazda/include",
         root / "lib/vehicle_signals/include",
         root / "lib/companion_protocol/include",
         root / "lib/action_engine/include",
+        resolved_core_root / "components/vehicle_telemetry/include",
         resolved_core_root / "components/vehicle_core/include",
         root / "lib/vehicle_core/include",  # legacy isolated fixture
     )
