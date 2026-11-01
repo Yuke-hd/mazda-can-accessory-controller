@@ -9,7 +9,7 @@ import re
 import sys
 
 from vehicle_profiles.artifact_set import check, contents, generation, json_bytes, publish
-from vehicle_profiles.projections import project_profile
+from vehicle_profiles.projections import project_runtime_profile
 from vehicle_profiles.validation import HandlerPolicy, ValidationPolicies, load_profile
 
 
@@ -106,7 +106,8 @@ def generate(manifest, policies, sources, generator_inputs, revision):
         generator_hashes["extra:" + name] = hashlib.sha256(path.read_bytes()).hexdigest()
     inputs.update(generator_hashes)
     effective = "artifact-set-v1:" + hashlib.sha256(json_bytes(generator_hashes)).hexdigest()
-    projected = project_profile(profile, policies=load_policies(policy_data), generator_revision=effective)
+    projected = project_runtime_profile(profile, policies=load_policies(policy_data),
+                                        generator_revision=effective)
     # A5's normalized identity covers both records and the validation registry.
     # Raw JSON spelling/order is not a new artifact-generation domain.
     inputs["normalized-manifest-and-policies"] = json.loads(projected.capability_report)["artifact_identity"]

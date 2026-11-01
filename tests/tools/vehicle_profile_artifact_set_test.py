@@ -19,8 +19,8 @@ class ArtifactPublicationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "output"
-        self.old = contents(ProfileProjections(b"catalog-old", b"header-old", b"report-old"), {"source:a": "1"})
-        self.new = contents(ProfileProjections(b"catalog-new", b"header-new", b"report-new"), {"source:a": "2"})
+        self.old = contents(ProfileProjections(b"catalog-old", b"header-old", b"report-old", b"runtime-old"), {"source:a": "1"})
+        self.new = contents(ProfileProjections(b"catalog-new", b"header-new", b"report-new", b"runtime-new"), {"source:a": "2"})
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -48,7 +48,7 @@ class ArtifactPublicationTests(unittest.TestCase):
             path.write_bytes(data)
         with self.assertRaisesRegex(OSError, "injected"):
             publish(self.root, self.new, write=fail_last)
-        self.assertEqual(len(written), 4)
+        self.assertEqual(len(written), 5)
         self.assertEqual((self.root / "current.json").read_bytes(), index)
         self.assertTrue(check(self.root, self.old))
         for name, data in self.old.items():
@@ -58,6 +58,29 @@ class ArtifactPublicationTests(unittest.TestCase):
         self.assertNotEqual(directory, new_directory)
         self.assertTrue(check(self.root, self.new))
         self.assertTrue(directory.exists())
+
+    def test_late_runtime_header_failure_preserves_previous_generation(self):
+        directory = publish(self.root, self.old)
+        index = (self.root / "current.json").read_bytes()
+        written = []
+
+        def fail_runtime_header(path, data):
+            written.append(path.name)
+            if path.name == "vehicle_profile_runtime.hpp":
+                raise OSError("injected runtime header failure")
+            path.write_bytes(data)
+
+        with self.assertRaisesRegex(OSError, "runtime header"):
+            publish(self.root, self.new, write=fail_runtime_header)
+        self.assertEqual(written, [
+            "controller_signal_catalog.json",
+            "vehicle_profile_metadata.hpp",
+            "vehicle_profile_runtime.hpp",
+        ])
+        self.assertEqual((self.root / "current.json").read_bytes(), index)
+        self.assertTrue(check(self.root, self.old))
+        self.assertEqual(self.old, {p.name: p.read_bytes() for p in directory.iterdir()})
+        self.assertEqual(list((self.root / "sets").glob(".staging-*")), [])
 
     def test_corrupt_existing_generation_is_rejected(self):
         directory = publish(self.root, self.old)
@@ -129,6 +152,7 @@ class ArtifactCommandTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.manifest = self.root / "profile.json"
         profile = json.loads((ROOT / "tests/fixtures/vehicle-profiles/synthetic-river.json").read_text())
+        profile["bindings"] = [binding for binding in profile["bindings"] if binding["kind"] == "dbc"]
         self.source_args = []
         for source in profile["sources"]:
             path = self.root / (source["id"] + ".dbc")
@@ -213,6 +237,7 @@ vehicle_profile_generate(MANIFEST "{self.manifest}" POLICIES "{self.policy}"
 {assignments}
  GENERATOR_INPUTS "data={self.extra}")
 file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR}}")
+file(WRITE "${{CMAKE_BINARY_DIR}}/runtime-header.txt" "${{VEHICLE_PROFILE_RUNTIME_HEADER}}")
 ''')
         build = self.root / "build"
         def run(*args):
@@ -220,6 +245,9 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         run("-S", str(source), "-B", str(build), "-DCMAKE_SYSTEM_NAME=Generic")
         selected = (build / "selected.txt").read_text()
+        runtime_header = Path((build / "runtime-header.txt").read_text())
+        self.assertEqual(runtime_header, Path(selected) / "vehicle_profile_runtime.hpp")
+        self.assertTrue(runtime_header.is_file())
         check_command = self.command.copy()
         check_command[check_command.index("--output-dir") + 1] = str(build / "vehicle-profile")
         checked = subprocess.run(check_command + ["--check"], capture_output=True, text=True)
@@ -234,6 +262,7 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR
         self.assertIn("existing generation is corrupt", failed.stdout + failed.stderr)
         self.assertEqual((build / "vehicle-profile/current.json").read_bytes(), index)
         self.assertFalse((selected_directory / "vehicle_profile_metadata.hpp").exists())
+        self.assertTrue((selected_directory / "vehicle_profile_runtime.hpp").is_file())
         for path in selected_directory.iterdir():
             path.unlink()
         failed = subprocess.run(["cmake", "--build", str(build), "--target", "vehicle_profile_artifacts"],
@@ -246,6 +275,7 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selected.txt" "${{VEHICLE_PROFILE_ARTIFACT_DIR
         recovered = self.run_command("--print-directory")
         self.assertEqual(recovered.returncode, 0, recovered.stderr)
         self.assertTrue((Path(recovered.stdout.strip()) / "vehicle_profile_metadata.hpp").is_file())
+        self.assertTrue((Path(recovered.stdout.strip()) / "vehicle_profile_runtime.hpp").is_file())
         self.extra.write_text("changed declared generator input")
         run("--build", str(build), "--target", "vehicle_profile_artifacts")
         self.assertNotEqual(selected, (build / "selected.txt").read_text())

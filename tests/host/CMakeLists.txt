@@ -771,3 +771,14 @@ else()
   target_compile_options(vehicle_profile_extract_tests PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 doctest_discover_tests(vehicle_profile_extract_tests TEST_PREFIX "profile_runtime_")
+
+add_test(
+  NAME profile_runtime_generated_decoder_codegen
+  COMMAND ${Python3_EXECUTABLE} -m unittest discover
+          -s ${CMAKE_SOURCE_DIR}/tests/tools
+          -p vehicle_profile_runtime_generation_test.py
+)
+set_tests_properties(
+  profile_runtime_generated_decoder_codegen
+  PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
+)
