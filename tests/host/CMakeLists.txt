@@ -757,3 +757,17 @@ target_compile_definitions(companion_ble_catalog_tests PRIVATE
   OUTPUT_CATALOG_SPEC_PATH="${CMAKE_SOURCE_DIR}/docs/specs/companion/output-catalog.md")
 add_dependencies(companion_ble_catalog_tests output_catalog)
 doctest_discover_tests(companion_ble_catalog_tests)
+
+
+# Common frame extraction and generated decoder contracts remain portable and
+# exercise the same function-table seam used by future generated functions.
+add_executable(vehicle_profile_extract_tests vehicle_profile_extract_test.cpp)
+target_link_libraries(vehicle_profile_extract_tests PRIVATE
+  vehicle_profile_runtime doctest::doctest)
+target_compile_features(vehicle_profile_extract_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_profile_extract_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_profile_extract_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(vehicle_profile_extract_tests TEST_PREFIX "profile_runtime_")

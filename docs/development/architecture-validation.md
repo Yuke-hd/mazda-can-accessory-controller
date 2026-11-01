@@ -21,9 +21,9 @@ component inputs. It also builds and runs the project-owned vehicle receive
 adapter tests against a test-only TWAI seam, checking listen-only mode, fixed
 pins, and the disabled data-frame queue.
 
-The portable `vehicle_signals`, `action_engine`, and `companion_protocol`
-layers are each built and run in their own probe project against the core
-alone. `companion_protocol` may link only `vehicle_signals`; its sources must
+The portable `vehicle_signals`, `vehicle_profile_runtime`, `action_engine`, and `companion_protocol` layers are each built and run in their own probe project against the core
+alone. The profile runtime probe allows only the immutable frame and value-only
+telemetry core headers, and it links only `vehicle_core` and `vehicle_signals`. `companion_protocol` may link only `vehicle_signals`; its sources must
 not name Mazda types, the BLE stack, CAN drivers, RTOS, or LED outputs outside
 comments, and vehicle catalog key literals are allowed only in
 `lib/companion_protocol/src/live_signal_layout.cpp`. Its isolated consumer

@@ -4,8 +4,9 @@
 This host-only gate owns repository-wide checks that cannot live in one
 production target: the portable core must build without Mazda or RTOS inputs,
 the portable ``vehicle_signals`` contracts must build against that core alone
-and reach only its value-only telemetry contracts, the generic
-``action_engine`` and ``companion_protocol`` must build on those contracts
+and reach only its value-only telemetry contracts, the generated
+``vehicle_profile_runtime`` must build on the frame and typed signal contracts without vehicle or driver
+dependencies, and the generic ``action_engine`` and ``companion_protocol`` must build on those contracts
 alone, the host generic consumer
 must include only the public provider and ``vehicle_signals`` headers, the
 vehicle binding must compile and exercise its project-owned listen-only
@@ -310,6 +311,9 @@ class PortableLayer:
     target_links: Tuple[str, ...]
     # Repository include roots the target may export (the core root is implied).
     include_roots: Tuple[str, ...]
+    # Core headers the layer may reach. Existing layers default to value-only
+    # telemetry contracts; the decoder layer also needs the immutable frame.
+    core_headers: Tuple[str, ...] = ()
     # Repository directory whose compiled sources are checked, if any.
     source_dir: Optional[str] = None
     # Repository files that may hold vehicle catalog key literals. Every other
@@ -372,6 +376,35 @@ _VEHICLE_SIGNALS_PROBE_BODY = (
     "  const SignalMetadata *by_id = kProbeView.find(SignalId{2});\n"
     "  const vehicle_signals::SignalReading reading{};\n"
     "  return by_key != nullptr && by_key == by_id && !reading.value.has_value() ? 0 : 1;\n"
+    "}\n"
+)
+
+_VEHICLE_PROFILE_RUNTIME_PROBE_BODY = (
+    "namespace {\n"
+    "void decode(const vehicle_core::RawCanFrame &frame, "
+    "vehicle_profile_runtime::DecodeResult *results, std::size_t capacity, "
+    "std::size_t &count) {\n"
+    "  vehicle_profile_runtime::RawValue raw{};\n"
+    "  if (vehicle_profile_runtime::extract_raw_value(\n"
+    "          frame, 0, 8, vehicle_profile_runtime::ByteOrder::Intel, false, raw)) {\n"
+    "    (void)vehicle_profile_runtime::append_result(\n"
+    "        results, capacity, count, vehicle_profile_runtime::DecodeResult::success(\n"
+    "            vehicle_signals::SignalId{1}, vehicle_signals::SignalValue::number(\n"
+    "                static_cast<float>(raw.bits))));\n"
+    "  }\n"
+    "}\n"
+    "} // namespace\n"
+    "int main() {\n"
+    "  vehicle_core::RawCanFrame frame{};\n"
+    "  frame.identifier = 1; frame.dlc = 1; frame.data[0] = 42;\n"
+    "  const vehicle_profile_runtime::DispatchEntry entry{1, 1, decode};\n"
+    "  vehicle_profile_runtime::DecodeResult results[1]{};\n"
+    "  std::size_t count = 0;\n"
+    "  entry.decode(frame, results, 1, count);\n"
+    "  return count == 1 && results[0].valid &&\n"
+    "                 results[0].value.as_number() == 42.0F\n"
+    "             ? 0\n"
+    "             : 1;\n"
     "}\n"
 )
 
@@ -593,6 +626,17 @@ VEHICLE_SIGNALS_LAYER = PortableLayer(
     probe_body=_VEHICLE_SIGNALS_PROBE_BODY,
     target_links=("vehicle_core",),
     include_roots=("lib/vehicle_signals/include",),
+)
+VEHICLE_PROFILE_RUNTIME_LAYER = PortableLayer(
+    name="vehicle_profile_runtime",
+    directories=("lib/vehicle_signals", "lib/vehicle_profile_runtime"),
+    headers=("vehicle_profile_runtime/tables.hpp",),
+    probe_body=_VEHICLE_PROFILE_RUNTIME_PROBE_BODY,
+    target_links=("vehicle_core", "vehicle_signals"),
+    include_roots=("lib/vehicle_profile_runtime/include", "lib/vehicle_signals/include"),
+    core_headers=("vehicle_core/frame.hpp", "vehicle_core/telemetry_contracts.hpp",
+                  "vehicle_core/time.hpp"),
+    source_dir="lib/vehicle_profile_runtime/src",
 )
 ACTION_ENGINE_LAYER = PortableLayer(
     name="action_engine",
@@ -838,7 +882,8 @@ def _layer_dependency_violations(
         return missing
     include_roots = _layer_include_roots(root, core_root, layer)
     core_include = include_roots[-1]
-    allowed_core = {(core_include / name).resolve() for name in VEHICLE_SIGNALS_CORE_ALLOWED}
+    core_headers = layer.core_headers or VEHICLE_SIGNALS_CORE_ALLOWED
+    allowed_core = {(core_include / name).resolve() for name in core_headers}
     violations: List[str] = []
     for index, (label, entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
@@ -933,6 +978,22 @@ def _check_vehicle_signals_only(
     print(
         "OK   vehicle_signals builds without Mazda/RTOS dependencies and reaches only "
         "value-only core contracts"
+    )
+
+
+def _check_vehicle_profile_runtime_only(
+    root: Path,
+    cmake: str,
+    compiler: Sequence[str],
+    work_dir: Path,
+    core_root: Optional[Path] = None,
+) -> None:
+    _check_portable_layer(
+        root, cmake, compiler, work_dir, VEHICLE_PROFILE_RUNTIME_LAYER, core_root
+    )
+    print(
+        "OK   vehicle_profile_runtime builds on the frame and value-only signal contracts "
+        "without Mazda, CAN drivers or RTOS dependencies"
     )
 
 
@@ -1746,6 +1807,7 @@ def check(
             _check_dependency_layout(root)
             _check_core_only(root, cmake, compiler, work_dir, core_root)
             _check_vehicle_signals_only(root, cmake, compiler, work_dir, core_root)
+            _check_vehicle_profile_runtime_only(root, cmake, compiler, work_dir, core_root)
             _check_action_engine_only(root, cmake, compiler, work_dir, core_root)
             _check_companion_protocol_only(root, cmake, compiler, work_dir, core_root)
             _check_generic_consumer(root)
