@@ -129,6 +129,62 @@ Generated C++ and build products stay outside the repository. Evidence is
 software-only: no image was flashed, and no bench or vehicle operation was
 performed. Runtime profile selection and allocation guards remain outside R6.
 
+## R7 runtime consumer acceptance
+
+The R7 host test generates two populated profile tables and one empty table
+from the profile projection code into the build directory. The populated
+fixtures use distinct profile keys, runtime ids, CAN identifiers, numeric
+scales, freshness declarations and enum maps. Tests feed the generated frames
+through the provider and existing ActionEngine, replay observer fan-out,
+catalog export and extensible live-signal sampler. Assertions inspect decoded
+signal values and every live packet record's handle, type, status and value.
+The empty profile emits an empty catalog and the exact header-only live packet;
+it has no Mazda fallback.
+
+The declared 500 ms timeout remains Fresh at its inclusive deadline and becomes
+Stale one microsecond later. The declared number is actionable under Fresh at
+the inclusive deadline and deactivates after expiry. Signals with undeclared
+freshness remain unverified and fail off under Fresh. The generated imported
+profiles use only Fresh action rules; no Mazda freshness exception or decoder
+comparison is used. Future profile application/config selection must preserve
+the import contract and never confer the Mazda brake opt-in on imported signals.
+
+The allocation guard instruments C++ `operator new` and `operator new[]`.
+Against the exact pinned vehicle-core `0.2.1` source at
+`b3d87ac094576f7a787114a1bd24db5cf427a4f7`, the measured AppleClang 17 run
+observed three calls for direct `vehicle_telemetry::Runtime` startup and three
+for populated adapter startup, for a zero-call delta. Provider and service
+construction, subscription changes, frame ingestion and dispatch, reads,
+polling and stop each recorded zero calls. The guard does not intercept
+pthread/libc allocations or establish whole-process heap use. Startup's
+platform worker reservation is the approved exception; no application-level
+storage is added for steady operations.
+
+The fresh integrated host build passed all 854 CTest cases, including the
+existing Mazda suite, architecture and public-header boundary gates, and the
+R7 generated consumer tests. The complete `tests/tools` Python suite ran 591
+tests: 590 passed and one was skipped. Validation commands:
+
+The 854-case full run used integrated head `a72053a`. R6 then made formatting-
+only source changes in `48ab7ad` and documentation-only changes in final head
+`b966841`. The R7 target was rebuilt on `b966841` and passed both focused
+cases; the Python suite also reran after the formatting update with the same
+591-test result. The full CTest suite was not repeated for those formatting and
+documentation-only changes.
+
+```sh
+cmake -S . -B /tmp/mazda-m7-r7-integrated-host \
+  -DVEHICLE_CAN_CORE_SOURCE_DIR=/tmp/mazda-m7-host-gh372/_deps/vehicle_can_core-src
+cmake --build /tmp/mazda-m7-r7-integrated-host -j4
+ctest --test-dir /tmp/mazda-m7-r7-integrated-host --output-on-failure
+MAZDA_VEHICLE_CAN_CORE_ROOT=/tmp/mazda-m7-host-gh372/_deps/vehicle_can_core-src \
+  python3 -B -m unittest discover -s tests/tools -p '*_test.py' -v
+```
+
+This is software evidence only. The R7 work was not flashed, and no bench or
+vehicle operation was performed. The C++ allocation counter does not measure
+pthread/libc allocator activity.
+
 ## Reproduction
 
 The build matrix used fresh build directories and an external `sdkconfig` per

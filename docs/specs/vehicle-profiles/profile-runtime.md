@@ -166,12 +166,19 @@ authorize 64 Notify channels. The provisional 17-channel ceiling keeps callback
 storage at the current production Mazda channel count; accepting a larger
 baseline requires fresh resource evidence and an explicit ceiling revision.
 Derive table sizes, result storage, subscriptions and due-state storage from the
-selected profile. Construction, receive/decode,
-poll, publication, notification and lifecycle operations allocate no heap.
-Task/stack/queue reservations remain private and measured. Do not assume a
-maximum profile fits: generation rejects declared limit violations, and
-size/alignment/link failures block the build. Truncation or silent budget
-increases cannot resolve an overflow.
+selected profile. Provider and adapter construction, subscription changes,
+receive/decode, reads, polling, publication, notification dispatch and stop use
+fixed application storage and make no application-level C++ `operator new`
+allocations. Startup is the only runtime phase allowed to reserve platform
+worker resources required by the pinned runtime. On the measured AppleClang 17
+host build, direct `vehicle_telemetry::Runtime` 0.2.1 startup and adapter
+startup each made three C++ `operator new` calls, with no adapter delta. The
+POSIX dispatcher uses `pthread_create`; pthread/libc allocator calls are outside
+this counter. The reported counts measure only C++ `operator new`; overall
+process heap use remains unmeasured. Task/stack/queue reservations remain
+private and measured. Do not assume a maximum profile fits: generation rejects
+declared limit violations, and size/alignment/link failures block the build.
+Truncation or silent budget increases cannot resolve an overflow.
 
 On ESP32, the notification dispatcher uses one shared static 4096-byte task
 stack and a static task control block outside each service's opaque storage.
