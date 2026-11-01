@@ -16,8 +16,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from vehicle_profiles.canonical import identify_profile
 from vehicle_profiles.projections import CATALOG_LIMITS, project_runtime_profile
-from vehicle_profiles.runtime_codegen import RUNTIME_LIMITS
+from vehicle_profiles.runtime_codegen import RUNTIME_LIMITS, generate_runtime_header
 from vehicle_profiles.validation import HandlerPolicy, ValidationPolicies, ProfileValidationError
+from generate_profile_runtime_link_probe import generate as generate_link_probe
 
 
 def policies():
@@ -25,11 +26,16 @@ def policies():
         {
             "synthetic.river": ("river.v1", "synthetic.v1"),
             "synthetic.desert": ("desert.v3", "desert-recognition.v2"),
+            "synthetic.runtime_limits": (
+                "runtime-limits.v1",
+                "runtime-limits-recognition.v1",
+            ),
         },
         {("synthetic.ready", "v1"): HandlerPolicy(frozenset({"synthetic.river"}), "boolean", "", 0, 0)},
         frozenset({
             ("synthetic/river-review", "Reference", "source_only"),
             ("synthetic/runtime-timing", "Reference", "operational"),
+            ("synthetic/runtime-limits", "Reference", "source_only"),
         }),
         frozenset({"", "km/h"}),
         {("", ""): ("1", "0"), ("km/h", "km/h"): ("1", "0")},
@@ -199,6 +205,65 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
         profile = json.loads((FIXTURES / "synthetic-empty.json").read_text())
         projections = self.project(profile)
         self.compile_and_run(projections, empty=True)
+
+    def test_maximum_runtime_fixture_reaches_each_approved_cap(self):
+        profile = json.loads((FIXTURES / "runtime-limits.json").read_text())
+        projections = self.project(profile)
+        self.assertIn(b"kSelectedMessageCount = 64U", projections.runtime_header)
+        self.assertIn(b"kExtractedFieldCount = 64U", projections.runtime_header)
+        self.assertIn(b"kBindingCount = 64U", projections.runtime_header)
+        self.assertIn(b"kNotifyBindingCount = 17U", projections.runtime_header)
+        report = json.loads(projections.capability_report)
+        self.assertEqual(len(report["signals"]), CATALOG_LIMITS["signals"])
+        self.assertLessEqual(report["catalog_document_bytes"], CATALOG_LIMITS["document_bytes"])
+
+    def test_runtime_link_probe_generates_empty_populated_and_max_sets(self):
+        for selection, expected_signals in (("empty", 0), ("populated", 1), ("max", 64)):
+            with self.subTest(selection=selection):
+                output = self.root / f"link-probe-{selection}"
+                generate_link_probe(selection, output)
+                report = json.loads((output / "capability_report.json").read_text())
+                self.assertEqual(len(report["signals"]), expected_signals)
+                self.assertTrue((output / "vehicle_profile_metadata.hpp").is_file())
+                self.assertTrue((output / "vehicle_profile_runtime.hpp").is_file())
+
+    def test_runtime_message_field_binding_and_notify_caps_reject_overflow(self):
+        maximum = json.loads((FIXTURES / "runtime-limits.json").read_text())
+
+        too_many_messages = copy.deepcopy(maximum)
+        message = copy.deepcopy(too_many_messages["messages"][0])
+        message.update(id="runtime.message_64", identifier=0x140)
+        message["fields"][0]["id"] = "runtime.raw_64"
+        too_many_messages["messages"].append(message)
+        binding = copy.deepcopy(too_many_messages["bindings"][0])
+        binding.update(key="runtime.signal_64", runtime_id=65, inputs=["runtime.raw_64"])
+        too_many_messages["bindings"].append(binding)
+        with self.assertRaisesRegex(ProfileValidationError, "max_selected_messages"):
+            generate_runtime_header(too_many_messages)
+
+        too_many_fields = copy.deepcopy(maximum)
+        message = too_many_fields["messages"][0]
+        message["dlc"] = 2
+        extra_field = copy.deepcopy(message["fields"][0])
+        extra_field.update(id="runtime.raw_64", name="Value64", start=8)
+        message["fields"].append(extra_field)
+        binding = copy.deepcopy(too_many_fields["bindings"][0])
+        binding.update(key="runtime.signal_64", runtime_id=65, inputs=["runtime.raw_64"])
+        too_many_fields["bindings"].append(binding)
+        with self.assertRaisesRegex(ProfileValidationError, "max_extracted_fields"):
+            generate_runtime_header(too_many_fields)
+
+        too_many_bindings = copy.deepcopy(maximum)
+        binding = copy.deepcopy(too_many_bindings["bindings"][0])
+        binding.update(key="runtime.extra_binding", runtime_id=65)
+        too_many_bindings["bindings"].append(binding)
+        with self.assertRaisesRegex(ProfileValidationError, "max_runtime_bindings"):
+            generate_runtime_header(too_many_bindings)
+
+        too_many_notifications = copy.deepcopy(maximum)
+        too_many_notifications["bindings"][17]["capabilities"] = ["read", "notify"]
+        with self.assertRaisesRegex(ProfileValidationError, "max_runtime_notify_bindings"):
+            generate_runtime_header(too_many_notifications)
 
     def test_negative_source_scale_reverses_exact_raw_intervals(self):
         profile = populated_profile()

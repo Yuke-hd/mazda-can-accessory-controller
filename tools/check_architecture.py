@@ -1656,11 +1656,59 @@ def _check_tool_private_includes(root: Path) -> None:
 
 
 # Host-only tooling that firmware, component and portable-library builds must
-# not reference. Profile artifacts reach a build only through the
-# tools/vehicle_profile.cmake helper, never through the Python package itself.
+# not reference. The R6 test-only link probe has one configure-time input
+# dependency on the Python package so generated build-tree headers refresh
+# when the generator changes; that package is never a compile/link dependency.
 _HOST_ONLY_TOOL_MARKERS = ("vehicle_profiles", "export_controller_signal_catalog")
 _PRODUCT_BUILD_ROOTS = ("components", "firmware", "lib")
 _BUILD_FILE_SUFFIXES = frozenset((".cmake", ".yml", ".yaml"))
+
+
+def _is_profile_link_probe_codegen_input(path: Path, code: str) -> bool:
+    """Allow only the R6 WeAct configure-time generator input list."""
+
+    if path.as_posix() != "firmware/weact-can485-v1.1/CMakeLists.txt":
+        return False
+
+    # Pair CMake if/endif commands so the exception is conditional on the
+    # explicitly opted-in test probe, rather than merely co-located with it.
+    stack: List[Tuple[str, int]] = []
+    probe_bodies: List[str] = []
+    for match in re.finditer(r"(?im)^\s*(if|endif)\s*\(([^)]*)\)", code):
+        command = match.group(1).lower()
+        if command == "if":
+            stack.append((match.group(2).strip(), match.end()))
+            continue
+        if not stack:
+            continue
+        condition, body_start = stack.pop()
+        if condition == "PROFILE_LINK_PROBE_ENABLED":
+            probe_bodies.append(code[body_start:match.start()])
+
+    if (
+        not probe_bodies
+        or "WEACT_CAN_PROFILE_LINK_PROBE" not in code
+        or code.count("vehicle_profiles") != 1
+    ):
+        return False
+    if code.count("_profile_runtime_codegen_sources") != 2:
+        return False
+    return any(
+        re.search(
+            r'file\(GLOB\s+_profile_runtime_codegen_sources\s+CONFIGURE_DEPENDS\s+'
+            r'"\$\{CMAKE_CURRENT_LIST_DIR\}/\.\./\.\./tools/vehicle_profiles/\*\.py"\)',
+            probe_body,
+        ) is not None
+        and re.search(
+            r"set_property\(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS"
+            r"(?:(?!\)).)*_profile_runtime_codegen_sources(?:(?!\)).)*\)",
+            probe_body,
+            re.DOTALL,
+        ) is not None
+        and "execute_process(" in probe_body
+        and "generate_profile_runtime_link_probe.py" in probe_body
+        for probe_body in probe_bodies
+    )
 
 
 def _check_host_only_tooling(root: Path) -> None:
@@ -1675,6 +1723,10 @@ def _check_host_only_tooling(root: Path) -> None:
                 continue
             code = re.sub(r"#.*", "", path.read_text(encoding="utf-8"))
             for marker in _HOST_ONLY_TOOL_MARKERS:
+                if marker == "vehicle_profiles" and _is_profile_link_probe_codegen_input(
+                    path.relative_to(root), code
+                ):
+                    continue
                 if marker in code:
                     violations.append(
                         f"{path.relative_to(root).as_posix()} references host-only tool {marker}"

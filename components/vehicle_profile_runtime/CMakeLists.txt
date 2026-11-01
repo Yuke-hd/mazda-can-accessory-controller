@@ -16,6 +16,9 @@ if(COMMAND idf_component_register)
     PRIV_REQUIRES freertos
   )
   target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)
+  if(PROFILE_LINK_PROBE_ENABLED)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WEACT_PROFILE_LINK_PROBE=1)
+  endif()
   return()
 endif()
 

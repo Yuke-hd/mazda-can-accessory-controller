@@ -38,6 +38,7 @@ current requirements unless a task explicitly references them.
 | Telemetry facade size or opaque service storage | [Facade storage budget](development/facade-storage-budget.md). |
 | Firmware telemetry profiling | [Telemetry stage profiling](development/telemetry-stage-profiling.md). |
 | Firmware flash-cache layout, IRAM/DRAM placement or IRAM headroom | [Flash-cache layout](development/flash-cache-layout.md). |
+| ESP32 profile runtime retained resources | [Profile runtime validation](development/profile-runtime-validation.md), [profile runtime](specs/vehicle-profiles/profile-runtime.md), [flash-cache layout](development/flash-cache-layout.md). |
 | FreeRTOS task CPU and scheduler diagnostics | [FreeRTOS task runtime diagnostics](development/freertos-runtime-diagnostics.md). |
 | Fixtures or third-party material | [License and vehicle-data policy](development/license-and-vehicle-data.md), [third-party notices](../THIRD_PARTY_NOTICES.md). |
 
