@@ -170,9 +170,10 @@ selected profile. Provider and adapter construction, subscription changes,
 receive/decode, reads, polling, publication, notification dispatch and stop use
 fixed application storage and make no application-level C++ `operator new`
 allocations. Startup is the only runtime phase allowed to reserve platform
-worker resources required by the pinned runtime. On the measured AppleClang 17
-host build, direct `vehicle_telemetry::Runtime` 0.2.1 startup and adapter
-startup each made three C++ `operator new` calls, with no adapter delta. The
+worker resources required by the pinned runtime. Historical measurement (core
+0.2.1, not re-measured on 0.3.0): on the AppleClang 17 host build, direct
+`vehicle_telemetry::Runtime` startup and adapter startup each made three C++
+`operator new` calls, with no adapter delta. The
 POSIX dispatcher uses `pthread_create`; pthread/libc allocator calls are outside
 this counter. The reported counts measure only C++ `operator new`; overall
 process heap use remains unmeasured. Task/stack/queue reservations remain

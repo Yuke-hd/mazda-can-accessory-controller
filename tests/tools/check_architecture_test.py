@@ -1216,6 +1216,9 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 "components/companion_ble/src/stream.cpp": channel,
                 "tests/host/consumer_test.cpp": '#include "vehicle_core/notification_channel.hpp"\n',
                 "lib/action_engine/src/engine.cpp": '#include "vehicle_core/notification.hpp"\n',
+                # Only anchored generated paths are skipped, not every folder
+                # that shares a generated-folder name.
+                "lib/replay/build/leak.cpp": channel,
             }
             for relative, text in leaks.items():
                 path = root / relative
@@ -1236,6 +1239,7 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             )
             self.assertIn("tests/host/consumer_test.cpp includes retired core notification", detail)
             self.assertIn("lib/action_engine/src/engine.cpp includes retired core notification", detail)
+            self.assertIn("lib/replay/build/leak.cpp includes the private notification channel", detail)
             for relative in allowed + generated:
                 self.assertNotIn(relative, detail)
 

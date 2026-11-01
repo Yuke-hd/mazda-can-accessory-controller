@@ -1762,8 +1762,14 @@ _NOTIFICATION_CHANNEL_INCLUDERS = (
 )
 _NOTIFICATION_SCAN_ROOTS = ("components", "firmware", "lib", "tests", "tools")
 # Generated or local dependency state (for example a stale ESP-IDF
-# managed_components/ copy of an older core release) is not repository source.
-_NOTIFICATION_SKIPPED_PARTS = frozenset(("fixtures", "managed_components", "build"))
+# managed_components/ copy of an older core release) and checker fixtures are
+# not repository source. Prefixes are anchored so a source folder that merely
+# shares a name is still scanned.
+_NOTIFICATION_SKIPPED_PREFIXES = (
+    "firmware/weact-can485-v1.1/managed_components/",
+    "firmware/weact-can485-v1.1/build",
+    "tests/header_boundary/fixtures/",
+)
 
 
 def _check_notification_channel_ownership(root: Path) -> None:
@@ -1775,10 +1781,9 @@ def _check_notification_channel_ownership(root: Path) -> None:
         for path in sorted(base.rglob("*")):
             if path.suffix not in _CPP_SUFFIXES or not path.is_file():
                 continue
-            relative_path = path.relative_to(root)
-            if _NOTIFICATION_SKIPPED_PARTS.intersection(relative_path.parts[:-1]):
+            relative = path.relative_to(root).as_posix()
+            if relative.startswith(_NOTIFICATION_SKIPPED_PREFIXES):
                 continue
-            relative = relative_path.as_posix()
             code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
             for name in re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', code, re.M):
                 if name.startswith("vehicle_core/notification"):
