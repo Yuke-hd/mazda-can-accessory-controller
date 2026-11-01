@@ -785,6 +785,20 @@ else()
 endif()
 doctest_discover_tests(vehicle_profile_provider_tests TEST_PREFIX "profile_runtime_provider.")
 
+add_executable(vehicle_profile_notification_tests vehicle_profile_notification_test.cpp)
+target_include_directories(vehicle_profile_notification_tests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/vehicle_profile_runtime/src)
+target_link_libraries(vehicle_profile_notification_tests PRIVATE
+  vehicle_profile_runtime doctest::doctest)
+target_compile_features(vehicle_profile_notification_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_profile_notification_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_profile_notification_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(vehicle_profile_notification_tests
+  TEST_PREFIX "profile_runtime_notification.")
+
 add_test(
   NAME profile_runtime_generated_decoder_codegen
   COMMAND ${Python3_EXECUTABLE} -m unittest discover
