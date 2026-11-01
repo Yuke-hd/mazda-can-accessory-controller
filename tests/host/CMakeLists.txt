@@ -799,6 +799,17 @@ endif()
 doctest_discover_tests(vehicle_profile_notification_tests
   TEST_PREFIX "profile_runtime_notification.")
 
+add_executable(vehicle_profile_service_tests vehicle_profile_service_test.cpp)
+target_link_libraries(vehicle_profile_service_tests PRIVATE
+  vehicle_profile_runtime_service doctest::doctest)
+target_compile_features(vehicle_profile_service_tests PRIVATE cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_profile_service_tests PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_profile_service_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+doctest_discover_tests(vehicle_profile_service_tests TEST_PREFIX "profile_runtime_service.")
+
 add_test(
   NAME profile_runtime_generated_decoder_codegen
   COMMAND ${Python3_EXECUTABLE} -m unittest discover
