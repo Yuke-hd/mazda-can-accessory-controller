@@ -1767,7 +1767,7 @@ _NOTIFICATION_SCAN_ROOTS = ("components", "firmware", "lib", "tests", "tools")
 # shares a name is still scanned.
 _NOTIFICATION_SKIPPED_PREFIXES = (
     "firmware/weact-can485-v1.1/managed_components/",
-    "firmware/weact-can485-v1.1/build",
+    "firmware/weact-can485-v1.1/build/",
     "tests/header_boundary/fixtures/",
 )
 

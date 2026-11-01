@@ -1219,6 +1219,7 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 # Only anchored generated paths are skipped, not every folder
                 # that shares a generated-folder name.
                 "lib/replay/build/leak.cpp": channel,
+                "firmware/weact-can485-v1.1/build_info.cpp": channel,
             }
             for relative, text in leaks.items():
                 path = root / relative
@@ -1240,6 +1241,10 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
             self.assertIn("tests/host/consumer_test.cpp includes retired core notification", detail)
             self.assertIn("lib/action_engine/src/engine.cpp includes retired core notification", detail)
             self.assertIn("lib/replay/build/leak.cpp includes the private notification channel", detail)
+            self.assertIn(
+                "firmware/weact-can485-v1.1/build_info.cpp includes the private notification channel",
+                detail,
+            )
             for relative in allowed + generated:
                 self.assertNotIn(relative, detail)
 
