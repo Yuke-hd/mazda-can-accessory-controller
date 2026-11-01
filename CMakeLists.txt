@@ -14,7 +14,7 @@ set(VEHICLE_CAN_CORE_REPOSITORY
     "https://github.com/Yuke-hd/esp32-vehicle-can-core.git"
     CACHE STRING "Pinned vehicle CAN core repository")
 set(VEHICLE_CAN_CORE_TAG
-    "0.2.1"
+    "0.3.0"
     CACHE STRING "Vehicle CAN core release tag")
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/esp32-vehicle-can-core"
@@ -64,6 +64,7 @@ output_catalog_generate(
   BOARD_FILE "${CMAKE_CURRENT_SOURCE_DIR}/firmware/weact-can485-v1.1/output_catalog.cmake"
   OUTPUT_DIR "${CMAKE_BINARY_DIR}/output_catalog")
 
+add_subdirectory(lib/signal_notification)
 add_subdirectory(lib/mazda)
 add_subdirectory(lib/gvret)
 add_subdirectory(lib/vehicle_lighting_policy)

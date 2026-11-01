@@ -4,7 +4,7 @@
 #include <type_traits>
 
 #include "mazda/vehicle_telemetry.hpp"
-#include "vehicle_core/notification.hpp"
+#include "signal_notification/notification.hpp"
 #include "vehicle_core/reading.hpp"
 
 namespace {
@@ -18,7 +18,9 @@ using SubscriptionFn = mazda::Result<mazda::Subscription> (mazda::VehicleTelemet
 
 TEST_CASE("telemetry contracts are value-copy and callback ABI seams") {
   static_assert(std::is_trivially_copyable_v<vehicle_core::Reading<float>>);
-  static_assert(std::is_trivially_copyable_v<vehicle_core::Notification<bool>>);
+  static_assert(std::is_trivially_copyable_v<signal_notification::Notification<bool>>);
+  static_assert(std::is_same_v<mazda::Notification<bool>, signal_notification::Notification<bool>>);
+  static_assert(std::is_same_v<mazda::Callback<bool>, signal_notification::Callback<bool>>);
   static_assert(mazda::kNotifySubscribersPerChannel == 2);
 
   mazda::Reading<float> speed{};

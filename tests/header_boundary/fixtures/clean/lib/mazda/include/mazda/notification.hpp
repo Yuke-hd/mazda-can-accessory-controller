@@ -1,9 +1,9 @@
 #pragma once
 
-#include "vehicle_core/telemetry_contracts.hpp"
+#include "signal_notification/notification.hpp"
 
 namespace mazda {
 
-using Notification = vehicle_core::Notification<int>;
+using Notification = signal_notification::Notification<int>;
 
 } // namespace mazda

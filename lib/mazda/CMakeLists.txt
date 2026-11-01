@@ -1,7 +1,7 @@
 if(COMMAND idf_component_register)
   idf_component_register(SRCS "src/state.cpp" "src/mazda_candidate.cpp"
                          INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "internal_include"
-                         REQUIRES vehicle_core)
+                         REQUIRES vehicle_core signal_notification)
   return()
 endif()
 
@@ -16,7 +16,7 @@ target_include_directories(mazda
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/internal_include
 )
-target_link_libraries(mazda PUBLIC vehicle_core)
+target_link_libraries(mazda PUBLIC vehicle_core signal_notification)
 target_compile_features(mazda PUBLIC cxx_std_17)
 if(MAZDA_ENABLE_DECODER_CALL_PROBING)
   # This opt-in hook is compiled out of normal and firmware builds.

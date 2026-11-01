@@ -24,8 +24,13 @@ pins, and the disabled data-frame queue.
 The portable `vehicle_signals`, `vehicle_profile_runtime`, `action_engine`, and `companion_protocol` layers are each built and run in their own probe project against the core
 alone. The profile runtime probe allows immutable frame and value-only telemetry
 contracts in its consumer closure. Its private sources may also use the bounded
-notification channel; it links only `vehicle_core` and `vehicle_signals`. The
-notification channel must not enter public headers. `companion_protocol` may link only `vehicle_signals`; its sources must
+`signal_notification` channel through the explicitly granted
+`lib/signal_notification/private_include` root; it links only `vehicle_core`,
+`signal_notification` and `vehicle_signals`. The channel must not enter public
+headers or the consumer closure. A source scan also requires that only the
+two signal providers and the channel's own tests include
+`signal_notification/notification_channel.hpp`, and that nothing includes the
+retired `vehicle_core/notification*` headers. `companion_protocol` may link only `vehicle_signals`; its sources must
 not name Mazda types, the BLE stack, CAN drivers, RTOS, or LED outputs outside
 comments, and vehicle catalog key literals are allowed only in
 `lib/companion_protocol/src/live_signal_layout.cpp`. Its isolated consumer

@@ -21,7 +21,7 @@
 #include "mazda/signal_catalog.hpp"
 #include "mazda/signal_subscription_record.hpp"
 #include "mazda/telemetry_profiling_internal.hpp"
-#include "vehicle_core/notification_channel.hpp"
+#include "signal_notification/notification_channel.hpp"
 #include "vehicle_telemetry/observer.hpp"
 #include "vehicle_telemetry/runtime.hpp"
 #if defined(ESP_PLATFORM)
@@ -52,7 +52,7 @@ public:
 #define MAZDA_NOTIFICATION_REGISTRATION(alias, type, channel, number, member, id, name, signal,    \
                                         identifier, confidence)                                    \
   inline constexpr std::uint16_t channel = number;                                                 \
-  using alias = vehicle_core::NotificationChannel<type, channel>;
+  using alias = signal_notification::NotificationChannel<type, channel>;
 #include "mazda/notification_registration.def"
 #undef MAZDA_NOTIFICATION_REGISTRATION
 
@@ -125,7 +125,7 @@ inline constexpr PollingDescriptorTuple kPollingDescriptors{
 #endif
 
 template <typename T, std::uint16_t ChannelId> struct NotificationDescriptor final {
-  using Channel = vehicle_core::NotificationChannel<T, ChannelId>;
+  using Channel = signal_notification::NotificationChannel<T, ChannelId>;
   using ChannelMember = Channel VehicleTelemetryService::*;
   using SignalMember = vehicle_core::Signal<T> VehicleState::*;
 
@@ -157,7 +157,7 @@ notification_descriptor(const NotificationDescriptorTuple &descriptors) noexcept
 inline constexpr std::size_t kNotificationChannelCount =
     std::tuple_size_v<NotificationDescriptorTuple>;
 inline constexpr std::size_t kSubscriptionCapacity =
-    kNotificationChannelCount * vehicle_core::kNotificationSubscribersPerChannel;
+    kNotificationChannelCount * signal_notification::kNotificationSubscribersPerChannel;
 
 struct SubscriptionToken final {
   ResultCode status{ResultCode::InvalidState};
@@ -373,7 +373,7 @@ public:
 
 private:
   struct Registration final {
-    vehicle_core::NotificationHandle handle{};
+    signal_notification::NotificationHandle handle{};
     std::uint16_t channel{0xffffU};
     std::uint8_t slot{0xffU};
     std::uint16_t generation{0};
@@ -389,7 +389,7 @@ private:
   [[nodiscard]] const Registration *
   find_registration(const SubscriptionToken &token) const noexcept;
   [[nodiscard]] static ResultCode
-  map_notification_status(vehicle_core::NotificationStatus status) noexcept;
+  map_notification_status(signal_notification::NotificationStatus status) noexcept;
   [[nodiscard]] static ResultCode map_runtime_status(vehicle_telemetry::ResultCode status) noexcept;
 
   // Execution identities are process-lifetime generation tokens. A token is
@@ -407,7 +407,7 @@ private:
 
   template <typename T, std::uint16_t ChannelId>
   [[nodiscard]] SubscriptionToken
-  register_subscription(vehicle_core::NotificationChannel<T, ChannelId> &channel,
+  register_subscription(signal_notification::NotificationChannel<T, ChannelId> &channel,
                         Callback<T> callback, void *context, bool generic = false) noexcept;
   // Must be called while lifecycle_mutex_ is held, after the lifecycle checks.
   [[nodiscard]] StatusResult unsubscribe_registration(Registration &registration) noexcept;
@@ -547,8 +547,8 @@ private:
 
 template <typename T, std::uint16_t ChannelId>
 SubscriptionToken VehicleTelemetryService::register_subscription(
-    vehicle_core::NotificationChannel<T, ChannelId> &channel, Callback<T> callback, void *context,
-    const bool generic) noexcept {
+    signal_notification::NotificationChannel<T, ChannelId> &channel, Callback<T> callback,
+    void *context, const bool generic) noexcept {
   Registration *registration = free_registration(ChannelId);
   if (registration == nullptr)
     return {ResultCode::CapacityExceeded, ChannelId, 0xffU, 0};

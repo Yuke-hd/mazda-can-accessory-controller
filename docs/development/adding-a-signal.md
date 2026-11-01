@@ -158,7 +158,7 @@ touches several files (see `d3b7bba`):
 - `include/mazda/vehicle_telemetry.hpp`: the public `on_..._changed` callback.
 
 Channels are shared by typed and generic subscribers up to
-`vehicle_core::kNotificationSubscribersPerChannel`.
+`signal_notification::kNotificationSubscribersPerChannel`.
 
 The generic API must not expose CAN coordinates, Mazda state, or decoder types.
 Run the [architecture checks](architecture-validation.md) when headers change.

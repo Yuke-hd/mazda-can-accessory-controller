@@ -244,6 +244,7 @@ target_compile_features(generic_signal_consumer PUBLIC cxx_std_17)
 add_executable(signal_consumer_tests signal_consumer_tests.cpp)
 target_include_directories(signal_consumer_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
   ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
 )
 target_link_libraries(signal_consumer_tests PRIVATE generic_signal_consumer mazda_telemetry
@@ -277,6 +278,7 @@ target_compile_features(action_engine_tests PRIVATE cxx_std_17)
 add_executable(action_engine_composition_tests action_engine_composition_tests.cpp)
 target_include_directories(action_engine_composition_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
   ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
 )
 target_link_libraries(action_engine_composition_tests PRIVATE action_engine
@@ -314,6 +316,7 @@ if(MAZDA_ENABLE_TELEMETRY_PROFILING)
   add_executable(telemetry_baseline_tests telemetry_baseline_tests.cpp)
   target_include_directories(telemetry_baseline_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+    ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
     ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
   )
   target_link_libraries(telemetry_baseline_tests PRIVATE
@@ -376,6 +379,7 @@ target_link_libraries(companion_protocol_live_stream_tests PRIVATE companion_pro
 add_executable(companion_protocol_provider_tests companion_protocol_provider_tests.cpp)
 target_include_directories(companion_protocol_provider_tests PRIVATE
   ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+  ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
   ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
 )
 target_link_libraries(companion_protocol_provider_tests PRIVATE companion_protocol mazda_telemetry

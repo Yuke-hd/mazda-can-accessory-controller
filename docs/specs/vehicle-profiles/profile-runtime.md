@@ -16,7 +16,7 @@ They acquire no CAN identifiers, DBC records, model types or private headers.
 
 The composition root injects the compiled table at construction and keeps the
 table and referenced data alive for the runtime's lifetime. ESP-IDF, TWAI, tasks
-and locks stay in private bindings. Keep companion core release 0.2.1; no
+and locks stay in private bindings. Keep companion core release 0.3.0; no
 generic components are copied or modified. Telemetry producers perform no
 lighting policy or LED-driver work. Public includes follow
 [module boundaries](../../architecture/module-boundaries.md).

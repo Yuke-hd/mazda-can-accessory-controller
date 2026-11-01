@@ -13,7 +13,7 @@
 
 namespace mazda {
 
-using vehicle_core::Callback;
+using signal_notification::Callback;
 using vehicle_core::Microseconds;
 using vehicle_core::TransportHealth;
 

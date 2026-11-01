@@ -19,7 +19,7 @@ Mazda facade and service       typed VehicleTelemetry, decoder, publication,
 - `MazdaSignalProvider` exposes the Mazda-owned signal catalog. Reads use the
   same coherent publication as the typed polling API. Subscriptions share the
   typed notification channels and their capacity, defined by
-  `vehicle_core::kNotificationSubscribersPerChannel`. Subscriptions are
+  `signal_notification::kNotificationSubscribersPerChannel`. Subscriptions are
   stopped-only mutations on the facade's lifecycle owner. The facade owns
   every registration, typed or generic, so the provider is a stateless view
   that is safe to destroy at any time, including while the facade runs.
@@ -36,7 +36,7 @@ The Mazda generic catalog exposes `vehicle.brake_pressed` as a Boolean signal wi
 interpretation evidence. Reads and notifications use the same coherent brake
 publication; generic subscribers share the public
 `on_brake_pressed_changed` notification channel. Its capacity is
-`vehicle_core::kNotificationSubscribersPerChannel`, shared across typed and
+`signal_notification::kNotificationSubscribersPerChannel`, shared across typed and
 generic registrations. Typed subscribers can exhaust the capacity needed by
 generic `subscribe()` calls, and generic subscribers can exhaust the capacity
 needed by typed subscriptions.

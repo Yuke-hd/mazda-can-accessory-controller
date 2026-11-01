@@ -10,9 +10,9 @@
 namespace vehicle_profile_runtime {
 namespace {
 
+using signal_notification::Notification;
+using signal_notification::NotificationStatus;
 using vehicle_core::Availability;
-using vehicle_core::Notification;
-using vehicle_core::NotificationStatus;
 using vehicle_core::Reading;
 using vehicle_signals::SignalCallback;
 using vehicle_signals::SignalCapability;

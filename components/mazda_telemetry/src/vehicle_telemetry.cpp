@@ -391,11 +391,11 @@ void VehicleTelemetryService::initialize_registration_slots() noexcept {
   std::apply(
       [this, &descriptor_index](const auto &...descriptor) {
         (([&] {
-           for (std::size_t slot = 0; slot < vehicle_core::kNotificationSubscribersPerChannel;
-                ++slot) {
+           for (std::size_t slot = 0;
+                slot < signal_notification::kNotificationSubscribersPerChannel; ++slot) {
              auto &registration =
                  registrations_[descriptor_index *
-                                    vehicle_core::kNotificationSubscribersPerChannel +
+                                    signal_notification::kNotificationSubscribersPerChannel +
                                 slot];
              registration.channel = std::decay_t<decltype(descriptor)>::Channel::channel_id();
              registration.slot = static_cast<std::uint8_t>(slot);
@@ -441,19 +441,19 @@ VehicleTelemetryService::find_registration(const SubscriptionToken &token) const
 }
 
 ResultCode VehicleTelemetryService::map_notification_status(
-    const vehicle_core::NotificationStatus status) noexcept {
+    const signal_notification::NotificationStatus status) noexcept {
   switch (status) {
-  case vehicle_core::NotificationStatus::Ok:
+  case signal_notification::NotificationStatus::Ok:
     return ResultCode::Ok;
-  case vehicle_core::NotificationStatus::CapacityExceeded:
+  case signal_notification::NotificationStatus::CapacityExceeded:
     return ResultCode::CapacityExceeded;
-  case vehicle_core::NotificationStatus::InvalidSubscription:
+  case signal_notification::NotificationStatus::InvalidSubscription:
     return ResultCode::InvalidSubscription;
-  case vehicle_core::NotificationStatus::AlreadyRunning:
-  case vehicle_core::NotificationStatus::NotRunning:
-  case vehicle_core::NotificationStatus::InvalidState:
-  case vehicle_core::NotificationStatus::InvalidCallback:
-  case vehicle_core::NotificationStatus::NoPending:
+  case signal_notification::NotificationStatus::AlreadyRunning:
+  case signal_notification::NotificationStatus::NotRunning:
+  case signal_notification::NotificationStatus::InvalidState:
+  case signal_notification::NotificationStatus::InvalidCallback:
+  case signal_notification::NotificationStatus::NoPending:
     return ResultCode::InvalidState;
   }
   return ResultCode::InvalidState;
@@ -525,8 +525,8 @@ bool VehicleTelemetryService::start_channels() noexcept {
   bool result = true;
   std::apply(
       [this, &result](const auto &...descriptor) {
-        ((result = result &&
-                   ((this->*descriptor.channel).start() == vehicle_core::NotificationStatus::Ok)),
+        ((result = result && ((this->*descriptor.channel).start() ==
+                              signal_notification::NotificationStatus::Ok)),
          ...);
       },
       notification_descriptors());
@@ -538,7 +538,7 @@ bool VehicleTelemetryService::stop_channels() noexcept {
   std::apply(
       [this, &result](const auto &...descriptor) {
         ((result = ((this->*descriptor.channel).stop() !=
-                    vehicle_core::NotificationStatus::InvalidState) &&
+                    signal_notification::NotificationStatus::InvalidState) &&
                    result),
          ...);
       },
@@ -1530,7 +1530,8 @@ StatusResult VehicleTelemetryService::unsubscribe_generic(const SubscriptionToke
 
 StatusResult
 VehicleTelemetryService::unsubscribe_registration(Registration &registration) noexcept {
-  vehicle_core::NotificationStatus status = vehicle_core::NotificationStatus::InvalidSubscription;
+  signal_notification::NotificationStatus status =
+      signal_notification::NotificationStatus::InvalidSubscription;
   std::apply(
       [this, &status, &registration](const auto &...descriptor) {
         (((registration.channel == std::decay_t<decltype(descriptor)>::Channel::channel_id())
@@ -1539,9 +1540,9 @@ VehicleTelemetryService::unsubscribe_registration(Registration &registration) no
          ...);
       },
       notification_descriptors());
-  if (status == vehicle_core::NotificationStatus::InvalidSubscription)
+  if (status == signal_notification::NotificationStatus::InvalidSubscription)
     return {ResultCode::InvalidSubscription};
-  if (status != vehicle_core::NotificationStatus::Ok)
+  if (status != signal_notification::NotificationStatus::Ok)
     return {map_notification_status(status)};
   registration.active = false;
   registration.generic = false;

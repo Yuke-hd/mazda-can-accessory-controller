@@ -6,7 +6,7 @@
 #include "mazda/notification.hpp"
 #include "mazda/signal_catalog.hpp"
 #include "mazda/signal_value_conversion.hpp"
-#include "vehicle_core/notification_channel.hpp"
+#include "signal_notification/notification_channel.hpp"
 #include "vehicle_signals/signal_contracts.hpp"
 
 namespace mazda::internal {
@@ -43,7 +43,7 @@ struct SignalSubscriptionRecord final {
 // and generic subscribers share those slots, so this bound is never the
 // limiting capacity.
 inline constexpr std::size_t kGenericSubscriptionCapacity =
-    notify_signal_count() * vehicle_core::kNotificationSubscribersPerChannel;
+    notify_signal_count() * signal_notification::kNotificationSubscribersPerChannel;
 
 // Typed channel callback registered for a generic subscription. It converts
 // `current` and exactly the four flags and forwards them with the user

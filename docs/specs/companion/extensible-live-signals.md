@@ -368,7 +368,8 @@ clients.
 ## Tech stack and project structure
 
 C++17, ESP-IDF 5.5.4 (`esp32`), the existing NimBLE binding, and the pinned
-`esp32-vehicle-can-core` 0.2.1 provider contracts. No new runtime dependency.
+`esp32-vehicle-can-core` 0.3.0 value contracts and the repository-owned
+`signal_notification` contract. No new runtime dependency.
 
 | Location | Responsibility |
 | --- | --- |

@@ -85,7 +85,7 @@ C++ with host tests, and only the thin ESP-IDF layer touches hardware. Details:
 
 Generic CAN and telemetry code lives in the companion project
 [`esp32-vehicle-can-core`](https://github.com/Yuke-hd/esp32-vehicle-can-core)
-(pinned at `0.2.1`) and is fetched automatically at build time.
+(pinned at `0.3.0`) and is fetched automatically at build time.
 
 ## Hardware
 
