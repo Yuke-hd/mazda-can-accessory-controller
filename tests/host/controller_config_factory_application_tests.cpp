@@ -38,8 +38,8 @@ constexpr SignalMetadata kCatalog[] = {
      ValidationStatus::Reference, vehicle_signals::SignalCapability::Read, nullptr, 0},
     {kBrakePressed, "vehicle.brake_pressed", SignalType::Boolean, SignalUnit::None,
      ValidationStatus::Confirmed,
-     vehicle_signals::SignalCapability::Read | vehicle_signals::SignalCapability::Notify,
-     nullptr, 0},
+     vehicle_signals::SignalCapability::Read | vehicle_signals::SignalCapability::Notify, nullptr,
+     0},
 };
 constexpr SignalCatalogView kView{kCatalog};
 static_assert(kView.well_formed());
@@ -80,8 +80,8 @@ TEST_CASE("selected-profile factory JSON parses and applies through the host pat
   const auto config = selected_factory_config();
   Controller controller{};
 
-  const auto applied = persisted::apply_controller_config(config, controller.leds,
-                                                          controller.engine);
+  const auto applied =
+      persisted::apply_controller_config(config, controller.leds, controller.engine);
 
   CHECK(applied.ok());
   CHECK(applied.sink_registered);
@@ -89,9 +89,11 @@ TEST_CASE("selected-profile factory JSON parses and applies through the host pat
   CHECK(applied.rules_applied == config.rules.size());
 #if !CONTROLLER_CONFIG_FACTORY_IS_NATIVE
   for (const auto &rule : config.rules) {
-    std::visit([](const auto &entry) {
-      CHECK(entry.freshness == action_engine::FreshnessRequirement::Fresh);
-    }, rule);
+    std::visit(
+        [](const auto &entry) {
+          CHECK(entry.freshness == action_engine::FreshnessRequirement::Fresh);
+        },
+        rule);
   }
 #endif
 }
