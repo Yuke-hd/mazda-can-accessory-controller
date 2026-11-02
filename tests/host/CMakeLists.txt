@@ -108,22 +108,13 @@ else()
     ${VEHICLE_PROFILE_INCLUDE_DIR})
   target_link_libraries(replay_selected_profile_controller_tests PRIVATE
     replay_controller replay_local_argb_stage local_argb vehicle_profile_runtime doctest::doctest)
-  if(REPLAY_SELECTED_PROFILE_EXPECT_EMPTY)
+  if(REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID)
     target_compile_definitions(replay_selected_profile_controller_tests PRIVATE
-      REPLAY_SELECTED_PROFILE_EXPECT_EMPTY=1)
-  else()
-    target_compile_definitions(replay_selected_profile_controller_tests PRIVATE
-      REPLAY_SELECTED_PROFILE_EXPECT_EMPTY=0)
+      REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID=${REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID})
   endif()
-  if(NOT REPLAY_SELECTED_PROFILE_EXPECT_EMPTY)
-    if(DEFINED REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID)
-      target_compile_definitions(replay_selected_profile_controller_tests PRIVATE
-        REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID=${REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID})
-    endif()
-    if(DEFINED REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID)
-      target_compile_definitions(replay_selected_profile_controller_tests PRIVATE
-        REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID=${REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID})
-    endif()
+  if(REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID)
+    target_compile_definitions(replay_selected_profile_controller_tests PRIVATE
+      REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID=${REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID})
   endif()
   target_compile_features(replay_selected_profile_controller_tests PRIVATE cxx_std_17)
   if(MSVC)

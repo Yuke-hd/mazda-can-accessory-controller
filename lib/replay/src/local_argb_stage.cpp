@@ -1,9 +1,7 @@
 #include "replay/local_argb_stage.hpp"
 
-#include <fstream>
-#include <iterator>
 #include <optional>
-#include <string>
+#include <utility>
 
 #include "controller_config/lighting_profile.hpp"
 #include "controller_config/lighting_profile_application.hpp"
@@ -14,6 +12,10 @@
 #include "local_argb/renderer.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
+
+#if defined(CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED)
+#include "factory_config.hpp"
+#endif
 
 namespace replay {
 namespace {
@@ -42,12 +44,9 @@ public:
         renderer_(pixels, local_argb::internal::kCenterOutFillAnimation) {}
 
   [[nodiscard]] bool configure(action_engine::ActionEngine &engine) noexcept {
-#if defined(CONTROLLER_CONFIG_FACTORY_JSON_PATH)
-    std::ifstream input{CONTROLLER_CONFIG_FACTORY_JSON_PATH, std::ios::binary};
-    if (!input)
-      return false;
-    const std::string json{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
-    auto parsed = controller_config::persisted::parse_controller_config(json);
+#if defined(CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED)
+    auto parsed =
+        controller_config::persisted::parse_controller_config(generated::kFactoryConfigJson);
     if (!parsed.ok())
       return false;
     factory_config_.emplace(std::move(*parsed.configuration));
@@ -55,7 +54,7 @@ public:
                                                                  engine)
         .ok();
 #else
-#if !defined(VEHICLE_PROFILE_IS_NATIVE) || VEHICLE_PROFILE_IS_NATIVE
+#if defined(REPLAY_SELECTED_PROFILE_NATIVE) && REPLAY_SELECTED_PROFILE_NATIVE
     return controller_config::apply_lighting_profile(controller_config::kDefaultLightingProfile,
                                                      led_actions_, engine)
         .ok();
