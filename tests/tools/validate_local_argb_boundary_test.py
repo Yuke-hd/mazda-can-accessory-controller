@@ -30,7 +30,7 @@ ATTACH_FAILURE = (
     '    ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");\n'
 )
 POLL_DELAY = "    vTaskDelay(pdMS_TO_TICKS(controller_config::kPolledRuleSamplePeriodUs / 1'000));\n"
-APP_MAIN_STARTUP = "  if (!start_vehicle_io_on_core1()) {"
+APP_MAIN_STARTUP = "  const bool vehicle_io_started = start_vehicle_io_on_core1();"
 TELEMETRY_START = "  if (!telemetry.start().ok()) {"
 TELEMETRY_MARK = "  companion_ble::mark_telemetry_started();\n"
 BEFORE_CAN_START = '  ESP_LOGI(kTag,\n           "WeAct CAN485 DevBoard V1.1'
@@ -147,7 +147,11 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         )
 
     def test_startup_sequence_called_directly_from_app_main_is_rejected(self) -> None:
-        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {", "  if (!start_vehicle_io()) {")
+        self.edit(
+            MAIN,
+            "  const bool vehicle_io_started = start_vehicle_io_on_core1();",
+            "  const bool vehicle_io_started = start_vehicle_io();",
+        )
         self.assert_rejected(
             "app_main calls start_vehicle_io() directly instead of on the driver core",
             "start_vehicle_io_on_core1() is not called in app_main",
@@ -197,31 +201,49 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
         self.edit(
             MAIN,
             "  if (!board::initialize_safe_defaults()) {",
-            "  if (!start_vehicle_io_on_core1()) {\n    return;\n  }\n"
+            "  const bool vehicle_io_started = start_vehicle_io_on_core1();\n"
             "  if (!board::initialize_safe_defaults()) {",
         )
-        self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {\n    ESP_LOGE", "  if (false) {\n    ESP_LOGE")
+        self.edit(
+            MAIN,
+            "  const bool vehicle_io_started = start_vehicle_io_on_core1();\n"
+            "  if (!vehicle_io_started) {",
+            "  const bool vehicle_io_started = true;\n"
+            "  if (!vehicle_io_started) {",
+        )
         self.assert_rejected("board safe defaults do not precede the vehicle I/O startup")
 
     def test_ignored_vehicle_io_startup_result_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            "  if (!start_vehicle_io_on_core1()) {\n"
-            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
-            "    return;\n"
-            "  }\n",
-            "  (void)start_vehicle_io_on_core1();\n",
+            "  const bool vehicle_io_started = start_vehicle_io_on_core1();",
+            "  (void)start_vehicle_io_on_core1();",
         )
-        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+        self.assert_rejected("app_main must capture one start_vehicle_io_on_core1() result")
 
     def test_vehicle_io_startup_failure_without_return_is_rejected(self) -> None:
         self.edit(
             MAIN,
-            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n'
-            "    return;\n",
-            '    ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");\n',
+            "  if (!vehicle_io_started)\n    return;",
+            "  if (vehicle_io_started)\n    return;",
         )
-        self.assert_rejected("app_main does not return when start_vehicle_io_on_core1() fails")
+        self.assert_rejected("app_main does not return after BLE repair on refused startup")
+
+    def test_refused_startup_still_starts_companion_for_config_repair(self) -> None:
+        self.edit(MAIN, "  start_companion_link();\n", "")
+        self.assert_rejected("app_main does not start companion BLE after the vehicle-I/O result")
+
+    def test_refused_startup_is_recorded_before_companion_repair_link(self) -> None:
+        self.edit(MAIN, "    config_service.mark_lighting_setup_failed();\n", "")
+        self.assert_rejected("app_main does not record refused vehicle startup before BLE repair")
+
+    def test_refused_startup_cannot_return_before_companion_repair_link(self) -> None:
+        self.edit(
+            MAIN,
+            "    config_service.mark_lighting_setup_failed();\n",
+            "    config_service.mark_lighting_setup_failed();\n    return;\n",
+        )
+        self.assert_rejected("app_main returns before starting companion BLE on refused vehicle startup")
 
     def test_startup_sequence_called_from_a_core_0_helper_is_rejected(self) -> None:
         self.edit(

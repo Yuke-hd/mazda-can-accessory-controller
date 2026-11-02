@@ -24,9 +24,11 @@ std::string_view text_of(const wire::ByteView bytes) noexcept {
 } // namespace
 
 void ConfigService::record_boot(const persisted::BootConfigurationResult &selection,
-                                persisted::ConfigStoreBackend *const store) noexcept {
+                                persisted::ConfigStoreBackend *const store,
+                                const bool configuration_applied,
+                                const bool override_apply_rejected) noexcept {
   store_ = store;
-  if (!selection.ok())
+  if (!selection.ok() || !configuration_applied)
     source_ = wire::ConfigSource::None;
   else if (selection.source == persisted::ConfigurationSource::PersistedOverride)
     source_ = wire::ConfigSource::Override;
@@ -34,19 +36,23 @@ void ConfigService::record_boot(const persisted::BootConfigurationResult &select
     source_ = wire::ConfigSource::Factory;
 
   boot_ = wire::BootStatus{};
-  boot_.flags.invalid_override = selection.override_diagnostic.has_value();
+  boot_.flags.invalid_override =
+      selection.override_diagnostic.has_value() || override_apply_rejected;
   boot_.flags.override_read_failed = !selection.override_storage_message.empty();
   boot_.flags.no_config_store = store == nullptr;
-  // Only the selection failure is known here. TODO(GH-165 follow-up): bit 3
-  // also covers apply, engine attach, progress watch and telemetry start
-  // failures, but app_main fails off and returns on each of them before the
-  // companion link starts, so no Config status is ever served for such a
-  // boot. Record them here once a failed boot keeps the companion link.
-  boot_.flags.lighting_setup_failed = !selection.ok();
+  boot_.flags.lighting_setup_failed = !selection.ok() || !configuration_applied;
   if (selection.override_diagnostic.has_value()) {
     boot_.override_code = to_wire(selection.override_diagnostic->code);
     boot_.override_validation = to_wire(selection.override_diagnostic->schema_error);
   }
+  prepared_ = false;
+  canonical_.clear();
+}
+
+void ConfigService::mark_lighting_setup_failed() noexcept {
+  source_ = wire::ConfigSource::None;
+  boot_.flags.lighting_setup_failed = true;
+  boot_.flags.no_config_store = store_ == nullptr;
   prepared_ = false;
   canonical_.clear();
 }

@@ -42,6 +42,20 @@ constexpr std::string_view kUnverifiedBrakeConfig =
     R"({"version":1,"actions":[{"name":"brake"}],"rules":[{"type":"state",)"
     R"("action":"brake","signal_key":"vehicle.brake_pressed","comparison":"equal",)"
     R"("operand":{"boolean":true},"freshness":"fresh_or_unverified"}]})";
+constexpr std::string_view kPartialUnverifiedBrakeConfig =
+    R"({"version":1,"actions":[{"name":"rpm"},{"name":"brake"}],"rules":[)"
+    R"({"type":"range","action":"rpm","signal_key":"vehicle.engine_rpm",)"
+    R"("input":{"from":0,"to":6500},"output":{"from":0,"to":1},"freshness":"fresh"},)"
+    R"({"type":"state","action":"brake","signal_key":"vehicle.brake_pressed",)"
+    R"("comparison":"equal","operand":{"boolean":true},)"
+    R"("freshness":"fresh_or_unverified"}]})";
+constexpr std::string_view kPartialMissingSignalConfig =
+    R"({"version":1,"actions":[{"name":"rpm"},{"name":"missing"}],"rules":[)"
+    R"({"type":"range","action":"rpm","signal_key":"vehicle.engine_rpm",)"
+    R"("input":{"from":0,"to":6500},"output":{"from":0,"to":1},"freshness":"fresh"},)"
+    R"({"type":"state","action":"missing","signal_key":"vehicle.not_in_selected_profile",)"
+    R"("comparison":"equal","operand":{"boolean":true},"freshness":"fresh"}]})";
+constexpr std::string_view kMinimalConfig = R"({"version":1})";
 constexpr std::uint16_t kAttMtu = 247U;
 
 class FakeBackend final : public persisted::ConfigStoreBackend {
@@ -98,6 +112,18 @@ std::string factory_json() {
   std::ifstream file{CONTROLLER_CONFIG_FACTORY_JSON_PATH, std::ios::binary};
   REQUIRE(file.is_open());
   return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
+std::string over_capacity_factory_json() {
+  persisted::ControllerConfig config{};
+  for (std::size_t index = 0; index < local_argb_actions::LedActionSink::kMaxFillBindings + 1;
+       ++index) {
+    const std::string action = "factory_" + std::to_string(index);
+    config.actions.push_back(persisted::Action{action});
+    config.outputs.push_back(persisted::LedSolidBinding{
+        action, {static_cast<persisted::Integer>(index), 1}, {16, 0, 0}, 100});
+  }
+  return persisted::serialize_controller_config(config);
 }
 
 wire::ByteView view(const std::vector<std::uint8_t> &bytes) {
@@ -194,6 +220,179 @@ TEST_CASE("selected generated provider reuses a bare v1 config and rejects unver
   const auto active_after = composition.config.prepare_boot().status.active;
   CHECK(active_after.crc32() == active_before.crc32());
   CHECK(active_text(active_after) == active_before_text);
+}
+
+TEST_CASE("imported boot policy rejection clears partial rules before factory fallback") {
+  SelectedComposition composition{};
+  const auto catalog = composition.runtime.provider().catalog();
+  if (catalog.find("vehicle.engine_rpm") == nullptr ||
+      catalog.find("vehicle.brake_pressed") == nullptr)
+    return;
+
+  FakeBackend backend{};
+  backend.stored = kPartialUnverifiedBrakeConfig;
+  const std::string stored_before = backend.stored;
+  persisted::ConfigStore store{backend};
+  auto selected = persisted::load_boot_configuration(&store, factory_json());
+  REQUIRE(selected.ok());
+  REQUIRE(selected.source == persisted::ConfigurationSource::PersistedOverride);
+  REQUIRE(selected.configuration.has_value());
+  REQUIRE(selected.configuration->rules.size() == 2U);
+  composition.active = std::move(*selected.configuration);
+
+  DiscardingLightingSink lighting{};
+  local_argb_actions::LedActionSink leds{lighting, composition.clock};
+  action_engine::ActionEngine engine{composition.runtime.provider(),
+                                     UnverifiedFreshnessPolicy::Reject};
+  const auto result = persisted::apply_persisted_override_with_factory_fallback(
+      composition.active, factory_json(), leds, engine);
+
+  REQUIRE_FALSE(result.override_status.ok());
+  CHECK(result.override_status.stage == persisted::ApplyStage::Rule);
+  CHECK(result.override_status.index == 1U);
+  CHECK(result.override_status.rules_applied == 1U);
+  CHECK(result.override_status.engine == action_engine::ConfigStatus::UnsupportedCapability);
+  REQUIRE(result.factory_status.ok());
+  CHECK(result.ok());
+  CHECK(backend.writes == 0U);
+  CHECK(backend.stored == stored_before);
+
+  selected.source = persisted::ConfigurationSource::FactoryDefault;
+  composition.config.record_boot(selected, &backend, result.ok(), true);
+  const auto boot = composition.config.prepare_boot();
+  CHECK(boot.status.active.source() == wire::ConfigSource::Factory);
+  CHECK(boot.status.flags.invalid_override);
+  CHECK_FALSE(boot.status.flags.lighting_setup_failed);
+  CHECK(boot.status.override_code == wire::DiagnosticCode::None);
+  CHECK(boot.status.override_validation == wire::ValidationCode::None);
+  const auto factory = persisted::parse_controller_config(factory_json());
+  REQUIRE(factory.ok());
+  CHECK(active_text(boot.status.active) ==
+        persisted::serialize_controller_config(*factory.configuration));
+}
+
+TEST_CASE("a saved rule missing from the selected provider uses factory without pruning") {
+  SelectedComposition composition{};
+  FakeBackend backend{};
+  backend.stored = kPartialMissingSignalConfig;
+  const std::string stored_before = backend.stored;
+  persisted::ConfigStore store{backend};
+  auto selected = persisted::load_boot_configuration(&store, factory_json());
+  REQUIRE(selected.ok());
+  REQUIRE(selected.source == persisted::ConfigurationSource::PersistedOverride);
+  REQUIRE(selected.configuration.has_value());
+  REQUIRE(selected.configuration->rules.size() == 2U);
+  composition.active = std::move(*selected.configuration);
+
+  const auto catalog = composition.runtime.provider().catalog();
+  const bool has_first_rule_signal = catalog.find("vehicle.engine_rpm") != nullptr;
+  DiscardingLightingSink lighting{};
+  local_argb_actions::LedActionSink leds{lighting, composition.clock};
+  action_engine::ActionEngine engine{composition.runtime.provider(),
+                                     UnverifiedFreshnessPolicy::Reject};
+  const auto result = persisted::apply_persisted_override_with_factory_fallback(
+      composition.active, factory_json(), leds, engine);
+
+  REQUIRE_FALSE(result.override_status.ok());
+  CHECK(result.override_status.stage == persisted::ApplyStage::Rule);
+  CHECK(result.override_status.index == (has_first_rule_signal ? 1U : 0U));
+  CHECK(result.override_status.rules_applied == (has_first_rule_signal ? 1U : 0U));
+  CHECK(result.override_status.engine == action_engine::ConfigStatus::UnknownSignal);
+  REQUIRE(result.factory_status.ok());
+  CHECK(result.ok());
+  CHECK(backend.writes == 0U);
+  CHECK(backend.stored == stored_before);
+
+  selected.source = persisted::ConfigurationSource::FactoryDefault;
+  composition.config.record_boot(selected, &backend, result.ok(), true);
+  const auto boot = composition.config.prepare_boot();
+  CHECK(boot.status.active.source() == wire::ConfigSource::Factory);
+  CHECK(boot.status.flags.invalid_override);
+  CHECK_FALSE(boot.status.flags.lighting_setup_failed);
+  CHECK(boot.status.override_code == wire::DiagnosticCode::None);
+  CHECK(boot.status.override_validation == wire::ValidationCode::None);
+}
+
+TEST_CASE("failed selected factory apply reports no active config and permits repair upload") {
+  SelectedComposition composition{};
+  FakeBackend backend{};
+  backend.stored = kPartialMissingSignalConfig;
+  const std::string stored_before = backend.stored;
+  persisted::ConfigStore store{backend};
+  auto selected = persisted::load_boot_configuration(&store, factory_json());
+  REQUIRE(selected.ok());
+  REQUIRE(selected.source == persisted::ConfigurationSource::PersistedOverride);
+  REQUIRE(selected.configuration.has_value());
+  composition.active = std::move(*selected.configuration);
+
+  DiscardingLightingSink lighting{};
+  local_argb_actions::LedActionSink leds{lighting, composition.clock};
+  action_engine::ActionEngine engine{composition.runtime.provider(),
+                                     UnverifiedFreshnessPolicy::Reject};
+  const std::string failing_factory = over_capacity_factory_json();
+  const auto result = persisted::apply_persisted_override_with_factory_fallback(
+      composition.active, failing_factory, leds, engine);
+
+  CHECK_FALSE(result.ok());
+  CHECK_FALSE(result.override_status.ok());
+  CHECK_FALSE(result.factory_status.ok());
+  CHECK(result.factory_status.stage == persisted::ApplyStage::OutputBinding);
+  CHECK(result.factory_status.binding == local_argb_actions::BindingStatus::CapacityExceeded);
+  CHECK(backend.writes == 0U);
+  CHECK(backend.stored == stored_before);
+
+  selected.source = persisted::ConfigurationSource::FactoryDefault;
+  composition.config.record_boot(selected, &backend, result.ok(), true);
+  const auto boot = composition.config.prepare_boot();
+  CHECK(boot.status.active.source() == wire::ConfigSource::None);
+  CHECK(boot.status.active.length() == 0U);
+  CHECK(boot.status.active.crc32() == 0U);
+  CHECK(boot.status.flags.invalid_override);
+  CHECK(boot.status.flags.lighting_setup_failed);
+  CHECK_FALSE(boot.status.flags.no_config_store);
+  CHECK(boot.status.override_code == wire::DiagnosticCode::None);
+  CHECK(boot.status.override_validation == wire::ValidationCode::None);
+
+  wire::ConfigTransfer transfer{composition.config, boot.environment()};
+  const auto response = upload(transfer, kMinimalConfig);
+  CHECK(response.error == wire::AttError::None);
+  CHECK(transfer.status().result == wire::TransferResult::Saved);
+  CHECK(transfer.status().state == wire::TransferState::RestartPending);
+  CHECK(backend.writes == 1U);
+  const auto repaired = persisted::parse_controller_config(kMinimalConfig);
+  REQUIRE(repaired.ok());
+  CHECK(backend.stored == persisted::serialize_controller_config(*repaired.configuration));
+  CHECK(composition.config.prepare_boot().status.active.source() == wire::ConfigSource::None);
+}
+
+TEST_CASE("a refused startup with no store reports no active configuration") {
+  SelectedComposition composition{};
+
+  composition.config.mark_lighting_setup_failed();
+
+  const auto boot = composition.config.prepare_boot();
+  CHECK(boot.status.active.source() == wire::ConfigSource::None);
+  CHECK(boot.status.flags.lighting_setup_failed);
+  CHECK(boot.status.flags.no_config_store);
+  CHECK_FALSE(boot.config_store_available);
+}
+
+TEST_CASE("a later startup refusal hides active config but keeps the repair store") {
+  SelectedComposition composition{};
+  FakeBackend backend{};
+  persisted::ConfigStore store{backend};
+  auto selected = persisted::load_boot_configuration(&store, factory_json());
+  REQUIRE(selected.ok());
+  composition.active = std::move(*selected.configuration);
+  composition.config.record_boot(selected, &backend);
+
+  composition.config.mark_lighting_setup_failed();
+
+  const auto boot = composition.config.prepare_boot();
+  CHECK(boot.status.active.source() == wire::ConfigSource::None);
+  CHECK(boot.status.flags.lighting_setup_failed);
+  CHECK_FALSE(boot.status.flags.no_config_store);
+  CHECK(boot.config_store_available);
 }
 
 TEST_CASE("empty selected provider rejects the whole saved v1 document without rewriting it") {

@@ -20,9 +20,9 @@ namespace companion_config {
 //   persistence path (config-transfer.md, "Commit");
 // - FactoryReverter: clear_override() for Revert to factory.
 //
-// record_boot() runs once on the boot task, before the BLE startup task is
-// created; every other call runs on the BLE tasks afterwards. A commit only
-// persists: the running configuration changes at the next boot.
+// record_boot() and mark_lighting_setup_failed() run before the BLE startup
+// task is created. Every other call runs on the BLE tasks afterwards. A commit
+// only persists: the running configuration changes at the next boot.
 class ConfigService final : public companion_protocol::ConfigBootSource,
                             public companion_protocol::ConfigCommitter,
                             public companion_protocol::FactoryReverter {
@@ -36,7 +36,14 @@ public:
   // Records the boot selection and the config store, which must outlive the
   // service. A null store disables commits and Revert to factory.
   void record_boot(const controller_config::persisted::BootConfigurationResult &selection,
-                   controller_config::persisted::ConfigStoreBackend *store) noexcept;
+                   controller_config::persisted::ConfigStoreBackend *store,
+                   bool configuration_applied = true,
+                   bool override_apply_rejected = false) noexcept;
+
+  // Reports a later startup refusal before BLE serves Config status. The
+  // stopped vehicle service has no active document, but its config store may
+  // still accept a repair upload.
+  void mark_lighting_setup_failed() noexcept;
 
   // Serializes the active configuration once into storage owned by this
   // service; later calls return the same document.

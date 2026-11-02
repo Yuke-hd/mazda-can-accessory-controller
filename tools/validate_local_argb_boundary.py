@@ -311,7 +311,8 @@ def _driver_core_failures(structure: str) -> List[str]:
     failures: List[str] = []
     app_main = _app_main_body(structure) or ""
     board = app_main.find("board::initialize_safe_defaults()")
-    runner = app_main.find(f"{STARTUP_RUNNER}()")
+    runner_call = re.search(rf"\b{STARTUP_RUNNER}\s*\(\s*\)", app_main)
+    runner = runner_call.start() if runner_call is not None else -1
     if board < 0:
         failures.append("board::initialize_safe_defaults() is not called in app_main")
     if runner < 0:
@@ -363,18 +364,37 @@ def _driver_core_failures(structure: str) -> List[str]:
             f"{STARTUP_SEQUENCE}() must have exactly one call site, in {STARTUP_TASK}; "
             f"found {len(call_sites)}"
         )
-    # A refused or failed startup must stop app_main before the companion link
-    # and the polling loop.
-    gated = re.search(
-        rf"\bif\s*\(\s*!\s*{STARTUP_RUNNER}\s*\(\s*\)\s*\)\s*\{{[^{{}}]*\breturn\s*;[^{{}}]*\}}",
+    # A refused startup still serves Config over BLE after its task has stopped
+    # touching the provider, then returns before any telemetry polling.
+    captured = re.search(
+        rf"\bconst\s+bool\s+vehicle_io_started\s*=\s*{STARTUP_RUNNER}\s*\(\s*\)",
         app_main,
     )
     runner_calls = len(re.findall(rf"\b{STARTUP_RUNNER}\s*\(", app_main))
-    if gated is None or runner_calls != 1:
+    if captured is None or runner_calls != 1:
         failures.append(
-            f"app_main does not return when {STARTUP_RUNNER}() fails: "
-            f"use a single `if (!{STARTUP_RUNNER}()) {{ ... return; }}` guard"
+            f"app_main must capture one {STARTUP_RUNNER}() result for BLE repair gating"
         )
+    refused = re.search(
+        r"\bif\s*\(\s*!\s*vehicle_io_started\s*\)\s*\{(?P<body>[^{}]*)\}", app_main
+    )
+    if refused is None or "config_service.mark_lighting_setup_failed()" not in refused.group("body"):
+        failures.append("app_main does not record refused vehicle startup before BLE repair")
+    companion = app_main.find("start_companion_link()")
+    refused_return = re.search(
+        r"\bif\s*\(\s*!\s*vehicle_io_started\s*\)\s*return\s*;", app_main
+    )
+    poll = app_main.find("engine.sample_polled_rules()")
+    if companion < 0 or runner < 0 or companion < runner:
+        failures.append("app_main does not start companion BLE after the vehicle-I/O result")
+    elif refused is not None and refused.end() > companion:
+        failures.append("app_main starts companion BLE before recording refused vehicle startup")
+    elif captured is not None and re.search(r"\breturn\s*;", app_main[captured.end() : companion]):
+        failures.append("app_main returns before starting companion BLE on refused vehicle startup")
+    if refused_return is None or companion < 0 or refused_return.start() < companion:
+        failures.append("app_main does not return after BLE repair on refused startup")
+    elif poll >= 0 and refused_return.start() > poll:
+        failures.append("app_main reaches telemetry polling after refused vehicle startup")
     return failures
 
 
