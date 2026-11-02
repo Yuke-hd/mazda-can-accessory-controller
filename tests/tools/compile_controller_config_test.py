@@ -44,7 +44,14 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         cls.output_catalog = generate_catalog(Path(cls.catalog_directory.name))
 
     def run_compiler(
-        self, source: str, output_name: str = "output.json",
+        self, source: str, output_name: str = "output.json"
+    ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
+        return self.run_compiler_with_signal_catalog(source, output_name)
+
+    def run_compiler_with_signal_catalog(
+        self,
+        source: str,
+        output_name: str = "output.json",
         signal_catalog: dict[str, object] | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
         with tempfile.TemporaryDirectory() as directory:
@@ -621,11 +628,11 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         )
         for catalog, source, expected_key in cases:
             with self.subTest(expected_key=expected_key):
-                result, payload = self.run_compiler(source, signal_catalog=catalog)
+                result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=catalog)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(payload)["rules"][0]["signal_key"], expected_key)
 
-        result, payload = self.run_compiler(
+        result, payload = self.run_compiler_with_signal_catalog(
             "version: 1\n", signal_catalog={"version": 1, "signals": {}}
         )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -643,7 +650,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             operand: {choice: left}
         outputs: []
         """
-        result, payload = self.run_compiler(
+        result, payload = self.run_compiler_with_signal_catalog(
             source, signal_catalog={"version": 1, "signals": {}}
         )
 
@@ -670,7 +677,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
             ("{choice: unknown}", "unknown choice"),
         ):
             with self.subTest(operand=operand):
-                result, payload = self.run_compiler(
+                result, payload = self.run_compiler_with_signal_catalog(
                     source.replace("{choice: enabled}", operand), signal_catalog=catalog
                 )
                 self.assertEqual(result.returncode, 2)
@@ -679,14 +686,14 @@ class ControllerConfigCompilerTests(unittest.TestCase):
 
         without_notify = {"version": 1, "signals": {"fixture.mode": {
             "type": "enum", "capabilities": ["read"], "choices": ["enabled"]}}}
-        result, payload = self.run_compiler(source, signal_catalog=without_notify)
+        result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=without_notify)
         self.assertEqual(result.returncode, 2)
         self.assertIn("does not support notify delivery", result.stderr)
         self.assertIsNone(payload)
 
         missing_choices = {"version": 1, "signals": {"fixture.mode": {
             "type": "enum", "capabilities": ["notify"]}}}
-        result, payload = self.run_compiler(source, signal_catalog=missing_choices)
+        result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=missing_choices)
         self.assertEqual(result.returncode, 2)
         self.assertIn("enum signal choices are required", result.stderr)
         self.assertIsNone(payload)
@@ -1442,6 +1449,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
 
 class OutputCatalogCompilerTests(unittest.TestCase):
     run_compiler = ControllerConfigCompilerTests.run_compiler
+    run_compiler_with_signal_catalog = ControllerConfigCompilerTests.run_compiler_with_signal_catalog
 
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()

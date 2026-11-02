@@ -38,9 +38,14 @@ def main() -> int:
                 self.assertEqual(result.returncode, 0, result.stderr)
 
         def run_compiler(
-            self, source: str, output_name: str = "output.json"
+            self,
+            source: str,
+            output_name: str = "output.json",
+            signal_catalog: dict[str, object] | None = None,
         ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
-            result, payload = super().run_compiler(source, output_name)
+            result, payload = super().run_compiler_with_signal_catalog(
+                source, output_name, signal_catalog
+            )
             if result.returncode == 0:
                 self.assertIsNotNone(payload)
                 self.assert_loads(payload)
