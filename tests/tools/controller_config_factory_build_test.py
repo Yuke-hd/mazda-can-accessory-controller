@@ -7,14 +7,35 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
-
-from tests.tools.compile_controller_config_test import generate_catalog
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 COMPONENT = REPOSITORY / "components" / "controller_config"
+
+
+def generate_catalog(directory: Path) -> Path:
+    catalog = directory / "output_catalog.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPOSITORY / "tools" / "generate_output_catalog.py"),
+            "--descriptor",
+            str(REPOSITORY / "components/local_argb_actions/output_catalog.yaml"),
+            "--board",
+            "strip_max_pixels=300",
+            "--catalog",
+            str(catalog),
+            "--limits-header",
+            str(directory / "output_limits.hpp"),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return catalog
 
 
 class FactoryBuildTests(unittest.TestCase):
