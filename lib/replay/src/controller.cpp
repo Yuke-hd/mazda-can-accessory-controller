@@ -10,17 +10,25 @@
 #include <utility>
 
 #include "action_engine/engine.hpp"
+#include "replay/acquisition_source.hpp"
+#include "signal_observer_fan_out.hpp"
+
+#if REPLAY_SELECTED_PROFILE_NATIVE
 #include "mazda/signal_provider.hpp"
 #include "mazda/vehicle_telemetry.hpp"
 #include "mazda/vehicle_telemetry_internal.hpp"
 #include "mazda/vehicle_telemetry_service.hpp"
-#include "replay/acquisition_source.hpp"
-#include "signal_observer_fan_out.hpp"
 #include "vehicle_telemetry/receive.hpp"
+#else
+#include "vehicle_profile_metadata.hpp"
+#include "vehicle_profile_runtime.hpp"
+#include "vehicle_profile_runtime/replay_adapter.hpp"
+#endif
 
 namespace replay {
 namespace {
 
+#if REPLAY_SELECTED_PROFILE_NATIVE
 class GatedReplaySource final : public vehicle_telemetry::AcquisitionSource {
 public:
   enum class Grant : std::uint8_t { Receive, Timeout, Fault };
@@ -191,6 +199,7 @@ private:
   }
   return ReplayControllerStatus::TelemetryFault;
 }
+#endif
 
 [[nodiscard]] bool
 valid_synchronization_timeout(const vehicle_core::Microseconds timeout_us) noexcept {
@@ -205,6 +214,7 @@ valid_synchronization_timeout(const vehicle_core::Microseconds timeout_us) noexc
 
 } // namespace
 
+#if REPLAY_SELECTED_PROFILE_NATIVE
 class ReplayController::Implementation final {
 public:
   Implementation(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock, OutputStage &output,
@@ -464,6 +474,225 @@ private:
   State state_{State::Ready};
   bool configured_{false};
 };
+#else
+class ReplayController::Implementation final {
+public:
+  Implementation(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock, OutputStage &output,
+                 SignalObservers observers,
+                 const vehicle_core::Microseconds synchronization_timeout_us)
+      : clock_(&clock), source_(std::move(frames), clock),
+        profile_adapter_(profile_tables(), clock),
+        engine_(profile_adapter_.provider(), action_engine::UnverifiedFreshnessPolicy::Reject),
+        observers_(profile_adapter_.provider(), clock, std::move(observers)), output_(&output),
+        synchronization_timeout_us_(synchronization_timeout_us) {
+    configured_ = output_->configure(engine_);
+  }
+
+  ~Implementation() noexcept {
+    if (state_ == State::Running || state_ == State::Failed)
+      (void)stop();
+  }
+
+  [[nodiscard]] ReplayControllerStatus start() noexcept {
+    if (state_ != State::Ready)
+      return ReplayControllerStatus::InvalidState;
+    if (!valid_synchronization_timeout(synchronization_timeout_us_))
+      return ReplayControllerStatus::ConfigurationFailed;
+    state_ = State::Starting;
+    if (!output_->start(clock_->now())) {
+      (void)release_output();
+      state_ = State::Stopped;
+      return ReplayControllerStatus::OutputFault;
+    }
+    if (!configured_ || !observers_.configured()) {
+      (void)release_output();
+      state_ = State::Stopped;
+      return ReplayControllerStatus::ConfigurationFailed;
+    }
+    if (engine_.attach() != vehicle_signals::SignalStatus::Ok) {
+      if (engine_.attached())
+        (void)engine_.detach();
+      (void)release_output();
+      state_ = State::Stopped;
+      return ReplayControllerStatus::TelemetryFault;
+    }
+    if (!observers_.attach()) {
+      cleanup_failed_start();
+      return ReplayControllerStatus::TelemetryFault;
+    }
+    if (!source_.start().ok()) {
+      cleanup_failed_start();
+      return ReplayControllerStatus::TelemetryFault;
+    }
+    const auto adapter_status = profile_adapter_.start();
+    if (adapter_status != vehicle_profile_runtime::ReplayAdapterStatus::Ok) {
+      cleanup_failed_start();
+      return ReplayControllerStatus::TelemetryFault;
+    }
+    adapter_started_ = true;
+    if (tick_current() != ReplayControllerStatus::Ok) {
+      cleanup_failed_start();
+      return ReplayControllerStatus::OutputFault;
+    }
+    observers_.open();
+    state_ = State::Running;
+    return ReplayControllerStatus::Ok;
+  }
+
+  [[nodiscard]] ReplayStepResult process_next_frame() noexcept {
+    if (state_ != State::Running)
+      return {};
+    const auto next_time = source_.next_frame_time();
+    if (next_time.has_value() && *next_time > clock_->now())
+      return {ReplayControllerStatus::InvalidState, ReplayInputResult::Timeout};
+
+    vehicle_core::RawCanFrame frame{};
+    const auto receive = source_.receive(frame, 0);
+    if (receive == vehicle_telemetry::ReceiveStatus::Frame) {
+      const auto status = profile_adapter_.process(frame);
+      if (status != vehicle_profile_runtime::ReplayAdapterStatus::Ok)
+        return fail_step(ReplayControllerStatus::TelemetryFault);
+      return {ReplayControllerStatus::Ok, ReplayInputResult::Frame};
+    }
+    if (receive == vehicle_telemetry::ReceiveStatus::Timeout) {
+      const auto status = profile_adapter_.service();
+      if (status != vehicle_profile_runtime::ReplayAdapterStatus::Ok)
+        return fail_step(ReplayControllerStatus::TelemetryFault);
+      return {ReplayControllerStatus::Ok, source_.end_of_stream() ? ReplayInputResult::EndOfStream
+                                                                  : ReplayInputResult::Timeout};
+    }
+    return fail_step(ReplayControllerStatus::TelemetryFault);
+  }
+
+  [[nodiscard]] ReplayStepResult process_timeout() noexcept {
+    if (state_ != State::Running)
+      return {};
+    if (profile_adapter_.service() != vehicle_profile_runtime::ReplayAdapterStatus::Ok)
+      return fail_step(ReplayControllerStatus::TelemetryFault);
+    return {ReplayControllerStatus::Ok, ReplayInputResult::Timeout};
+  }
+
+  [[nodiscard]] ReplayStepResult process_source_fault() noexcept {
+    if (state_ != State::Running)
+      return {};
+    (void)profile_adapter_.source_fault();
+    return fail_step(ReplayControllerStatus::TelemetryFault);
+  }
+
+  [[nodiscard]] ReplayControllerStatus sample_polled_rules() noexcept {
+    if (state_ != State::Running)
+      return ReplayControllerStatus::InvalidState;
+    if (engine_.sample_polled_rules() == vehicle_signals::SignalStatus::Ok)
+      return ReplayControllerStatus::Ok;
+    return fail(ReplayControllerStatus::TelemetryFault);
+  }
+
+  [[nodiscard]] ReplayControllerStatus sample_signals() noexcept {
+    if (state_ != State::Running)
+      return ReplayControllerStatus::InvalidState;
+    if (observers_.sample())
+      return ReplayControllerStatus::Ok;
+    return fail(ReplayControllerStatus::TelemetryFault);
+  }
+
+  [[nodiscard]] ReplayControllerStatus tick_output() noexcept {
+    if (state_ != State::Running)
+      return ReplayControllerStatus::InvalidState;
+    const auto status = tick_current();
+    return status == ReplayControllerStatus::Ok ? status : fail(status);
+  }
+
+  [[nodiscard]] ReplayControllerStatus stop() noexcept {
+    if (state_ != State::Running && state_ != State::Failed)
+      return ReplayControllerStatus::InvalidState;
+
+    const auto adapter_status = adapter_started_ ? profile_adapter_.stop()
+                                                 : vehicle_profile_runtime::ReplayAdapterStatus::Ok;
+    const auto source_status = source_.stop();
+    adapter_started_ = false;
+    const auto output_status = release_output();
+    state_ = State::Stopped;
+    if (adapter_status != vehicle_profile_runtime::ReplayAdapterStatus::Ok || !source_status.ok())
+      return ReplayControllerStatus::TelemetryFault;
+    return output_status;
+  }
+
+  [[nodiscard]] std::optional<vehicle_core::MonotonicTimestamp> next_frame_time() const noexcept {
+    return source_.next_frame_time();
+  }
+
+  [[nodiscard]] bool running() const noexcept { return state_ == State::Running; }
+
+private:
+  enum class State : std::uint8_t { Ready, Starting, Running, Failed, Stopped };
+
+  [[nodiscard]] static vehicle_profile_runtime::ProfileTables profile_tables() noexcept {
+    return {vehicle_profile::kCatalog,
+            vehicle_profile::kFreshnessPolicies.data(),
+            vehicle_profile::kFreshnessPolicies.size(),
+            vehicle_profile::kDispatchTable.data(),
+            vehicle_profile::kDispatchTable.size(),
+            vehicle_profile::kMaxDecodeResults};
+  }
+
+  [[nodiscard]] ReplayControllerStatus fail(const ReplayControllerStatus status) noexcept {
+    state_ = State::Failed;
+    (void)fail_off_output();
+    return status;
+  }
+
+  [[nodiscard]] ReplayStepResult fail_step(const ReplayControllerStatus status) noexcept {
+    return {fail(status), ReplayInputResult::Fault};
+  }
+
+  [[nodiscard]] ReplayControllerStatus tick_current() noexcept {
+    return output_->tick(clock_->now()) ? ReplayControllerStatus::Ok
+                                        : ReplayControllerStatus::OutputFault;
+  }
+
+  [[nodiscard]] ReplayControllerStatus fail_off_output() noexcept {
+    return output_->fail_off(clock_->now()) ? ReplayControllerStatus::Ok
+                                            : ReplayControllerStatus::OutputFault;
+  }
+
+  [[nodiscard]] ReplayControllerStatus release_output() noexcept {
+    const bool output_off = fail_off_output() == ReplayControllerStatus::Ok;
+    const bool output_stopped = output_->stop(clock_->now());
+    return output_off && output_stopped ? ReplayControllerStatus::Ok
+                                        : ReplayControllerStatus::OutputFault;
+  }
+
+  void detach_signal_consumers() noexcept {
+    if (engine_.attached())
+      (void)engine_.detach();
+    if (observers_.attached())
+      (void)observers_.detach();
+  }
+
+  void cleanup_failed_start() noexcept {
+    if (adapter_started_) {
+      (void)profile_adapter_.stop();
+      adapter_started_ = false;
+    } else {
+      detach_signal_consumers();
+    }
+    (void)source_.stop();
+    state_ = State::Stopped;
+    (void)release_output();
+  }
+
+  ReplayClock *clock_;
+  ReplayAcquisitionSource source_;
+  vehicle_profile_runtime::ReplayAdapter profile_adapter_;
+  action_engine::ActionEngine engine_;
+  SignalObserverFanOut observers_;
+  OutputStage *output_;
+  vehicle_core::Microseconds synchronization_timeout_us_;
+  State state_{State::Ready};
+  bool configured_{false};
+  bool adapter_started_{false};
+};
+#endif
 
 ReplayController::ReplayController(std::vector<gvret::TimedCanFrame> frames, ReplayClock &clock,
                                    OutputStage &output,

@@ -61,11 +61,18 @@ links no replay, controller, action, or renderer target.
 The host replay scheduler advances a caller-owned monotonic clock directly;
 it does not pace events against wall time. This makes event ordering and
 rendered timestamps repeatable for the same normalized input and schedule.
-The scheduler still drives the production `ReplayController`, whose
-cross-thread publication barrier has a bounded 500 ms wall-clock
-synchronization timeout. A loaded host can therefore return
-`SynchronizationTimeout` even when replay time and input are unchanged; that
-result is host scheduling failure, not a different vehicle observation.
+The production `ReplayController` keeps the native Mazda service's bounded
+500 ms publication barrier. For a generated profile selection, replay calls
+the portable provider synchronously at each receive, timeout, and fault
+boundary, then drains notifications before returning. That path does not wait
+on wall time and uses the selected profile's generated catalog, decoder table,
+freshness policy, and factory configuration.
+
+`tests/tools/run_selected_profile_replay_matrix.py` reconfigures one host build
+from a populated two-source synthetic profile to an alternate CAN layout and
+then to the empty profile. Each selection runs the same real-controller replay
+checks; the native controller suite runs with the default `native:mazda`
+selection.
 
 The parser accepts synthetic CSV in host tests only. Private vehicle captures
 may be supplied at runtime but must not be committed, attached to Issues or

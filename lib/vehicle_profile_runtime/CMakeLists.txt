@@ -22,3 +22,17 @@ if(MSVC)
 else()
   target_compile_options(vehicle_profile_runtime PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+# Deterministic host replay drives the same provider processing and delivery
+# path without importing the threaded receive service or Mazda internals.
+add_library(vehicle_profile_replay_adapter STATIC src/replay_adapter.cpp)
+target_include_directories(vehicle_profile_replay_adapter PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/../signal_notification/private_include)
+target_link_libraries(vehicle_profile_replay_adapter PUBLIC vehicle_profile_runtime)
+target_compile_features(vehicle_profile_replay_adapter PUBLIC cxx_std_17)
+if(MSVC)
+  target_compile_options(vehicle_profile_replay_adapter PRIVATE /W4 /permissive-)
+else()
+  target_compile_options(vehicle_profile_replay_adapter PRIVATE -Wall -Wextra -Wpedantic)
+endif()
