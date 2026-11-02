@@ -1,259 +1,132 @@
 # Build selection and configuration compatibility
 
-Status: proposed module contract for owner review. This specifies future
-`profile-integration` against [DBC import](dbc-import.md), the
-[runtime](profile-runtime.md) and the existing
-[artifact transaction](../../development/supported-build.md#offline-vehicle-profile-artifact-sets).
-It adds no selection option, importer, runtime, storage format or firmware
-composition today. Implementation starts only after the owner accepts the
-interfaces, migration policy and acceptance examples below.
+Status: owner-approved Milestone 8 scope (2026-11-02), tracked by #310 and
+implemented through issues #394–#401. This connects the explicit-mapping
+[DBC importer](dbc-import.md) and the generated [runtime](profile-runtime.md)
+to host and firmware builds, factory configuration and saved rules. Until those
+issues merge, the current tree still builds native Mazda only.
 
-**Milestone 6 supersession:** this draft predates the accepted explicit-mapping
-importer. Its build-request JSON and per-profile `context`, `policy_pack`,
-recognition-pack and automatic-recognition concepts are obsolete and must not
-be implemented as current importer inputs. The current importer takes DBC
-sources plus one user-authored `mapping.json`, which declares the selected bus,
-field-to-target bindings, conversions, enum choices and optional user-claimed
-freshness; it derives the validation registry from that mapping and the target
-catalog. It has no request file, recognition pack, vehicle context or
-hand-written registry. `recognition_rule_revision` remains a normalized-profile
-identity field, but Milestone 6 derives it from the normalized mapping and
-sources; it does not represent recognition rules or a recognition pack. See
-[DBC import](dbc-import.md) for the current contract. Milestone 8 owns the
-complete integration rewrite, including build selection, factory configuration
-and persistence, against the accepted Milestone 6 importer and Milestone 7
-runtime.
+The integration reuses existing paths. It adds no request file, recognition
+pack, selection descriptor, persisted envelope, legacy bridge, firmware or
+profile SHA, startup identity comparison or factory-JSON transaction.
 
 ## One selection at the composition root
 
-Introduce one CMake cache string, `VEHICLE_PROFILE`, shared by host and ESP-IDF
-composition. Its default is the reserved value `native:mazda`. Any other
-nonempty value names one build-request JSON file, resolved relative to the
-top-level project's source directory; absolute host paths are accepted.
-Explicit empty values, missing files, unsupported versions and invalid profiles
-fail configure. An explicit selection never falls back to Mazda. Changing
-selection requires configure and a new image.
+One CMake cache string, `VEHICLE_PROFILE`, selects the profile for host and
+ESP-IDF composition:
 
-These are proposed commands, not commands supported by the current tree:
+| Value | Selection |
+| --- | --- |
+| `native:mazda` (default) | The existing Mazda decoder, service and compiled catalog. |
+| Any other nonempty value | One `mapping.json` path for the imported profile. |
+
+Host and firmware resolve a relative path against the repository root, not the
+build directory or the ESP-IDF project directory, so one value selects the same
+file in both builds. Absolute paths are accepted. An explicit empty value, a
+missing file or a failed import fails configure. An explicit selection never
+falls back to Mazda. Changing the selection requires configure and a new image.
 
 ```sh
-cmake -S . -B /tmp/controller-demo -DVEHICLE_PROFILE=/path/to/demo.request.json
+cmake -S . -B /tmp/controller-demo \
+  -DVEHICLE_PROFILE=tests/fixtures/vehicle-profiles/dbc/mapping-demo-a.json
 cmake --build /tmp/controller-demo --parallel
 
 # After activating the documented ESP-IDF 5.5.4 environment:
 idf.py -C firmware/weact-can485-v1.1 -B /tmp/controller-demo-fw \
-  -DVEHICLE_PROFILE=/path/to/demo.request.json build
+  -DVEHICLE_PROFILE=tests/fixtures/vehicle-profiles/dbc/mapping-demo-a.json build
 ```
 
-The existing WeAct target, pins, bitrate and receive-only CAN input remain the
-board contract. A logical bus does not choose another driver, port, bitrate or
-physical input. Two sources describe one selected logical bus. No Kconfig
-vehicle matrix, runtime upload/switching, automatic detection or extra bus is
-introduced.
+The WeAct target, pins, bitrate and receive-only CAN input remain the board
+contract. The mapping's selected bus is the one physical input; it does not
+choose another driver, port or bitrate. No Kconfig vehicle matrix, runtime
+upload or switching, automatic detection or extra bus is introduced.
 
-`native:mazda` selects a reviewed native manifest with stable profile id
-`mazda.native.v1` and the existing Mazda decoder/service. A catalog-only export
-cannot invent extraction or freshness metadata: reviewed native handler,
-evidence and policy revisions must be recorded before computing its semantic
-identity. This selector preserves the existing regression baseline without
-claiming every Mazda model is supported.
+## One generation for every consumer
 
-## Build-request contract and limits
+An imported selection runs the existing importer
+(`tools/import_vehicle_profile.py`) once at configure time into the build tree.
+Its complete artifact set already holds `controller_signal_catalog.json`, the
+generated metadata and runtime headers and the capability report. The
+importer's source pins, limits, diagnostics and fail-closed publication apply
+unchanged. The `mapping.json`, the DBC files it pins and the generator modules
+are configure dependencies; generated output is never committed.
 
-A request is strict UTF-8 JSON: reject duplicate/unknown keys and wrong types.
-Version one has exactly these root fields:
-
-| Field | Required value |
-| --- | --- |
-| `format`, `version` | `vehicle-profile-build-request`, integer `1` (not Boolean). |
-| `profile_id`, `selected_bus` | Normalized-v1 stable identifiers; integration additionally bounds `profile_id` to 1–63 ASCII bytes. |
-| `context` | Exact D1 `make`, `model`, `platform`, `model_year`, `market`, `trim` tuple; explicit `null` means unknown. |
-| `policy_pack` | Registered `id`, immutable `revision`, and `path` to reviewed pack data; no executable path or source-supplied expression. |
-| `policies` | Path to the explicit normalized validator registry. |
-| `sources` | Array of records below, with unique source ids. |
-| `factory_recipe` | Registered `id` and immutable `revision` of a reviewed feature recipe. |
-| `limits` | Exact nonnegative integer mapping below; reject Booleans. |
-| `generator_revision` | Registered stable recipe revision; actual generator/pack bytes are also hashed. |
-
-Every source has exactly `id`, `path`, `logical_path`, `bus`, `revision`,
-`license`, `encoding`, `expected_sha256`. These are D1's source inputs;
-`revision` and `expected_sha256` may be `null`, encoding is `utf-8` or `cp1252`.
-Paths resolve relative to the request file's directory. Resolved machine paths
-are not emitted or hashed as provenance; `logical_path` is the normalized
-package-relative artifact path and remains attributable in artifact identity.
-Read source bytes once and compute/check their digests. Owners choose sources,
-context and reviewed recipes rather than assigning individual source fields.
-
-These proposed integration ceilings require owner review and boundary tests.
-A request may lower them; raising them needs a reviewed limits revision and
-fresh evidence. Every effective value enters explicit `validation_limits`
-and artifact identity.
-
-| Limit key | Proposed ceiling |
-| --- | ---: |
-| `source_count` | 16 |
-| `source_bytes_each` / `source_bytes_total` | 4 MiB / 16 MiB |
-| `token_bytes` / `source_records` / `source_fields` | 4,096 / 100,000 / 65,536 |
-| `diagnostics` / `policy_pack_bytes` | 4,096 / 1 MiB |
-| `selected_messages` / `selected_fields` / `bindings` | 64 / 64 / 64 |
-| `notify_bindings` / `handler_inputs` | 17 / 8 |
-| `enum_choices` / `key_bytes` / `unit_evidence_bytes` | 32 / 63 / 31 |
-| `catalog_bytes` | 16,384 |
-
-Host inventory ceilings do not authorize additional runtime messages. D2's
-subscriber slots, fixed storage, queue, payload and post-link gates also apply.
-Overflow rejects the entire artifact; never truncate, drop user rules or raise
-firmware budgets silently.
-The profile-id bound is an integration/storage constraint, rather than a
-change to normalized-v1's general identifier grammar. Apply it to native and
-imported selections before generation, so every selected id fits an envelope.
-
-## One reproducible generation for every consumer
-
-Configure resolves request/pack/recipe, imports sources, validates mechanics
-and policies, computes identities, projects metadata, and compiles factory
-configuration using that compiler catalog. Future integration adds runtime
-tables, canonical factory JSON and a compiled selection descriptor (profile id
-and both identities) to A7's complete immutable set. All additions join the
-same inventory/transaction before consumers use them.
-
-Request, source, policy/recognition/recipe, board output-catalog and generator
-inputs are declared configure/build dependencies. Semantic request contents
-and logical provenance enter the appropriate normalized identities; machine
-paths, JSON whitespace, unordered records and timestamps do not form a second
-identity domain. Context uses D1's immutable resolved recognition revision.
-Recipe/board inputs also affect the full artifact inventory.
-
-Resolve A7's generation directory once. Provider runtime tables/metadata, rule
-compiler catalog, replay provider, BLE `SignalCatalogExport`, factory document
-and embedded selection descriptor use that directory. Neither replay nor BLE
-can substitute a global Mazda catalog. Reject a mixed identity set before
-compilation; firmware verifies provider/factory descriptors agree before CAN
-starts. Corrupt sets use A7's fail-closed/fresh-output-root recovery.
+Every consumer of an imported image reads that one generation: the runtime
+tables, the rule compiler catalog, the replay provider and BLE discovery. None
+can substitute the checked-in Mazda catalog. `native:mazda` keeps the
+checked-in `tools/controller_signal_catalog.json`, the existing decoder and
+service, and no generated runtime. An imported image instantiates only the
+generated service, never the native service too.
 
 Generation runs on the host. Firmware configure executes no target binary and
-does not build the host test suite. Existing companion v1 discovery bytes stay
-unchanged; do not put identity bytes into reserved fields or catalog keys. Any
-explicit identity characteristic needs a separate versioned protocol contract.
+does not build the host test suite. Companion v1 discovery bytes, reserved
+fields and catalog keys stay unchanged.
 
-## Factory features and empty profiles
+## Factory configuration
 
-A reviewed recipe declares each feature's complete canonical input, type,
-capability, choice, freshness and output requirements. Evaluate a feature as a
-unit: missing/ambiguous inputs disable all its dependent actions/rules/outputs
-with a stable capability diagnostic. Do not leave dangling output bindings.
-This applies only to generated factory features. User-authored unknown keys,
-invalid operands, unsupported capabilities and over-capacity rules still fail.
+`tools/compile_controller_config.py` compiles the factory document through the
+existing dependent build step. The selected compiler catalog becomes an
+explicit input and dependency of that step instead of the fixed checked-in
+path. The result stays the embedded canonical v1 factory JSON.
 
-Current Mazda turn/RPM/brake output is the independent baseline. Only its
-reviewed Mazda recipe may use the approved `fresh_or_unverified` brake opt-in;
-other profiles need their own reviewed policy. Neither source timing nor
-recognition confidence promotes brake freshness to `Fresh`.
+For a selection, the factory keeps only the built-in features whose signals,
+types, choices and capabilities the selected catalog supports. An unsupported
+feature is removed completely: its rules, actions and output bindings, with no
+dangling binding. This pruning applies only to built-in factory features.
+Explicit user documents stay strict: unknown keys, invalid operands,
+unsupported capabilities and over-capacity rules fail.
 
-Zero bindings is a successful explicit `all_features_disabled` selection.
-Generate valid canonical v1 factory JSON with empty actions, rules and lighting
-outputs plus valid board sink settings. All lighting pixels start/remain black,
-discovery is empty, replay observes no inputs, and no Mazda policy is selected
-implicitly. A valid empty configuration may start the bounded receive-only
-provider. Factory validation/apply failure instead keeps CAN stopped and BLE
-repair available under the existing failed-off startup contract.
+Native Mazda keeps its current turn, RPM and brake features, including the
+owner-approved `fresh_or_unverified` brake opt-in and the unset brake freshness.
+Imported default features use `Fresh` rules only. They produce output only for
+signals whose binding declares `timeout_ms`; a profile that decodes correctly
+but declares no timeouts keeps default output black.
 
-## Persisted override binding without changing BLE v1
+A profile with zero bindings (`all_features_disabled`), or one whose features
+are all unsupported, compiles valid v1 factory JSON with empty actions, rules
+and output bindings plus valid board sink settings. Pixels start and remain
+black, discovery is empty and replay observes no inputs. No Mazda policy is
+selected implicitly. A valid empty configuration may start the bounded
+receive-only provider. A factory validation or apply failure keeps CAN stopped
+and BLE repair available under the existing failed-off startup contract.
 
-Keep canonical controller documents at version 1 and preserve Config transfer,
-read-back, CRC and restart behavior. Do not add fields to today's strict v1
-document. The future private storage/composition boundary binds each new save
-to the profile used for parsing, semantic validation and never-attached dry-run
-apply. One profile lasts for the entire boot, including validation and commit.
+## Saved rules
 
-New slot blobs use this proposed internal envelope (little-endian integers):
+Storage is unchanged: canonical v1 JSON in the existing two-slot backend and
+`mazda_config` namespace, the
+[override storage](../configuration/controller-config.md#boot-time-override-storage)
+bounds, and the companion [config transfer](../companion/config-transfer.md)
+detached dry run, read-back, CRC and same-session recovery. Existing saved JSON
+remains supported without migration.
 
-| Offset | Field |
-| ---: | --- |
-| 0 | Eight ASCII bytes `VPROFOV1`. |
-| 8 | `u16` envelope version `1`. |
-| 10 | `u16` profile-id byte length, 1–63. |
-| 12 | `u32` canonical JSON byte length, 1–4,096. |
-| 16 | 32 raw bytes of semantic compatibility SHA-256. |
-| 48 | 32 raw bytes of canonical JSON SHA-256. |
-| 80 | Profile-id ASCII bytes, then exactly the declared canonical JSON bytes. |
+A saved document depends only on the public signal contract of the selected
+provider: signal keys, value types, enum choices, capabilities and permitted
+freshness policy. It never depends on CAN identifiers, DBC records or profile
+digests. Boot and BLE saves validate it directly against the selected
+provider's catalog with the existing parser and semantic validator. A document
+whose requirements hold works after a CAN or profile change; one whose
+requirements do not hold is rejected on save and ignored at boot, with the
+existing invalid-override flag and factory fallback.
 
-Reject trailing bytes, invalid ids/lengths/version/digests and malformed
-payloads. The new blob maximum is 4,239 bytes; canonical JSON writes remain
-4 KiB. Envelope overhead has a separate private bound and enters two-slot/NVS
-resource tests before implementation. It does not raise the parser's 16 KiB
-input/legacy-read bounds or claim guaranteed space in shared 64 KiB NVS.
-The digest detects inconsistency, rather than authenticating a document.
+Imported selections reject `fresh_or_unverified` in user documents and the
+factory. Native Mazda keeps its existing permitted policies. Imported profiles
+get no native handlers, and import success never promotes a signal to `Fresh`
+without a declared timeout.
 
-At boot require exact profile id and semantic compatibility digest before
-exposing payload JSON to the existing parser/apply path. Artifact identity is
-not the compatibility key: provenance-only changes can preserve semantics,
-while changed extraction, scale, enum meaning, handlers or freshness policy
-cannot accidentally reuse an override. Runtime ids are not persisted. Matching
-envelopes still undergo current semantic, output-zone, capacity and attach
-checks.
+Clean apply recovery after an invalid boot override follows separate
+[PR #306](https://github.com/Yuke-hd/mazda-can-accessory-controller/pull/306).
+Policy and BLE checks may land before it merges, but final boot integration
+waits for #306 and rebases onto its merged behavior instead of copying it.
 
-The private adapter wraps/unwraps and verifies the full envelope and marker
-with the current inactive-slot/read-back/rollback sequence. BLE sees canonical
-JSON only; read-back/active CRC exclude the envelope and stay stable until
-restart. Validation/dry-run rejection writes nothing, leaves the running
-configuration unchanged and does not restart. `StorageFailed` also leaves the
-running configuration unchanged without restart, but next-boot selection is
-uncertain if the new marker committed and rollback failed: the previous
-selection, a verified new envelope, or factory may be loaded. An invalid or
-incompatible slot is never applied. Preserve the
-[same-session upload/revert recovery](../companion/config-transfer.md#commit)
-and bounded reporting behavior; do not promise transaction guarantees beyond
-the existing backend. Revert retains the verified active-marker clear; slot
-bytes remain and no automatic NVS erase or secure-wipe claim is added.
+## Acceptance
 
-## Legacy Mazda bridge and fallback
-
-A bare canonical v1 slot is legacy storage, read under the existing 16 KiB
-bound. Accept it only when all of these hold:
-
-1. Selection is built-in `native:mazda`, exact profile id `mazda.native.v1`.
-2. A checked-in owner-approved bridge allowlist contains the selected exact
-   compatibility digest and reviewed native handler/policy baseline. No
-   wildcard, key-overlap inference or artifact-id alias is allowed.
-3. The document passes current parser, semantic/apply/capacity and attach checks.
-
-The bridge is disabled until its computed digest and migration vectors receive
-owner review; placeholders cannot enable it. Other profiles reject legacy bare
-storage even if keys agree. Successful legacy boot retains the original slot
-without auto-tagging/resaving it. The next explicit successful BLE save creates
-an envelope for the current profile. A fresh v1 upload is validated against
-the current provider and bound on save, rather than being a legacy exception.
-
-Missing, unreadable, malformed or incompatible overrides select that profile's
-factory, retain stored bytes and record diagnostics. Compatibility rejection
-uses the existing invalid-override boot flag and `InvalidValue` code; exact
-internal `profile_mismatch` / `legacy_profile_unbound` details go to the bounded
-firmware log. Hardware reads keep the storage-failure flag. New wire enums
-require a separate protocol version decision.
-
-Apply recovery follows separate [PR #306](https://github.com/Yuke-hd/mazda-can-accessory-controller/pull/306):
-after override apply failure clear the detached partial engine/sink, put the
-factory model in the stable owning active-config object, and apply from clean
-state. Report factory active only after success, and retain the override for
-diagnostics/retry next boot. If factory parse/apply/attach fails, stay black,
-refuse CAN and retain BLE repair/revert. Do not merge/reimplement #306 here;
-integration coding rebases onto its accepted behavior and repeats its tests.
-
-## Acceptance and implementation gate
-
-Owner review must accept selection/request syntax, proposed ceilings, envelope
-and the exact legacy bridge before integration coding. D1/D2 retain their own
-gates. Independently authored synthetic fixtures must prove the following:
+Synthetic fixtures provide software evidence only:
 
 | Evidence | Required acceptance |
 | --- | --- |
-| Host generation | Two profiles with distinct context/policy, each from two sources; reordered records/whitespace reproduce bytes/identities; conflicts preserve old outputs; consumers share one generation. Profile ids of 1/63 ASCII bytes are accepted, while empty/64-byte/non-ASCII ids fail before generation. |
-| Host configuration | Changed scale/meaning rejects old envelope; provenance-only changes preserve compatibility; wrong id/digest/malformed envelope falls back; legacy bridge accepts only its exact Mazda baseline; v1 transfer/read-back/CRC stay unchanged. |
-| Host lifecycle/output | Missing inputs disable complete factory features; invalid user rules reject; empty profile has no Mazda inputs/policy/lighting; #306 clean fallback and factory failure remain covered. Inject marker-commit/read-back/rollback failures: running config stays unchanged, next boot loads only old/verified-new/factory, and same-session upload/revert recovery remains available. |
-| Firmware software | Fresh ESP-IDF 5.5.4 production/profiling builds for native Mazda, populated synthetic and empty selections; architecture/include/storage/IRAM gates and actual RAM/flash/stack deltas against the accepted baseline. |
-| Bench / vehicle | Separate owner-authorized follow-up verifying actual board/wiring/port/power. No such evidence is supplied here. |
-
-The current milestone delivers foundation tooling and module contracts. A
-general importer, generated runtime, composition selector and real second
-vehicle validation remain future implementation after the relevant reviews.
+| Host selection | Native Mazda, two populated two-source synthetic mappings and the empty mapping configure and build. Relative paths resolve from the repository root in host and firmware builds. Empty, missing and failed selections fail configure without Mazda fallback. |
+| Factory | Unsupported features are removed completely; imported defaults use `Fresh` only; no-timeout and empty profiles stay black. |
+| Saved rules | Valid bare v1 documents reuse compatible public signals across selections; incompatible documents and imported `fresh_or_unverified` reject; v1 transfer, read-back and CRC stay unchanged; #306 clean fallback holds. |
+| Mazda baseline | Existing Mazda tests stay active, and generated decoding compares against the existing Mazda decoder. |
+| Firmware software | Fresh ESP-IDF 5.5.4 production and profiling builds for native, populated two-source and empty selections, plus the maximum supported generated fixture, pass architecture, include, storage and IRAM gates with actual service, storage, DRAM, IRAM and flash evidence. |
+| Bench / vehicle | Separate owner-authorized follow-up. No such evidence is supplied here. |
