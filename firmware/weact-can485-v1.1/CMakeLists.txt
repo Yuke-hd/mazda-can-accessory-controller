@@ -104,6 +104,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
     "${OUTPUT_CATALOG_JSON}")
+include("${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profile.cmake")
+vehicle_profile_select()
 message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 execute_process(

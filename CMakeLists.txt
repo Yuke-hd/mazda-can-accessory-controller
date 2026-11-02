@@ -5,6 +5,8 @@ cmake_minimum_required(VERSION 3.20...4.4)
 project(mazda_can_accessory_controller_host LANGUAGES C CXX)
 
 include(CTest)
+include(tools/vehicle_profile.cmake)
+vehicle_profile_select()
 
 include(FetchContent)
 

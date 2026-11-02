@@ -1,5 +1,118 @@
-# Offline opt-in artifact generation; usable by host and ESP-IDF configure.
+# Shared host/ESP-IDF selection and offline profile artifact generation.
 set(_VEHICLE_PROFILE_TOOLS_DIR "${CMAKE_CURRENT_LIST_DIR}")
+get_filename_component(_VEHICLE_PROFILE_REPOSITORY_ROOT "${_VEHICLE_PROFILE_TOOLS_DIR}/.." ABSOLUTE)
+set(VEHICLE_PROFILE "native:mazda" CACHE STRING
+    "Vehicle profile: native:mazda or a mapping.json path")
+set_property(CACHE VEHICLE_PROFILE PROPERTY STRINGS native:mazda)
+
+function(_vehicle_profile_resolve_output input_dir output_var)
+  get_filename_component(_output "${input_dir}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+  file(RELATIVE_PATH _relative "${CMAKE_BINARY_DIR}" "${_output}")
+  if(IS_ABSOLUTE "${_relative}" OR _relative MATCHES "^[.][.]/")
+    message(FATAL_ERROR "vehicle profile output must be inside the build directory")
+  endif()
+  # Path.resolve follows existing parent symlinks even when the final output
+  # directory does not yet exist; CMake REAL_PATH requires the whole path.
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c
+    "from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); b=Path(sys.argv[2]).resolve(); print(p); sys.exit(0 if p.is_relative_to(b) else 1)"
+    "${_output}" "${CMAKE_BINARY_DIR}"
+    RESULT_VARIABLE _inside OUTPUT_VARIABLE _resolved_output
+    ERROR_VARIABLE _path_error OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _inside EQUAL 0)
+    message(FATAL_ERROR "vehicle profile output must resolve inside the build directory: ${_path_error}")
+  endif()
+  set(${output_var} "${_resolved_output}" PARENT_SCOPE)
+endfunction()
+
+function(vehicle_profile_select)
+  get_property(_already GLOBAL PROPERTY VEHICLE_PROFILE_SELECTION_DONE)
+  if(_already)
+    message(FATAL_ERROR "vehicle_profile_select may be called once per project")
+  endif()
+  set_property(GLOBAL PROPERTY VEHICLE_PROFILE_SELECTION_DONE TRUE)
+
+  if("${VEHICLE_PROFILE}" STREQUAL "")
+    message(FATAL_ERROR "VEHICLE_PROFILE must be native:mazda or a mapping.json path")
+  endif()
+
+  if(VEHICLE_PROFILE STREQUAL "native:mazda")
+    set(VEHICLE_PROFILE_IS_NATIVE TRUE PARENT_SCOPE)
+    set(VEHICLE_PROFILE_MAPPING_PATH "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_ARTIFACT_DIR "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_COMPILER_CATALOG
+        "${_VEHICLE_PROFILE_REPOSITORY_ROOT}/tools/controller_signal_catalog.json" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_METADATA_HEADER "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_RUNTIME_HEADER "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_INCLUDE_DIR "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_CAPABILITY_REPORT "" PARENT_SCOPE)
+    set(VEHICLE_PROFILE_ARTIFACT_TARGET "" PARENT_SCOPE)
+    return()
+  endif()
+
+  get_filename_component(_mapping "${VEHICLE_PROFILE}" ABSOLUTE
+                         BASE_DIR "${_VEHICLE_PROFILE_REPOSITORY_ROOT}")
+  if(NOT EXISTS "${_mapping}" OR IS_DIRECTORY "${_mapping}")
+    message(FATAL_ERROR "selected vehicle profile mapping does not exist: ${_mapping}")
+  endif()
+  get_property(_already_generated GLOBAL PROPERTY VEHICLE_PROFILE_GENERATED)
+  if(_already_generated)
+    message(FATAL_ERROR "vehicle profile artifacts may be generated once per project")
+  endif()
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(_output "${CMAKE_BINARY_DIR}/vehicle-profile")
+  _vehicle_profile_resolve_output("${_output}" _output)
+  set(_command "${Python3_EXECUTABLE}" "${_VEHICLE_PROFILE_TOOLS_DIR}/import_vehicle_profile.py"
+      --mapping "${_mapping}" --output-dir "${_output}")
+  execute_process(COMMAND ${_command} --print-directory
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _directory ERROR_VARIABLE _error
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR "vehicle profile import failed: ${_error}")
+  endif()
+
+  execute_process(COMMAND "${Python3_EXECUTABLE}" -c
+    "from pathlib import Path; import json,sys; p=Path(sys.argv[1]).resolve(); print(';'.join(str((p.parent / item['path']).resolve()).replace(';', r'\\;') for item in json.loads(p.read_text(encoding='utf-8'))['sources']))"
+    "${_mapping}" RESULT_VARIABLE _sources_result OUTPUT_VARIABLE _source_paths
+    ERROR_VARIABLE _sources_error OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _sources_result EQUAL 0)
+    message(FATAL_ERROR "could not list vehicle profile sources: ${_sources_error}")
+  endif()
+  set(_inputs "${_mapping}" "${_VEHICLE_PROFILE_TOOLS_DIR}/import_vehicle_profile.py"
+      "${_VEHICLE_PROFILE_TOOLS_DIR}/controller_signal_catalog.json")
+  list(APPEND _inputs ${_source_paths})
+  file(GLOB _modules CONFIGURE_DEPENDS "${_VEHICLE_PROFILE_TOOLS_DIR}/vehicle_profiles/*.py")
+  list(APPEND _inputs ${_modules})
+  get_property(_configure_inputs DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS)
+  foreach(_input IN LISTS _inputs)
+    get_filename_component(_resolved_input "${_input}" REALPATH)
+    set(_already_configure_input FALSE)
+    foreach(_configured_input IN LISTS _configure_inputs)
+      get_filename_component(_resolved_configured_input "${_configured_input}" REALPATH)
+      if("${_resolved_input}" STREQUAL "${_resolved_configured_input}")
+        set(_already_configure_input TRUE)
+        break()
+      endif()
+    endforeach()
+    if(NOT _already_configure_input)
+      list(APPEND _configure_inputs "${_input}")
+    endif()
+  endforeach()
+  set_property(DIRECTORY PROPERTY CMAKE_CONFIGURE_DEPENDS ${_configure_inputs})
+  add_custom_target(vehicle_profile_artifacts COMMAND ${_command}
+                    DEPENDS ${_inputs} VERBATIM)
+  set_property(GLOBAL PROPERTY VEHICLE_PROFILE_GENERATED TRUE)
+
+  set(VEHICLE_PROFILE_IS_NATIVE FALSE PARENT_SCOPE)
+  set(VEHICLE_PROFILE_MAPPING_PATH "${_mapping}" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_ARTIFACT_DIR "${_directory}" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_COMPILER_CATALOG "${_directory}/controller_signal_catalog.json" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_METADATA_HEADER "${_directory}/vehicle_profile_metadata.hpp" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_RUNTIME_HEADER "${_directory}/vehicle_profile_runtime.hpp" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_INCLUDE_DIR "${_directory}" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_CAPABILITY_REPORT "${_directory}/capability_report.json" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_ARTIFACT_TARGET vehicle_profile_artifacts PARENT_SCOPE)
+endfunction()
 
 function(vehicle_profile_generate)
   cmake_parse_arguments(PROFILE "" "MANIFEST;POLICIES;GENERATOR_REVISION;OUTPUT_DIR"
@@ -18,22 +131,7 @@ function(vehicle_profile_generate)
   if(NOT PROFILE_OUTPUT_DIR)
     set(PROFILE_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/vehicle-profile")
   endif()
-  get_filename_component(_output "${PROFILE_OUTPUT_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_BINARY_DIR}")
-  file(RELATIVE_PATH _relative "${CMAKE_BINARY_DIR}" "${_output}")
-  if(IS_ABSOLUTE "${_relative}" OR _relative MATCHES "^[.][.]/")
-    message(FATAL_ERROR "vehicle profile output must be inside the build directory")
-  endif()
-  # Path.resolve follows existing parent symlinks even when the final output
-  # directory does not yet exist; CMake REAL_PATH requires the whole path.
-  execute_process(COMMAND "${Python3_EXECUTABLE}" -c
-    "from pathlib import Path; import sys; p=Path(sys.argv[1]).resolve(); b=Path(sys.argv[2]).resolve(); print(p); sys.exit(0 if p.is_relative_to(b) else 1)"
-    "${_output}" "${CMAKE_BINARY_DIR}"
-    RESULT_VARIABLE _inside OUTPUT_VARIABLE _resolved_output
-    ERROR_VARIABLE _path_error OUTPUT_STRIP_TRAILING_WHITESPACE)
-  if(NOT _inside EQUAL 0)
-    message(FATAL_ERROR "vehicle profile output must resolve inside the build directory: ${_path_error}")
-  endif()
-  set(_output "${_resolved_output}")
+  _vehicle_profile_resolve_output("${PROFILE_OUTPUT_DIR}" _output)
   set(_command "${Python3_EXECUTABLE}" "${_VEHICLE_PROFILE_TOOLS_DIR}/generate_vehicle_profile.py"
       --manifest "${_manifest}" --policies "${_policies}"
       --generator-revision "${PROFILE_GENERATOR_REVISION}" --output-dir "${_output}")
