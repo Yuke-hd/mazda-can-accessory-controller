@@ -103,7 +103,8 @@ class AcceptanceTests(unittest.TestCase):
     def test_no_registry_request_or_pack_file_is_committed(self):
         names = sorted(p.name for p in FIXTURES.iterdir())
         self.assertEqual(names, ["PROVENANCE.md", "demo-a.dbc", "demo-b.dbc",
-                                 "mapping-demo-a.json", "mapping-empty.json"])
+                                 "mapping-demo-a.json", "mapping-empty.json",
+                                 "mapping-two-source.json"])
 
 
 BRAKE = {"target": "vehicle.brake_pressure", "message": "Engine", "field": "BrakePressure",

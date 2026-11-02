@@ -19,7 +19,41 @@ if("${WEACT_CAN_PROFILE_LINK_PROBE}" STREQUAL "off")
 else()
   set(PROFILE_LINK_PROBE_ENABLED ON)
 endif()
+set_property(GLOBAL PROPERTY PROFILE_LINK_PROBE_ENABLED "${PROFILE_LINK_PROBE_ENABLED}")
 
+# Resource-only fixture mode instantiates the maximum supported generated
+# profile as the application's selected service. It is separate from the
+# compile/link probe and from the normal VEHICLE_PROFILE mapping selector.
+set(WEACT_CAN_PROFILE_RESOURCE_FIXTURE "off" CACHE STRING
+    "Select the maximum generated profile for firmware resource measurement")
+set_property(CACHE WEACT_CAN_PROFILE_RESOURCE_FIXTURE PROPERTY STRINGS off max)
+if(NOT WEACT_CAN_PROFILE_RESOURCE_FIXTURE MATCHES "^(off|max)$")
+  message(FATAL_ERROR "WEACT_CAN_PROFILE_RESOURCE_FIXTURE must be off or max")
+endif()
+if(WEACT_CAN_PROFILE_RESOURCE_FIXTURE STREQUAL "max" AND PROFILE_LINK_PROBE_ENABLED)
+  message(FATAL_ERROR
+    "WEACT_CAN_PROFILE_RESOURCE_FIXTURE=max cannot be combined with WEACT_CAN_PROFILE_LINK_PROBE")
+endif()
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profile.cmake")
+if(WEACT_CAN_PROFILE_RESOURCE_FIXTURE STREQUAL "max")
+  if(NOT VEHICLE_PROFILE STREQUAL "native:mazda")
+    message(FATAL_ERROR
+      "WEACT_CAN_PROFILE_RESOURCE_FIXTURE=max requires VEHICLE_PROFILE=native:mazda; "
+      "the explicit resource fixture supplies the selected profile")
+  endif()
+  vehicle_profile_select_max_resource_fixture()
+else()
+  vehicle_profile_select()
+endif()
+foreach(_profile_output VEHICLE_PROFILE_IS_NATIVE VEHICLE_PROFILE_MAPPING_PATH
+                        VEHICLE_PROFILE_ARTIFACT_DIR VEHICLE_PROFILE_COMPILER_CATALOG
+                        VEHICLE_PROFILE_METADATA_HEADER VEHICLE_PROFILE_RUNTIME_HEADER
+                        VEHICLE_PROFILE_INCLUDE_DIR VEHICLE_PROFILE_CAPABILITY_REPORT
+                        VEHICLE_PROFILE_ARTIFACT_TARGET)
+  set_property(GLOBAL PROPERTY "${_profile_output}" "${${_profile_output}}")
+endforeach()
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/board"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/companion_ble"
@@ -29,18 +63,17 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_actions"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/controller_config"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_can_rx"
-    "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/companion_protocol"
-    "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/signal_notification"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
-    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")
-
-if(PROFILE_LINK_PROBE_ENABLED)
-  list(APPEND EXTRA_COMPONENT_DIRS
-       "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_profile_runtime")
-endif()
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals"
+    # ESP-IDF early expansion parses main's requirements in a separate CMake
+    # script that cannot see profile selection. Both candidates must be
+    # discoverable there; main declares only the selected dependency later.
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_profile_runtime"
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda")
 
 set(VEHICLE_CAN_CORE_SOURCE_DIR
     "${CMAKE_CURRENT_LIST_DIR}/../../third_party/esp32-vehicle-can-core"
@@ -59,15 +92,19 @@ include("${CMAKE_CURRENT_LIST_DIR}/../../tools/output_catalog.cmake")
 output_catalog_generate(
   BOARD_FILE "${CMAKE_CURRENT_LIST_DIR}/output_catalog.cmake"
   OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/output_catalog")
+set_property(GLOBAL PROPERTY OUTPUT_CATALOG_JSON "${OUTPUT_CATALOG_JSON}")
+set_property(GLOBAL PROPERTY OUTPUT_CATALOG_INCLUDE_DIR "${OUTPUT_CATALOG_INCLUDE_DIR}")
+set_property(GLOBAL PROPERTY PROFILE_LINK_PROBE_GENERATED_DIR "")
 
 # Compile the repository's authoring document before ESP-IDF discovers the
 # controller_config component. The configure-time invocation makes malformed
 # YAML fail the firmware configure immediately; the matching build rule keeps
 # the embedded artifact current when the source document changes.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
 if(PROFILE_LINK_PROBE_ENABLED)
   set(PROFILE_LINK_PROBE_GENERATED_DIR
       "${CMAKE_CURRENT_BINARY_DIR}/vehicle_profile_link_probe/${WEACT_CAN_PROFILE_LINK_PROBE}")
+  set_property(GLOBAL PROPERTY PROFILE_LINK_PROBE_GENERATED_DIR
+               "${PROFILE_LINK_PROBE_GENERATED_DIR}")
   # Host generator modules are configure invalidation inputs only; they do not
   # enter a firmware target. Generated C++ stays under the external build tree.
   file(GLOB _profile_runtime_codegen_sources CONFIGURE_DEPENDS
@@ -99,20 +136,22 @@ set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
 set(CONTROLLER_CONFIG_FACTORY_JSON
     "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
     CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
-include("${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profile.cmake")
-vehicle_profile_select()
 set(_vehicle_profile_json "")
 if(NOT VEHICLE_PROFILE_IS_NATIVE)
   set(_vehicle_profile_json "${VEHICLE_PROFILE_ARTIFACT_DIR}/vehicle_profile.json")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_config_factory.cmake")
-controller_config_factory_generate(
-  YAML "${CONTROLLER_CONFIG_DEFAULT_YAML}"
-  OUTPUT_JSON "${CONTROLLER_CONFIG_FACTORY_JSON}"
-  OUTPUT_CATALOG "${OUTPUT_CATALOG_JSON}"
-  SIGNAL_CATALOG "${VEHICLE_PROFILE_COMPILER_CATALOG}"
-  PROFILE_JSON "${_vehicle_profile_json}"
-  ARTIFACT_TARGET "${VEHICLE_PROFILE_ARTIFACT_TARGET}")
+set(_factory_config_args
+    YAML "${CONTROLLER_CONFIG_DEFAULT_YAML}"
+    OUTPUT_JSON "${CONTROLLER_CONFIG_FACTORY_JSON}"
+    OUTPUT_CATALOG "${OUTPUT_CATALOG_JSON}"
+    SIGNAL_CATALOG "${VEHICLE_PROFILE_COMPILER_CATALOG}")
+if(NOT VEHICLE_PROFILE_IS_NATIVE)
+  list(APPEND _factory_config_args
+       PROFILE_JSON "${_vehicle_profile_json}"
+       ARTIFACT_TARGET "${VEHICLE_PROFILE_ARTIFACT_TARGET}")
+endif()
+controller_config_factory_generate(${_factory_config_args})
 message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
@@ -127,20 +166,26 @@ project(weact_can485_v11_vehicle_listen_only)
 # This -O2 comes after the menuconfig optimisation level and overrides it for
 # these components. To debug them at -Og or -O0 (for example under GDB),
 # remove -O2 here temporarily; do not ship or vehicle-test such a build.
-foreach(_component mazda_telemetry mazda vehicle_telemetry vehicle_core vehicle_signals
-                   action_engine vehicle_lighting_policy vehicle_can_rx can_bus local_argb
-                   local_argb_actions)
+set(_optimized_components vehicle_telemetry vehicle_core vehicle_signals vehicle_profile_runtime
+                          action_engine vehicle_lighting_policy vehicle_can_rx can_bus local_argb
+                          local_argb_actions)
+if(VEHICLE_PROFILE_IS_NATIVE)
+  list(APPEND _optimized_components mazda_telemetry mazda)
+endif()
+foreach(_component IN LISTS _optimized_components)
   idf_component_get_property(_component_lib ${_component} COMPONENT_LIB)
   get_target_property(_component_type ${_component_lib} TYPE)
   if(NOT _component_type STREQUAL "INTERFACE_LIBRARY")
     target_compile_options(${_component_lib} PRIVATE -O2)
   endif()
 endforeach()
-# ldgen symbol entries cannot contain the `$` of GCC clone suffixes, so keep
-# the hot_code.lf functions clone-free.
-idf_component_get_property(_mazda_telemetry_lib mazda_telemetry COMPONENT_LIB)
-target_compile_options(${_mazda_telemetry_lib} PRIVATE
-  -fno-ipa-sra -fno-ipa-cp-clone -fno-partial-inlining -fno-ipa-cp)
+if(VEHICLE_PROFILE_IS_NATIVE)
+  # ldgen symbol entries cannot contain the `$` of GCC clone suffixes, so keep
+  # the hot_code.lf functions clone-free.
+  idf_component_get_property(_mazda_telemetry_lib mazda_telemetry COMPONENT_LIB)
+  target_compile_options(${_mazda_telemetry_lib} PRIVATE
+    -fno-ipa-sra -fno-ipa-cp-clone -fno-partial-inlining -fno-ipa-cp)
+endif()
 
 # ldgen silently ignores a symbol entry that matches nothing. Fail the build
 # when any hot_code.lf symbol is missing from the ELF or outside IRAM.
@@ -151,13 +196,15 @@ if(PROFILE_LINK_PROBE_ENABLED)
   # generated function pointers and their runtime caller graph survive gc-sections.
   target_link_options(${_project_elf} PRIVATE "-Wl,-u,vehicle_profile_link_probe_anchor")
 endif()
-add_custom_command(TARGET ${_project_elf} POST_BUILD
-  COMMAND "${_idf_python}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/check_iram_placement.py"
-          --fragment "${CMAKE_CURRENT_LIST_DIR}/main/hot_code.lf"
-          --elf "$<TARGET_FILE:${_project_elf}>"
-          --nm "${CMAKE_NM}" --objdump "${CMAKE_OBJDUMP}"
-  COMMENT "Checking IRAM placement of hot_code.lf symbols"
-  VERBATIM)
+if(VEHICLE_PROFILE_IS_NATIVE)
+  add_custom_command(TARGET ${_project_elf} POST_BUILD
+    COMMAND "${_idf_python}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/check_iram_placement.py"
+            --fragment "${CMAKE_CURRENT_LIST_DIR}/main/hot_code.lf"
+            --elf "$<TARGET_FILE:${_project_elf}>"
+            --nm "${CMAKE_NM}" --objdump "${CMAKE_OBJDUMP}"
+    COMMENT "Checking IRAM placement of hot_code.lf symbols"
+    VERBATIM)
+endif()
 
 # sdkconfig.defaults does not override an existing sdkconfig. Refuse to build
 # with a stale configuration that would flash the old 24 KiB NVS table and

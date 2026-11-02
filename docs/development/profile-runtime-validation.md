@@ -243,3 +243,78 @@ header boundary gate. The `tests/tools` Python suite ran 592
 tests: 591 passed and one was skipped. Evidence is
 software-only: no image was flashed and no bench or vehicle operation was
 performed.
+
+## GH-398 selected application composition and resource matrix
+
+GH-398 measures the selected service in the real firmware application. Unlike
+the historical retained-link probes above, each generated-profile row builds
+the application with one `ProfileRuntimeService` and its selected tables.
+Native rows keep one Mazda `VehicleTelemetry`; no second service is linked.
+All eight images below were built from the GH-398 worktree based on prerequisite
+commit `612cf09`, with ESP-IDF `v5.5.4`, target `esp32`, the pinned vehicle-core
+`0.3.0`, fresh out-of-tree build directories, and an external `sdkconfig` per
+image under `/tmp/mazda-m8/builds/398/`. After the matrix, profile fixture
+generation moved into the allowlisted shared CMake helper, `main.cpp` received
+formatting-only changes, and the architecture validator gained selected-service
+checks. The native-to-empty-to-populated configure smoke and a maximum-profile
+production rebuild passed after those changes; the other seven images were not
+rebuilt after the configure-helper refactor.
+
+The populated profile maps two independently authored synthetic DBC sources
+into one message with three extracted fields and one signal binding. The empty
+profile has one source and message but no signal binding. The maximum profile
+uses the existing 64-message, 64-field, 64-binding, 17-Notify synthetic limit
+fixture. It is selected as the application's actual generated profile and
+service by the explicit resource-only
+`WEACT_CAN_PROFILE_RESOURCE_FIXTURE=max` configure option. That option requires
+the normal `VEHICLE_PROFILE=native:mazda` setting, is off by default, and prints
+a diagnostic that the maximum fixture is not a vehicle-profile selection.
+It cannot be combined with the retained-link probe. The generator identifies
+the synthetic profile and checks that its artifact identity matches the
+capability report.
+
+Profiling rows enabled
+`CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS=y`,
+`CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y`, and
+`CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y`. Native rows include the existing Mazda
+profiling and freshness loggers. Imported-profile rows omit those Mazda-only
+loggers; the FreeRTOS task statistics logger remains active without telemetry
+pause counters. Each generated-profile live engine and scratch configuration
+check uses `UnverifiedFreshnessPolicy::Reject`; the native Mazda constructors
+retain their existing policy.
+
+| Application selection | Profile counts (sources; messages / fields / bindings / Notify) | DRAM used / free (B) | IRAM used / free (B) | Flash code (B) | Flash data (B) | Total image (B) | App binary |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Native Mazda, production | native | 83,828 / 40,752 | 123,431 / 7,641 | 468,458 | 94,040 | 716,181 | `0xaee10` |
+| Native Mazda, profiling | native | 92,076 / 32,504 | 128,115 / 2,957 | 479,434 | 94,336 | 738,329 | `0xb4490` |
+| Two-source imported, production | 2; 1 / 3 / 1 / 0 | 83,652 / 40,928 | 108,827 / 22,245 | 430,306 | 92,472 | 659,281 | `0xa0fc0` |
+| Two-source imported, profiling | 2; 1 / 3 / 1 / 0 | 89,300 / 35,280 | 110,979 / 20,093 | 432,390 | 92,752 | 667,453 | `0xa2fb0` |
+| Empty imported, production | 1; 1 / 2 / 0 / 0 | 83,492 / 41,088 | 108,827 / 22,245 | 426,818 | 92,472 | 655,633 | `0xa0180` |
+| Empty imported, profiling | 1; 1 / 2 / 0 / 0 | 89,140 / 35,440 | 110,979 / 20,093 | 428,902 | 92,752 | 663,805 | `0xa2170` |
+| Maximum imported, production fixture | 1; 64 / 64 / 64 / 17 | 93,732 / 30,848 | 108,827 / 22,245 | 446,482 | 92,472 | 685,537 | `0xa7650` |
+| Maximum imported, profiling fixture | 1; 64 / 64 / 64 / 17 | 99,380 / 25,200 | 110,979 / 20,093 | 448,570 | 92,752 | 693,713 | `0xa9640` |
+
+ESP-IDF size-report values include its 32-byte `.rtc.force_slow` contribution
+in the total image size. All eight application binaries passed the existing
+smallest app partition check (`0x1e0000` bytes). The native images passed the existing
+post-link IRAM gate for all 23 `hot_code.lf` functions. Imported images omit
+that Mazda-only fragment because they do not contain those native handlers;
+their used/free IRAM is reported above. The profile service storage guard
+remains enabled.
+
+The final native ELF retains one application `telemetry` object of `0x7000`
+(28,672 bytes) and no `ProfileRuntimeService`. Imported ELFs retain one
+`telemetry` object of `0x6800` (26,624 bytes) and no Mazda telemetry service.
+The maximum application ELF retains all 64 generated decoder functions, its
+`0x500` (1,280-byte) dispatch table and `0x200` (512-byte) freshness table.
+The empty profile has no decoder or dispatch/freshness array symbols. No
+application ELF contains the old `vehicle_profile_link_probe_anchor`.
+
+The normal imported-profile selection remains `VEHICLE_PROFILE=<mapping.json>`.
+The two-source and empty rows use the synthetic mappings under
+`tests/fixtures/vehicle-profiles/dbc/`; the maximum fixture mode is only for
+resource measurements. Native and imported applications both retain startup
+black, configuration and service failure fail-off, and listen-only CAN
+acquisition with zero transmit queue. The eventual startup fallback from
+GH-306 remains a separate dependency and was not copied into this application.
+No image was flashed, and no bench or vehicle operation was performed.
