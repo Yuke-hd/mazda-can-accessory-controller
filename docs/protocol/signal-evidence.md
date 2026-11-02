@@ -207,3 +207,51 @@ stable public channel, decoder/DBC bit coordinates, numeric fields, and the
 explicit source-name/interpretation exception recorded above; an actual
 channel or coordinate/numeric mismatch fails. It does not promote evidence
 based on synthetic tests or runtime availability.
+
+## Generated profile comparison
+
+The host-only comparison in
+[`tests/tools/vehicle_profile_mazda_comparison_test.py`](../../tests/tools/vehicle_profile_mazda_comparison_test.py)
+imports the exact reviewed DBC bytes and dispatches synthetic frames through
+both generated extraction and the existing native decoder. Its mapping pins
+the source SHA-256, while the fixture records and checks the DBC `VERSION`
+string and SHA-256 in
+[`tests/fixtures/vehicle-profiles/mazda-comparison/`](../../tests/fixtures/vehicle-profiles/mazda-comparison/).
+The mapping's imported bindings remain `user_mapped` with `source_only`
+eligibility; the fixture's separate per-field source-confidence labels mirror
+this inventory. Synthetic expected values do not promote source confidence.
+The fixtures contain no captured CAN frames.
+
+The representative comparison checks RPM and accelerator numeric boundaries,
+the directly mapped `Selector` and `ActualGear` enum domains, and exact output
+presence for each message. The accelerator's source percent is explicitly
+converted to the native decoder's normalized ratio. `Selector` uses DBC
+Motorola coordinates `2|3@0+`; walking from bit 2 through bits 1 and 0 matches
+the native `data[0] & 0x07` extraction. `SPEED` is excluded because the
+reviewed DBC has no `SPEED` field. One-bit DBC fields are not duplicated in
+this comparison; retained Mazda decoder tests continue to cover native request,
+door, lamp, wiper and brake decoding. `turn_state` is derived project behavior,
+not a direct DBC field.
+
+Three differences are intentional and covered by literal expectations:
+
+- Native Mazda rejects an `ENGINE_DATA` frame when RPM exceeds the DBC-declared
+  maximum, so it publishes neither engine field from that frame. The generated
+  decoder invalidates the RPM binding and can still decode the independent
+  accelerator binding. This is different fault scope, not a value mismatch.
+- The explicit imported enum map sends `ActualGear` labels `Unknown_7` through
+  `Unknown_13` to the generic `unknown` choice. That mapping yields a valid
+  enum; the native Mazda decoder invalidates those raw values and reports the
+  signal unavailable. Other tested mapped gear choices match the native enum
+  values.
+- The explicit imported enum map also sends `Selector` labels `Unknown_5`
+  through `Unknown_7` to the generic `unknown` choice. It remains a valid
+  imported enum, while native Mazda invalidates those raw values. Tested
+  P/R/N/D selector values match the native enum values. The current
+  per-field confidence remains Confirmed only for the reviewed P/R/N/D
+  interpretation; unknown source labels are not promoted.
+
+The comparison profile declares no timeouts and has no native handlers or
+`fresh_or_unverified` policy. Mazda brake freshness and the owner-approved
+factory-only brake opt-in remain unchanged; the retained native brake tests
+cover those contracts separately.
