@@ -326,20 +326,22 @@ TEST_CASE("applying generated factory YAML reproduces the controller setup") {
 TEST_CASE("override apply failure falls back to a clean factory configuration") {
   Controller controller{};
   auto configuration = over_capacity_config();
+  configuration.pixel_count = 300;
   REQUIRE(persisted::validate(configuration).ok());
   const std::string factory_json = loaded_factory_json();
 
   const auto result = persisted::apply_persisted_override_with_factory_fallback(
       configuration, factory_json, controller.leds, controller.engine);
 
-  REQUIRE(result.fell_back);
-  CHECK_FALSE(result.override_status.ok());
+  REQUIRE_FALSE(result.override_status.ok());
   CHECK(result.override_status.stage == persisted::ApplyStage::OutputBinding);
   CHECK(result.override_status.binding == local_argb_actions::BindingStatus::CapacityExceeded);
   CHECK_FALSE(result.factory_diagnostic.has_value());
   REQUIRE(result.factory_status.ok());
   CHECK(result.ok());
-  check_config(configuration, loaded_factory_config());
+  auto expected = loaded_factory_config();
+  expected.pixel_count = 300; // the strip length the renderer already started with
+  check_config(configuration, expected);
 
   REQUIRE(controller.engine.attach() == vehicle_signals::SignalStatus::Ok);
   controller.provider.start();
@@ -358,8 +360,7 @@ TEST_CASE("override failure still fails safely when the factory configuration ca
   const auto result = persisted::apply_persisted_override_with_factory_fallback(
       configuration, factory_json, controller.leds, controller.engine);
 
-  REQUIRE(result.fell_back);
-  CHECK_FALSE(result.override_status.ok());
+  REQUIRE_FALSE(result.override_status.ok());
   CHECK_FALSE(result.factory_status.ok());
   CHECK(result.factory_status.stage == persisted::ApplyStage::OutputBinding);
   CHECK(result.factory_status.binding == local_argb_actions::BindingStatus::CapacityExceeded);

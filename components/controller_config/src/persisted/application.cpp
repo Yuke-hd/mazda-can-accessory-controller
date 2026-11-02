@@ -172,7 +172,6 @@ PersistedOverrideApplyResult apply_persisted_override_with_factory_fallback(
     return result;
   }
 
-  result.fell_back = true;
   leds.clear();
   (void)engine.clear();
 
@@ -182,7 +181,10 @@ PersistedOverrideApplyResult apply_persisted_override_with_factory_fallback(
     return result;
   }
 
+  // The renderer already started with the override's strip length; keep it.
+  const auto pixel_count = configuration.pixel_count;
   configuration = std::move(*factory.configuration);
+  configuration.pixel_count = pixel_count;
   result.factory_status = apply_controller_config(configuration, leds, engine);
   if (!result.factory_status.ok()) {
     leds.clear();

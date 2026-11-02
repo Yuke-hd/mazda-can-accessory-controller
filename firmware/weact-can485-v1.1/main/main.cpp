@@ -258,17 +258,16 @@ bool configure_engine_lighting(
         controller_config::persisted::apply_persisted_override_with_factory_fallback(
             active_configuration, controller_config::factory_default_config_json(), led_actions,
             engine);
-    if (!result.override_status.ok())
+    if (!result.override_status.ok()) {
       log_apply_failure("PersistedOverride", result.override_status);
-    if (result.factory_diagnostic.has_value()) {
       selected.source = controller_config::persisted::ConfigurationSource::FactoryDefault;
-      selected.factory_diagnostic = result.factory_diagnostic;
-      log_configuration_diagnostic("factory configuration rejected after override apply failure",
-                                   *result.factory_diagnostic);
-    } else if (result.fell_back) {
-      selected.source = controller_config::persisted::ConfigurationSource::FactoryDefault;
-      if (!result.factory_status.ok())
+      if (result.factory_diagnostic.has_value()) {
+        selected.factory_diagnostic = result.factory_diagnostic;
+        log_configuration_diagnostic("factory configuration rejected after override apply failure",
+                                     *result.factory_diagnostic);
+      } else if (!result.factory_status.ok()) {
         log_apply_failure("FactoryDefault", result.factory_status);
+      }
     }
     applied = result.ok();
   } else {

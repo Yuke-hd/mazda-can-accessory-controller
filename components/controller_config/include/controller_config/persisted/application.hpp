@@ -49,10 +49,9 @@ struct PersistedOverrideApplyResult final {
   ApplyStatus override_status{};
   ApplyStatus factory_status{};
   std::optional<ConfigDiagnostic> factory_diagnostic{};
-  bool fell_back{false};
 
   [[nodiscard]] bool ok() const noexcept {
-    return fell_back ? factory_status.ok() && !factory_diagnostic.has_value()
+    return !override_status.ok() ? factory_status.ok() && !factory_diagnostic.has_value()
                      : override_status.ok();
   }
 };

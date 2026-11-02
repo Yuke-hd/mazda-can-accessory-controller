@@ -327,7 +327,8 @@ parsed persisted override fails while applying, the controller logs the
 and applies the embedded factory configuration from that clean state. The
 factory model replaces the override in the active in-memory configuration for
 the current boot; the persisted override remains stored unchanged and is
-retried on the next boot. A successful fallback renders the normal factory
+retried on the next boot. The fallback keeps the override's strip length
+(`pixel_count`) for that boot. A successful fallback renders the normal factory
 profile. If the factory model cannot be parsed or applied, startup stays
 failed off to black and does not start CAN. A failure applying an already
 selected factory configuration is logged as a `FactoryDefault` failure.
