@@ -123,7 +123,8 @@ else()
     target_compile_options(replay_selected_profile_controller_tests PRIVATE
       -Wall -Wextra -Wpedantic)
   endif()
-  doctest_discover_tests(replay_selected_profile_controller_tests)
+  doctest_discover_tests(replay_selected_profile_controller_tests
+    TEST_PREFIX "replay_selected_profile_controller_tests.")
 
   add_executable(selected_profile_config_tests selected_profile_config_tests.cpp)
   target_include_directories(selected_profile_config_tests PRIVATE
@@ -140,13 +141,15 @@ else()
   else()
     target_compile_options(selected_profile_config_tests PRIVATE -Wall -Wextra -Wpedantic)
   endif()
-  doctest_discover_tests(selected_profile_config_tests)
+  doctest_discover_tests(selected_profile_config_tests
+    TEST_PREFIX "selected_profile_config_tests.")
 endif()
 
 if(VEHICLE_PROFILE_IS_NATIVE)
   set(_selected_profile_config_matrix_args
     --build-dir "${CMAKE_BINARY_DIR}/selected-profile-config-matrix"
     --cmake "${CMAKE_COMMAND}"
+    --configuration "$<CONFIG>"
     --generator "${CMAKE_GENERATOR}")
   if(MAZDA_VEHICLE_CAN_CORE_ROOT)
     list(APPEND _selected_profile_config_matrix_args
