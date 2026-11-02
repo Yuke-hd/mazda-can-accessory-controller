@@ -48,6 +48,9 @@ public:
   // Consumers interact only through the generic, value-only provider port.
   [[nodiscard]] vehicle_signals::SignalProvider &provider() noexcept;
   [[nodiscard]] const vehicle_signals::SignalProvider &provider() const noexcept;
+  // Advances while the notification worker makes progress, including idle
+  // passes; a callback that blocks the worker stops this count.
+  [[nodiscard]] std::uint32_t dispatch_progress() const noexcept;
 
 private:
   alignas(std::max_align_t) std::byte storage_[kProfileRuntimeServiceStorageBytes]{};
