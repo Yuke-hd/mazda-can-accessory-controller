@@ -388,10 +388,13 @@ the path mistake.
 The follow-up source change at `31e4a26` is whitespace-only. An incremental
 host build passed, the formatter check passed for the changed header, and a
 focused CTest run passed 4/4: `selected_profile_config_matrix`, both override
-apply failure cases, and `companion_ble_startup_contracts`. The selected-profile
-matrix's nested CTest log records 10 passing cases across its A/B/empty
-selections, including factory repair upload, refused startup, later startup
-refusal and empty-provider behavior. Its log is
+apply failure cases, and `companion_ble_startup_contracts`. The registered
+selected-profile matrix CTest passed across its A/B/empty selections. The
+nested CTest log directory is reused, so its `LastTest.log` records the final
+empty selection only: 10 passing cases, including refused startup, later
+startup refusal and empty-provider behavior. The outer CTest log records the
+matrix pass. Logs are
+`/tmp/mazda-m8/builds/401-post306-host/logs/ctest.log` and
 `/tmp/mazda-m8/builds/401-post306-host/selected-profile-config-matrix/Testing/Temporary/LastTest.log`.
 
 The final eight-image matrix above was freshly built after #306 merged and
