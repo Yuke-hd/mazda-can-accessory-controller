@@ -79,6 +79,7 @@ def configure_case(
     expected_engine_id: int | None = None,
     expected_brake_id: int | None = None,
 ) -> None:
+    configuration = args.configuration or "Debug"
     command = [
         args.cmake,
         "-S",
@@ -87,7 +88,7 @@ def configure_case(
         str(args.build_dir),
         "-G",
         args.generator,
-        "-DCMAKE_BUILD_TYPE=Debug",
+        f"-DCMAKE_BUILD_TYPE={configuration}",
         "-DBUILD_TESTING=ON",
         "-DMAZDA_BUILD_HOST_TESTS=ON",
         f"-DVEHICLE_PROFILE={mapping}",
@@ -101,20 +102,54 @@ def configure_case(
 
     replay_executable = None
     for target in (TARGET, CONFIG_TARGET):
-        build = [args.cmake, "--build", str(args.build_dir), "--target", target, "--parallel"]
+        build = [
+            args.cmake,
+            "--build",
+            str(args.build_dir),
+            "--config",
+            configuration,
+            "--target",
+            target,
+            "--parallel",
+        ]
         if args.jobs:
             build.append(str(args.jobs))
         subprocess.run(build, check=True)
 
-        executable = args.build_dir / "tests/host" / target
-        if executable.with_suffix(".exe").exists():
-            executable = executable.with_suffix(".exe")
-        subprocess.run([str(executable)], check=True)
         if target == TARGET:
-            replay_executable = executable
+            replay_executable = find_target_executable(
+                args.build_dir, target, configuration
+            )
+
+    subprocess.run(
+        [
+            args.ctest,
+            "--test-dir",
+            str(args.build_dir),
+            "--build-config",
+            configuration,
+            "--output-on-failure",
+            "--tests-regex",
+            f"^({TARGET}|{CONFIG_TARGET})\\.",
+        ],
+        check=True,
+    )
 
     if expected_engine_id == 256 and expected_brake_id == 145:
         verify_embedded_factory_config(args, command, replay_executable)
+
+
+def find_target_executable(build_dir: Path, target: str, configuration: str) -> Path:
+    """Find a built host target for single- and multi-configuration generators."""
+    host_dir = build_dir / "tests/host"
+    for executable in (
+        host_dir / configuration / target,
+        host_dir / target,
+    ):
+        for candidate in (executable, executable.with_suffix(".exe")):
+            if candidate.is_file():
+                return candidate
+    raise FileNotFoundError(f"could not find built target {target} under {host_dir}")
 
 
 def verify_embedded_factory_config(
@@ -168,7 +203,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--cmake", default="cmake")
+    parser.add_argument("--ctest", default="ctest")
     parser.add_argument("--generator", default="Ninja")
+    parser.add_argument("--configuration", default="Debug")
     parser.add_argument("--jobs", type=int, default=0)
     parser.add_argument("--core-source-dir", type=Path)
     args = parser.parse_args()
