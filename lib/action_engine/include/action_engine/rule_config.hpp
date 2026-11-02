@@ -76,6 +76,11 @@ enum class FreshnessRequirement : std::uint8_t {
   FreshOrUnverified, // Fresh or FreshnessUnverified readings.
 };
 
+// Whether this engine accepts rules that explicitly opt into
+// FreshnessUnverified readings. This gates configuration only; each rule's
+// requirement still controls runtime fail-off against the current sample.
+enum class UnverifiedFreshnessPolicy : std::uint8_t { Allow, Reject };
+
 // "<signal_key> <comparison> <operand>", for example
 // "transmission.gear Equal reverse".
 struct SignalCondition {
