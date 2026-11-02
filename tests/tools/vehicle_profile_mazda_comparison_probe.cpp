@@ -20,9 +20,9 @@ const vehicle_profile_runtime::DispatchEntry *find_entry(const std::uint32_t ide
   return nullptr;
 }
 
-const vehicle_profile_runtime::DecodeResult *find_result(
-    const std::array<vehicle_profile_runtime::DecodeResult, 4> &results,
-    const std::size_t count, const vehicle_signals::SignalId id) {
+const vehicle_profile_runtime::DecodeResult *
+find_result(const std::array<vehicle_profile_runtime::DecodeResult, 4> &results,
+            const std::size_t count, const vehicle_signals::SignalId id) {
   for (std::size_t index = 0; index < count; ++index) {
     if (results[index].id == id) {
       return &results[index];
@@ -34,15 +34,15 @@ const vehicle_profile_runtime::DecodeResult *find_result(
 void write_number(const vehicle_profile_runtime::DecodeResult *result) {
   const bool valid = result != nullptr && result->valid;
   const auto value = valid ? result->value.as_number() : std::nullopt;
-  std::cout << (result != nullptr ? 1 : 0) << '\t' << (valid && value.has_value() ? 1 : 0)
-            << '\t' << (value.has_value() ? *value : 0.0F) << '\t';
+  std::cout << (result != nullptr ? 1 : 0) << '\t' << (valid && value.has_value() ? 1 : 0) << '\t'
+            << (value.has_value() ? *value : 0.0F) << '\t';
 }
 
 void write_enumeration(const vehicle_profile_runtime::DecodeResult *result) {
   const bool valid = result != nullptr && result->valid;
   const auto value = valid ? result->value.as_enumeration() : std::nullopt;
-  std::cout << (result != nullptr ? 1 : 0) << '\t' << (valid && value.has_value() ? 1 : 0)
-            << '\t' << (value.has_value() ? *value : 0U) << '\t';
+  std::cout << (result != nullptr ? 1 : 0) << '\t' << (valid && value.has_value() ? 1 : 0) << '\t'
+            << (value.has_value() ? *value : 0U) << '\t';
 }
 
 const char *status_name(const mazda::candidate::DecodeStatus status) {
@@ -63,8 +63,7 @@ int main() {
   const auto *const rpm_metadata = vehicle_profile::kCatalog.find("vehicle.engine_rpm");
   const auto *const pedal_metadata =
       vehicle_profile::kCatalog.find("vehicle.accelerator_pedal_position");
-  const auto *const selector_metadata =
-      vehicle_profile::kCatalog.find("vehicle.selector_position");
+  const auto *const selector_metadata = vehicle_profile::kCatalog.find("vehicle.selector_position");
   const auto *const gear_metadata = vehicle_profile::kCatalog.find("vehicle.actual_gear");
   if (rpm_metadata == nullptr || pedal_metadata == nullptr || selector_metadata == nullptr ||
       gear_metadata == nullptr) {
@@ -109,9 +108,8 @@ int main() {
     write_number(find_result(generated, generated_count, pedal_metadata->id));
     write_enumeration(find_result(generated, generated_count, selector_metadata->id));
     write_enumeration(find_result(generated, generated_count, gear_metadata->id));
-    std::cout << status_name(native_status) << '\t'
-              << (native.engine_rpm.is_valid() ? 1 : 0) << '\t'
-              << (native.engine_rpm.is_valid() ? native.engine_rpm.value : 0.0F) << '\t'
+    std::cout << status_name(native_status) << '\t' << (native.engine_rpm.is_valid() ? 1 : 0)
+              << '\t' << (native.engine_rpm.is_valid() ? native.engine_rpm.value : 0.0F) << '\t'
               << (native.accelerator_pedal_position.is_valid() ? 1 : 0) << '\t'
               << (native.accelerator_pedal_position.is_valid()
                       ? native.accelerator_pedal_position.value
