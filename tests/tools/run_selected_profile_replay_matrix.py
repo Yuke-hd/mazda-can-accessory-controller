@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reconfigure the host replay against two imported profiles and an empty one."""
+"""Reconfigure replay and config integration against imported and empty profiles."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
 TARGET = "replay_selected_profile_controller_tests"
+CONFIG_TARGET = "selected_profile_config_tests"
 FACTORY_JSON_TARGET = "controller_config_factory_json"
 FACTORY_HEADER_TARGET = "replay_factory_config_header"
 
@@ -98,17 +99,22 @@ def configure_case(
         command.append(f"-DVEHICLE_CAN_CORE_SOURCE_DIR={args.core_source_dir}")
     subprocess.run(command, check=True)
 
-    build = [args.cmake, "--build", str(args.build_dir), "--target", TARGET, "--parallel"]
-    if args.jobs:
-        build.append(str(args.jobs))
-    subprocess.run(build, check=True)
+    replay_executable = None
+    for target in (TARGET, CONFIG_TARGET):
+        build = [args.cmake, "--build", str(args.build_dir), "--target", target, "--parallel"]
+        if args.jobs:
+            build.append(str(args.jobs))
+        subprocess.run(build, check=True)
 
-    executable = args.build_dir / "tests/host" / TARGET
-    if executable.with_suffix(".exe").exists():
-        executable = executable.with_suffix(".exe")
-    subprocess.run([str(executable)], check=True)
+        executable = args.build_dir / "tests/host" / target
+        if executable.with_suffix(".exe").exists():
+            executable = executable.with_suffix(".exe")
+        subprocess.run([str(executable)], check=True)
+        if target == TARGET:
+            replay_executable = executable
+
     if expected_engine_id == 256 and expected_brake_id == 145:
-        verify_embedded_factory_config(args, command, executable)
+        verify_embedded_factory_config(args, command, replay_executable)
 
 
 def verify_embedded_factory_config(

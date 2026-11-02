@@ -124,6 +124,39 @@ else()
       -Wall -Wextra -Wpedantic)
   endif()
   doctest_discover_tests(replay_selected_profile_controller_tests)
+
+  add_executable(selected_profile_config_tests selected_profile_config_tests.cpp)
+  target_include_directories(selected_profile_config_tests PRIVATE
+    ${VEHICLE_PROFILE_INCLUDE_DIR})
+  target_link_libraries(selected_profile_config_tests PRIVATE
+    companion_config vehicle_profile_runtime vehicle_profile_replay_adapter
+    vehicle_signals_test_support doctest::doctest)
+  target_compile_definitions(selected_profile_config_tests PRIVATE
+    CONTROLLER_CONFIG_FACTORY_JSON_PATH="${CONTROLLER_CONFIG_FACTORY_JSON}")
+  add_dependencies(selected_profile_config_tests controller_config_factory_json)
+  target_compile_features(selected_profile_config_tests PRIVATE cxx_std_17)
+  if(MSVC)
+    target_compile_options(selected_profile_config_tests PRIVATE /W4 /permissive-)
+  else()
+    target_compile_options(selected_profile_config_tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  doctest_discover_tests(selected_profile_config_tests)
+endif()
+
+if(VEHICLE_PROFILE_IS_NATIVE)
+  set(_selected_profile_config_matrix_args
+    --build-dir "${CMAKE_BINARY_DIR}/selected-profile-config-matrix"
+    --cmake "${CMAKE_COMMAND}"
+    --generator "${CMAKE_GENERATOR}")
+  if(MAZDA_VEHICLE_CAN_CORE_ROOT)
+    list(APPEND _selected_profile_config_matrix_args
+      --core-source-dir "${MAZDA_VEHICLE_CAN_CORE_ROOT}")
+  endif()
+  add_test(NAME selected_profile_config_matrix
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tests/tools/run_selected_profile_replay_matrix.py"
+            ${_selected_profile_config_matrix_args})
+  set_tests_properties(selected_profile_config_matrix PROPERTIES PROCESSORS 2)
 endif()
 
 add_executable(replay_output_stage_tests replay_output_stage_tests.cpp)
