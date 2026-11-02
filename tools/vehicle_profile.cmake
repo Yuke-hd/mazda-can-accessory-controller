@@ -72,7 +72,7 @@ function(vehicle_profile_select)
   endif()
 
   execute_process(COMMAND "${Python3_EXECUTABLE}" -c
-    "from pathlib import Path; import json,sys; p=Path(sys.argv[1]).resolve(); print(';'.join(str((p.parent / item['path']).resolve()).replace(';', r'\\;') for item in json.loads(p.read_text(encoding='utf-8'))['sources']))"
+    "from pathlib import Path; import json,sys; p=Path(sys.argv[1]); print(';'.join(str((p.parent / item['path']).resolve()).replace(';', r'\\;') for item in json.loads(p.read_text(encoding='utf-8'))['sources']))"
     "${_mapping}" RESULT_VARIABLE _sources_result OUTPUT_VARIABLE _source_paths
     ERROR_VARIABLE _sources_error OUTPUT_STRIP_TRAILING_WHITESPACE)
   if(NOT _sources_result EQUAL 0)

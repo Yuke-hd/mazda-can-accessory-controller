@@ -187,6 +187,31 @@ file(WRITE "${{CMAKE_BINARY_DIR}}/selection.txt"
         self.assertNotEqual(failed.returncode, 0)
         self.assertIn("source_digest_mismatch", failed.stdout + failed.stderr)
 
+    def test_symlink_mapping_tracks_sources_relative_to_selected_mapping(self):
+        fixtures = self.root / "tests/fixtures/vehicle-profiles/dbc"
+        selected = self.root / "selected"
+        selected.mkdir()
+        for name in ("demo-a.dbc", "demo-b.dbc"):
+            shutil.copy2(fixtures / name, selected / name)
+        (selected / "mapping.json").symlink_to(fixtures / "mapping-two-source.json")
+
+        source = self.project("symlink-mapping")
+        build = Path(self.temporary.name) / "build-symlink-mapping"
+        configured = self.configure(source, build, "selected/mapping.json", self.root)
+        self.assertEqual(configured.returncode, 0, configured.stdout + configured.stderr)
+        dependencies = (build / "dependencies.txt").read_text().splitlines()
+        self.assertIn(str((selected / "demo-a.dbc").resolve()), dependencies)
+        self.assertIn(str((selected / "demo-b.dbc").resolve()), dependencies)
+        self.assertNotIn(str((fixtures / "demo-a.dbc").resolve()), dependencies)
+        self.assertNotIn(str((fixtures / "demo-b.dbc").resolve()), dependencies)
+
+        consumed_source = selected / "demo-a.dbc"
+        consumed_source.write_bytes(consumed_source.read_bytes() + b"\n")
+        rebuilt = subprocess.run(["cmake", "--build", str(build)],
+                                 capture_output=True, text=True)
+        self.assertNotEqual(rebuilt.returncode, 0, rebuilt.stdout + rebuilt.stderr)
+        self.assertIn("source_digest_mismatch", rebuilt.stdout + rebuilt.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
