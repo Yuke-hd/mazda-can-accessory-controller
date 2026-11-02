@@ -99,42 +99,21 @@ set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
 set(CONTROLLER_CONFIG_FACTORY_JSON
     "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
     CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${CONTROLLER_CONFIG_DEFAULT_YAML}"
-    "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
-    "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
-    "${OUTPUT_CATALOG_JSON}")
 include("${CMAKE_CURRENT_LIST_DIR}/../../tools/vehicle_profile.cmake")
 vehicle_profile_select()
-message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
-
-execute_process(
-  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
-          "${CONTROLLER_CONFIG_DEFAULT_YAML}" "${CONTROLLER_CONFIG_FACTORY_JSON}"
-          --output-catalog "${OUTPUT_CATALOG_JSON}"
-  RESULT_VARIABLE _controller_config_compile_result
-  OUTPUT_VARIABLE _controller_config_compile_output
-  ERROR_VARIABLE _controller_config_compile_error)
-if(NOT _controller_config_compile_result EQUAL 0)
-  message(FATAL_ERROR
-    "Factory controller configuration compilation failed:\n"
-    "${_controller_config_compile_output}${_controller_config_compile_error}")
+set(_vehicle_profile_json "")
+if(NOT VEHICLE_PROFILE_IS_NATIVE)
+  set(_vehicle_profile_json "${VEHICLE_PROFILE_ARTIFACT_DIR}/vehicle_profile.json")
 endif()
-file(SHA256 "${CONTROLLER_CONFIG_FACTORY_JSON}" _controller_config_factory_sha256)
-message(STATUS "Factory controller configuration JSON SHA256: ${_controller_config_factory_sha256}")
-
-add_custom_command(
-  OUTPUT "${CONTROLLER_CONFIG_FACTORY_JSON}"
-  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
-          "${CONTROLLER_CONFIG_DEFAULT_YAML}" "${CONTROLLER_CONFIG_FACTORY_JSON}"
-          --output-catalog "${OUTPUT_CATALOG_JSON}"
-  DEPENDS "${CONTROLLER_CONFIG_DEFAULT_YAML}"
-          "${CMAKE_CURRENT_LIST_DIR}/../../tools/compile_controller_config.py"
-          "${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_signal_catalog.json"
-          "${OUTPUT_CATALOG_JSON}"
-  COMMENT "Compiling factory controller configuration")
-add_custom_target(controller_config_factory_json
-  DEPENDS "${CONTROLLER_CONFIG_FACTORY_JSON}")
+include("${CMAKE_CURRENT_LIST_DIR}/../../tools/controller_config_factory.cmake")
+controller_config_factory_generate(
+  YAML "${CONTROLLER_CONFIG_DEFAULT_YAML}"
+  OUTPUT_JSON "${CONTROLLER_CONFIG_FACTORY_JSON}"
+  OUTPUT_CATALOG "${OUTPUT_CATALOG_JSON}"
+  SIGNAL_CATALOG "${VEHICLE_PROFILE_COMPILER_CATALOG}"
+  PROFILE_JSON "${_vehicle_profile_json}"
+  ARTIFACT_TARGET "${VEHICLE_PROFILE_ARTIFACT_TARGET}")
+message(STATUS "Factory controller configuration YAML: ${CONTROLLER_CONFIG_DEFAULT_YAML}")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(weact_can485_v11_vehicle_listen_only)
