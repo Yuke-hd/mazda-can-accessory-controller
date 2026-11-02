@@ -1,12 +1,21 @@
 #include "replay/local_argb_stage.hpp"
 
+#include <optional>
+#include <utility>
+
 #include "controller_config/lighting_profile.hpp"
 #include "controller_config/lighting_profile_application.hpp"
+#include "controller_config/persisted/application.hpp"
+#include "controller_config/persisted/json_loader.hpp"
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
 #include "local_argb/renderer.hpp"
 #include "local_argb/stall_gated_sink.hpp"
 #include "local_argb_actions/led_action_sink.hpp"
+
+#if defined(CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED)
+#include "factory_config.hpp"
+#endif
 
 namespace replay {
 namespace {
@@ -35,9 +44,24 @@ public:
         renderer_(pixels, local_argb::internal::kCenterOutFillAnimation) {}
 
   [[nodiscard]] bool configure(action_engine::ActionEngine &engine) noexcept {
+#if defined(CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED)
+    auto parsed =
+        controller_config::persisted::parse_controller_config(generated::kFactoryConfigJson);
+    if (!parsed.ok())
+      return false;
+    factory_config_.emplace(std::move(*parsed.configuration));
+    return controller_config::persisted::apply_controller_config(*factory_config_, led_actions_,
+                                                                 engine)
+        .ok();
+#else
+#if defined(REPLAY_SELECTED_PROFILE_NATIVE) && REPLAY_SELECTED_PROFILE_NATIVE
     return controller_config::apply_lighting_profile(controller_config::kDefaultLightingProfile,
                                                      led_actions_, engine)
         .ok();
+#else
+#error "selected-profile replay must consume generated factory JSON"
+#endif
+#endif
   }
 
   [[nodiscard]] bool start() noexcept { return renderer_.start(); }
@@ -64,6 +88,7 @@ private:
   local_argb::internal::StallGatedSink gate_;
   local_argb_actions::LedActionSink led_actions_;
   local_argb::internal::RendererController renderer_;
+  std::optional<controller_config::persisted::ControllerConfig> factory_config_{};
 };
 
 LocalArgbOutputStage::LocalArgbOutputStage(local_argb::PixelFrameSink &pixels,

@@ -34,18 +34,27 @@ target_link_libraries(replay_signal_observer INTERFACE vehicle_signals vehicle_c
 target_compile_features(replay_signal_observer INTERFACE cxx_std_17)
 
 add_library(replay_controller STATIC src/controller.cpp src/signal_observer_fan_out.cpp)
-target_include_directories(
-  replay_controller
-  PRIVATE
-    ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
-    ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
-    ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
-)
 target_link_libraries(
   replay_controller
   PUBLIC replay_source replay_output_stage replay_signal_observer
-  PRIVATE action_engine mazda_telemetry
+  PRIVATE action_engine
 )
+if(VEHICLE_PROFILE_IS_NATIVE)
+  target_include_directories(
+    replay_controller
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+      ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
+  )
+  target_link_libraries(replay_controller PRIVATE mazda_telemetry)
+  target_compile_definitions(replay_controller PRIVATE REPLAY_SELECTED_PROFILE_NATIVE=1)
+else()
+  target_include_directories(replay_controller PRIVATE ${VEHICLE_PROFILE_INCLUDE_DIR})
+  target_link_libraries(replay_controller PRIVATE vehicle_profile_replay_adapter)
+  target_compile_definitions(replay_controller PRIVATE REPLAY_SELECTED_PROFILE_NATIVE=0)
+endif()
+target_include_directories(replay_controller PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include)
 replay_warnings(replay_controller)
 
 add_library(replay_scheduler STATIC src/scheduler.cpp)
@@ -75,6 +84,36 @@ target_link_libraries(
   PUBLIC replay_output_stage local_argb_pixel_frame
   PRIVATE controller_config local_argb local_argb_actions local_argb_sink_contract
 )
+if(TARGET controller_config_factory_json)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(_replay_factory_json_header
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/factory_config.hpp")
+  add_custom_command(
+    OUTPUT "${_replay_factory_json_header}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/embed_factory_config.py"
+            --input "${CONTROLLER_CONFIG_FACTORY_JSON}"
+            --output "${_replay_factory_json_header}"
+    DEPENDS "${CONTROLLER_CONFIG_FACTORY_JSON}"
+            "${CMAKE_SOURCE_DIR}/tools/embed_factory_config.py"
+    COMMENT "Embedding selected factory configuration for replay"
+    VERBATIM)
+  add_custom_target(replay_factory_config_header
+    DEPENDS "${_replay_factory_json_header}")
+  add_dependencies(replay_factory_config_header controller_config_factory_json)
+  target_include_directories(replay_local_argb_stage PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(replay_local_argb_stage PRIVATE
+    CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED=1)
+  add_dependencies(replay_local_argb_stage replay_factory_config_header)
+elseif(VEHICLE_PROFILE_IS_NATIVE)
+  target_compile_definitions(replay_local_argb_stage PRIVATE
+    REPLAY_SELECTED_PROFILE_NATIVE=1)
+else()
+  message(FATAL_ERROR "selected-profile replay requires generated factory JSON")
+endif()
 replay_warnings(replay_local_argb_stage)
 
 # PixelFrameSink outputs of the local ARGB stage. They depend on the frame
