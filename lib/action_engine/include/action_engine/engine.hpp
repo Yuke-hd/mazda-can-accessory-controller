@@ -68,7 +68,12 @@ public:
   // Shared by range and sampled state rules.
   static constexpr std::size_t kMaxPolledRules = PolledRuleSet::kCapacity;
 
+  // Keeps the historical permissive policy for existing compositions.
   explicit ActionEngine(vehicle_signals::SignalProvider &provider) noexcept;
+  // Select Reject for providers whose configuration may not opt into
+  // FreshnessUnverified readings. This does not alter per-sample fail-off.
+  ActionEngine(vehicle_signals::SignalProvider &provider,
+               UnverifiedFreshnessPolicy unverified_freshness) noexcept;
 
   ActionEngine(const ActionEngine &) = delete;
   ActionEngine &operator=(const ActionEngine &) = delete;
@@ -85,7 +90,8 @@ public:
   [[nodiscard]] ConfigStatus add_event_rule(const EventRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_range_rule(const RangeRuleConfig &config) noexcept;
   // Failures, in check order: InvalidState, InvalidAction, DuplicateAction,
-  // then resolve_sampled_condition()'s, then CapacityExceeded.
+  // then resolve_sampled_condition()'s, selected freshness policy, then
+  // CapacityExceeded.
   [[nodiscard]] ConfigStatus add_sampled_state_rule(const SampledStateRuleConfig &config) noexcept;
 
   [[nodiscard]] vehicle_signals::SignalStatus attach() noexcept;
@@ -114,12 +120,14 @@ private:
 
   // InvalidState, InvalidAction or DuplicateAction, else Ok.
   [[nodiscard]] ConfigStatus check_action(ActionId action, RuleOutput output) const noexcept;
+  [[nodiscard]] ConfigStatus check_freshness(FreshnessRequirement freshness) const noexcept;
   // Checks the action, then resolves the condition through the catalog.
   [[nodiscard]] ConditionResolution resolve_rule(const SignalCondition &condition, ActionId action,
                                                  FreshnessRequirement freshness,
                                                  RuleOutput output) const noexcept;
 
   vehicle_signals::SignalProvider *provider_{nullptr};
+  UnverifiedFreshnessPolicy unverified_freshness_{UnverifiedFreshnessPolicy::Allow};
   SinkFanOut sinks_{};
   RuleSet rules_{};
   PolledRuleSet polled_rules_{};

@@ -22,9 +22,13 @@ using action_engine::ConfigStatus;
 using action_engine::EventEdge;
 using action_engine::EventRuleConfig;
 using action_engine::FreshnessRequirement;
+using action_engine::NumericRange;
+using action_engine::RangeRuleConfig;
 using action_engine::RuleOperand;
+using action_engine::SampledStateRuleConfig;
 using action_engine::SignalCondition;
 using action_engine::StateRuleConfig;
+using action_engine::UnverifiedFreshnessPolicy;
 using test_support::FakeSignalProvider;
 using test_support::RecordingActionSink;
 using vehicle_signals::SignalStatus;
@@ -92,6 +96,30 @@ struct Bench final {
 };
 
 } // namespace
+
+TEST_CASE("a selected policy rejects unverified freshness across every rule kind") {
+  FakeSignalProvider provider{kView};
+  ActionEngine engine{provider, UnverifiedFreshnessPolicy::Reject};
+
+  CHECK(engine.add_state_rule(door_open_light(FreshnessRequirement::FreshOrUnverified)) ==
+        ConfigStatus::UnsupportedCapability);
+
+  auto event = reverse_chime();
+  event.freshness = FreshnessRequirement::FreshOrUnverified;
+  CHECK(engine.add_event_rule(event) == ConfigStatus::UnsupportedCapability);
+
+  const RangeRuleConfig range{"motion.speed_kph", NumericRange{0.0F, 100.0F},
+                              NumericRange{0.0F, 1.0F}, ActionId{6},
+                              FreshnessRequirement::FreshOrUnverified};
+  CHECK(engine.add_range_rule(range) == ConfigStatus::UnsupportedCapability);
+
+  const SampledStateRuleConfig sampled{
+      SignalCondition{"motion.speed_kph", Comparison::Greater, RuleOperand::number(30.0F)},
+      ActionId{7}, FreshnessRequirement::FreshOrUnverified, std::nullopt};
+  CHECK(engine.add_sampled_state_rule(sampled) == ConfigStatus::UnsupportedCapability);
+
+  CHECK(engine.add_state_rule(door_open_light()) == ConfigStatus::Ok);
+}
 
 TEST_CASE("fake provider drives state and event rules through the engine into a sink") {
   Bench bench{};
