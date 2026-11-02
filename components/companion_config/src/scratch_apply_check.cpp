@@ -9,7 +9,7 @@ ScratchApplyCheck::dry_run(const controller_config::persisted::ControllerConfig 
   engine_.reset();
   leds_.reset();
   leds_.emplace(lighting_, clock_);
-  engine_.emplace(provider_);
+  engine_.emplace(provider_, unverified_freshness_);
   // Never attached: the dry run resolves rules against the provider catalog
   // and binds outputs, but subscribes to nothing and publishes nothing.
   return controller_config::persisted::apply_controller_config(config, *leds_, *engine_);

@@ -14,7 +14,7 @@ enum class ConfigStatus : std::uint8_t {
   InvalidAction,         // The rule's ActionId is zero.
   DuplicateAction,       // A level (state, range or sampled state) rule already drives it.
   UnknownSignal,         // The signal key is not in the provider catalog.
-  UnsupportedCapability, // The signal cannot notify (or, for polled rules, be read).
+  UnsupportedCapability, // Required delivery/read or the selected freshness policy is unsupported.
   TypeMismatch,          // The operand type differs from the signal type.
   UnknownChoice,         // The enum choice key is not a choice of the signal.
   InvalidOperand,        // A Number operand is NaN or infinite.
