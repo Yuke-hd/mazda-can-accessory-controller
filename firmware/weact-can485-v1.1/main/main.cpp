@@ -226,12 +226,11 @@ static_assert(controller_config::persisted::kMaxStoredControllerConfigJsonBytes 
 extern const std::uint8_t output_catalog_start[] asm("_binary_output_catalog_json_start");
 extern const std::uint8_t output_catalog_end[] asm("_binary_output_catalog_json_end");
 
-// Starts the optional companion BLE link. It runs on its own startup task, so
-// a failure here or later only loses the companion link; CAN, telemetry, the
-// LED renderer and fail-off are already running and are not affected. Not
-// inlined, so the Device info value stays out of app_main's own frame. The
-// vehicle I/O startup no longer runs on the main task, so this call chain may
-// now set the main task's stack peak; re-measure it on the bench (ADR-0004).
+// Starts the optional companion BLE link. A refused vehicle-I/O startup keeps
+// CAN stopped and LEDs fail-off but still exposes Config so a valid document
+// can repair the next boot. The provider and catalogs have static storage and
+// remain readable while telemetry is stopped. Not inlined, so Device info
+// stays out of app_main's own frame.
 __attribute__((noinline)) void start_companion_link() noexcept {
   // Both strings have static storage; start() encodes them before returning.
   companion_protocol::DeviceInfo device_info{};
@@ -270,7 +269,7 @@ bool configure_engine_lighting(
       store ? &*store : nullptr, controller_config::factory_default_config_json());
   // `backend` is null or the static config_backend, which outlives the service.
   if (!selected.ok()) {
-    config_service.record_boot(selected, backend);
+    config_service.record_boot(selected, backend, false);
     (void)local_argb::start(); // Clear the full strip even when no document is usable.
     if (selected.override_diagnostic.has_value())
       log_configuration_diagnostic("persisted override rejected", *selected.override_diagnostic);
@@ -292,18 +291,20 @@ bool configure_engine_lighting(
 
   active_configuration = std::move(*selected.configuration);
   if (!local_argb::start(static_cast<std::size_t>(active_configuration.pixel_count))) {
-    config_service.record_boot(selected, backend);
+    config_service.record_boot(selected, backend, false);
     ESP_LOGE(kTag, "explicit startup LED clear failed; refusing to start CAN");
     return false;
   }
 
   bool applied = false;
+  bool override_apply_rejected = false;
   if (selected.source == controller_config::persisted::ConfigurationSource::PersistedOverride) {
     const auto result =
         controller_config::persisted::apply_persisted_override_with_factory_fallback(
             active_configuration, controller_config::factory_default_config_json(), led_actions,
             engine);
     if (!result.override_status.ok()) {
+      override_apply_rejected = true;
       log_apply_failure("PersistedOverride", result.override_status);
       selected.source = controller_config::persisted::ConfigurationSource::FactoryDefault;
       if (result.factory_diagnostic.has_value()) {
@@ -323,7 +324,7 @@ bool configure_engine_lighting(
     applied = status.ok();
   }
 
-  config_service.record_boot(selected, backend);
+  config_service.record_boot(selected, backend, applied, override_apply_rejected);
   if (!applied)
     return false;
 
@@ -468,14 +469,18 @@ extern "C" void app_main(void) {
     ESP_LOGE(kTag, "board safe-default initialization failed; refusing to start");
     return;
   }
-  if (!start_vehicle_io_on_core1()) {
+  const bool vehicle_io_started = start_vehicle_io_on_core1();
+  if (!vehicle_io_started) {
+    config_service.mark_lighting_setup_failed();
     ESP_LOGE(kTag, "vehicle I/O startup refused; refusing to continue");
-    return;
   }
 
-  // The companion link starts only after startup black, NVS initialization and
-  // CAN start, and its result never gates lighting.
+  // On successful startup this follows CAN start. On refusal, startup has
+  // returned with CAN stopped and LEDs fail-off, and BLE remains available for
+  // configuration repair. A timed-out startup restarts before reaching here.
   start_companion_link();
+  if (!vehicle_io_started)
+    return;
 #if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
   if (!freertos_runtime_stats_logger.start())
     ESP_LOGW(kTag, "FreeRTOS runtime diagnostic task could not be created; control continues");
