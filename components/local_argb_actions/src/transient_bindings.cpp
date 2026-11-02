@@ -64,6 +64,11 @@ void TransientBindings::discard_starts() noexcept {
     bindings_[index].retained = false;
 }
 
+void TransientBindings::clear() noexcept {
+  bindings_ = {};
+  count_ = 0;
+}
+
 bool TransientBindings::contains(const action_engine::ActionId action,
                                  const local_argb::internal::LedZone &zone) const noexcept {
   for (std::size_t index = 0; index < count_; ++index) {

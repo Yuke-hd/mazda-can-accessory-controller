@@ -36,6 +36,8 @@ public:
 
   // Forgets every rule's last emitted output.
   void reset() noexcept;
+  // Removes every rule. Safe only while the owning engine is detached.
+  void clear() noexcept;
   void on_sample(std::size_t index,
                  const vehicle_signals::SignalResult<vehicle_signals::SignalReading> &read,
                  ActionSink &out) noexcept;

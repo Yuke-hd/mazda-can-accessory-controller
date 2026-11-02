@@ -31,6 +31,8 @@ public:
 
   // Forgets every rule's runtime state.
   void reset() noexcept;
+  // Removes every rule. Safe only while the owning engine is detached.
+  void clear() noexcept;
   void dispatch(const vehicle_signals::SignalNotification &notice, ActionSink &out) noexcept;
 
 private:

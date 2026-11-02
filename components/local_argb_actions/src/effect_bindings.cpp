@@ -48,6 +48,11 @@ local_argb::internal::EffectPriorities EffectBindings::priorities() const noexce
           highest_active(LedEffect::Brake)};
 }
 
+void EffectBindings::clear() noexcept {
+  bindings_ = {};
+  count_ = 0;
+}
+
 EffectPriority EffectBindings::highest_active(const LedEffect effect) const noexcept {
   std::optional<EffectPriority> highest{};
   for (std::size_t index = 0; index < count_; ++index) {

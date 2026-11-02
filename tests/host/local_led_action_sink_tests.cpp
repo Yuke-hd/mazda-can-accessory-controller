@@ -560,6 +560,32 @@ TEST_CASE("transient bindings reject invalid actions duplicates and excess capac
   CHECK(sink.bind(kUnbound, kTransient) == BindingStatus::CapacityExceeded);
 }
 
+TEST_CASE("clear releases effect fill and transient capacity without publishing") {
+  RecordingLightingSink lighting{};
+  LedActionSink sink{lighting, lighting};
+
+  for (std::uint16_t action = 1; action <= LedActionSink::kMaxFillBindings; ++action) {
+    REQUIRE(sink.bind(ActionId{action}, FillEffect{kGaugeZone, kGaugeColor}) == BindingStatus::Ok);
+  }
+  for (std::uint16_t action = 1; action <= LedActionSink::kMaxBindings; ++action) {
+    REQUIRE(sink.bind(ActionId{action}, LedEffect::LeftTurn) == BindingStatus::Ok);
+  }
+  for (std::uint16_t action = 1; action <= LedActionSink::kMaxTransientBindings; ++action) {
+    REQUIRE(sink.bind(ActionId{action}, kTransient) == BindingStatus::Ok);
+  }
+
+  sink.clear();
+  sink.execute(activate(kGauge));
+  CHECK(lighting.commands.empty());
+
+  CHECK(sink.bind(kGauge, FillEffect{kGaugeZone, kGaugeColor}) == BindingStatus::Ok);
+  CHECK(sink.bind(kTurnLeft, LedEffect::LeftTurn) == BindingStatus::Ok);
+  CHECK(sink.bind(kHazard, kTransient) == BindingStatus::Ok);
+  sink.execute(activate(kGauge));
+  REQUIRE(lighting.commands.size() == 1);
+  CHECK(lighting.commands.back().actionable);
+}
+
 TEST_CASE("a rejected start is retired before the next complete state snapshot") {
   TurnSink fixture{};
   REQUIRE(fixture.sink.bind(kHazard, kTransient) == BindingStatus::Ok);

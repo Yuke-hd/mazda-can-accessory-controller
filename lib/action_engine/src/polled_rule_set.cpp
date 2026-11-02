@@ -30,6 +30,11 @@ void PolledRuleSet::reset() noexcept {
   }
 }
 
+void PolledRuleSet::clear() noexcept {
+  rules_ = {};
+  count_ = 0;
+}
+
 void PolledRuleSet::on_sample(
     std::size_t index, const vehicle_signals::SignalResult<vehicle_signals::SignalReading> &read,
     ActionSink &out) noexcept {

@@ -30,6 +30,11 @@ void RuleSet::reset() noexcept {
   }
 }
 
+void RuleSet::clear() noexcept {
+  rules_ = {};
+  count_ = 0;
+}
+
 void RuleSet::dispatch(const vehicle_signals::SignalNotification &notice,
                        ActionSink &out) noexcept {
   for (std::size_t index = 0; index < count_; ++index) {

@@ -48,6 +48,8 @@ public:
   [[nodiscard]] LedEffects lit() const noexcept;
   // The priority of each lit effect; an unlit effect has the default.
   [[nodiscard]] local_argb::internal::EffectPriorities priorities() const noexcept;
+  // Removes every binding and active level.
+  void clear() noexcept;
 
 private:
   struct Binding {

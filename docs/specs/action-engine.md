@@ -198,6 +198,9 @@ notified, and share one capacity of 8 (`ActionEngine::kMaxPolledRules`).
 
 - Choose the provider when the engine is constructed; it cannot be replaced.
   Add sinks and rules only while the engine is detached.
+- `clear()` removes every sink and rule from a detached engine so a replacement
+  configuration can be applied from a clean state. It returns `InvalidState`
+  while attached and does not change provider subscriptions.
 - `attach()` and `detach()` change provider subscriptions. Call them on the
   provider's lifecycle owner while the provider is stopped.
 - `attach()` subscribes once per distinct `SignalId`. Rules on the same signal

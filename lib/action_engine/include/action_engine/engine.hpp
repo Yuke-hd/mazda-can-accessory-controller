@@ -77,6 +77,10 @@ public:
 
   // Registers a borrowed sink that receives every command once.
   [[nodiscard]] ConfigStatus add_sink(ActionSink &sink) noexcept;
+  // Removes every sink and rule while detached so another configuration can
+  // replace the current one from a clean state. Returns InvalidState while
+  // attached, including when a previous detach() left subscriptions behind.
+  [[nodiscard]] ConfigStatus clear() noexcept;
   [[nodiscard]] ConfigStatus add_state_rule(const StateRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_event_rule(const EventRuleConfig &config) noexcept;
   [[nodiscard]] ConfigStatus add_range_rule(const RangeRuleConfig &config) noexcept;

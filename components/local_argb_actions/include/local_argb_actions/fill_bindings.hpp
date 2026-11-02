@@ -40,6 +40,8 @@ public:
                           local_argb::internal::FillFraction level) noexcept;
   // The non-empty fills, in binding order.
   [[nodiscard]] local_argb::internal::LightingFills lit() const noexcept;
+  // Removes every binding and level.
+  void clear() noexcept;
 
 private:
   struct Binding {
