@@ -85,9 +85,11 @@ changing fixtures.
 
 `tools/generate_vehicle_profile.py` publishes compiler JSON, C++ catalog metadata,
 the capability report, and an input/output hash inventory as one matching set.
-This is an offline normalized-profile tool; importer, runtime and firmware profile
-selection remain separate modules. It runs with Python alone, without building
-host tests or executing a firmware binary.
+This is the offline normalized-profile tool. Imported vehicle builds select a
+`mapping.json` through `VEHICLE_PROFILE`; see
+[Building with a selected vehicle profile](#building-with-a-selected-vehicle-profile).
+This generator runs with Python alone, without building host tests or executing
+a firmware binary.
 
 Supply a strict v1 profile, a reviewed policy registry, every source as
 `--source ID=PATH`, and additional recognition/generator data as
@@ -299,3 +301,35 @@ acceptance cases through the command. Its optional differential check against
 `cantools` is skipped when that package is absent; `cantools` is not a
 dependency of the importer or of CI. These are host software checks only: they
 are not hardware, bench or vehicle validation.
+
+## Building with a selected vehicle profile
+
+`VEHICLE_PROFILE` defaults to `native:mazda`. Any other nonempty value selects
+one imported profile by its `mapping.json` path. A relative path is resolved
+from the repository root in both host and ESP-IDF builds; source paths inside
+the mapping remain relative to the mapping file. An explicit missing or invalid
+selection fails configure without falling back to Mazda. Use a fresh build
+directory when changing selections. Run the example from the repository root.
+
+This host example selects the populated, two-source synthetic profile:
+
+```sh
+cmake -S . -B /tmp/mazda-profile-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON \
+  -DVEHICLE_PROFILE=tests/fixtures/vehicle-profiles/dbc/mapping-two-source.json
+cmake --build /tmp/mazda-profile-host --parallel
+ctest --test-dir /tmp/mazda-profile-host --output-on-failure
+```
+
+Imported factory features require declared freshness where their rules require
+`Fresh`. A profile with no declared timeouts still decodes its mapped signals,
+but its default lighting output stays black. The two-source example keeps its
+mapped signal available to discovery, replay and compatible saved rules. An
+empty mapping has no mapped signals, stays black, and never inherits Mazda
+policy; an explicitly empty `VEHICLE_PROFILE` is rejected at configure. Saved
+version 1 rules are validated against the selected provider's
+public signal keys, types, enum choices, capabilities and permitted freshness
+policy. Their compatibility does not depend on CAN identifiers or a profile
+digest. See the
+[profile integration contract](../specs/vehicle-profiles/profile-integration.md)
+for the full behavior.
