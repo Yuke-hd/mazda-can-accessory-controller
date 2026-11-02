@@ -866,6 +866,11 @@ add_test(
           -s ${CMAKE_SOURCE_DIR}/tests/tools
           -p vehicle_profile_runtime_generation_test.py
 )
+add_test(
+  NAME vehicle_profile_selection_cmake
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/vehicle_profile_selection_test.py
+)
 set_tests_properties(
   profile_runtime_generated_decoder_codegen
   PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
