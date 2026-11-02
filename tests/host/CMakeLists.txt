@@ -952,3 +952,13 @@ set_tests_properties(
   profile_runtime_generated_decoder_codegen
   PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
 )
+
+add_test(
+  NAME mazda_generated_native_decoder_comparison
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/vehicle_profile_mazda_comparison_test.py
+)
+set_tests_properties(
+  mazda_generated_native_decoder_comparison
+  PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
+)
