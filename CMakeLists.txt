@@ -67,25 +67,23 @@ output_catalog_generate(
   OUTPUT_DIR "${CMAKE_BINARY_DIR}/output_catalog")
 
 include(tools/controller_config_factory.cmake)
-if(MAZDA_BUILD_HOST_TESTS)
-  set(_controller_config_default_yaml "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml")
-  set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
-      CACHE FILEPATH "Factory controller configuration YAML")
-  set(CONTROLLER_CONFIG_FACTORY_JSON
-      "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
-      CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
-  set(_vehicle_profile_json "")
-  if(NOT VEHICLE_PROFILE_IS_NATIVE)
-    set(_vehicle_profile_json "${VEHICLE_PROFILE_ARTIFACT_DIR}/vehicle_profile.json")
-  endif()
-  controller_config_factory_generate(
-    YAML "${CONTROLLER_CONFIG_DEFAULT_YAML}"
-    OUTPUT_JSON "${CONTROLLER_CONFIG_FACTORY_JSON}"
-    OUTPUT_CATALOG "${OUTPUT_CATALOG_JSON}"
-    SIGNAL_CATALOG "${VEHICLE_PROFILE_COMPILER_CATALOG}"
-    PROFILE_JSON "${_vehicle_profile_json}"
-    ARTIFACT_TARGET "${VEHICLE_PROFILE_ARTIFACT_TARGET}")
+set(_controller_config_default_yaml "${CMAKE_CURRENT_SOURCE_DIR}/config/default.yaml")
+set(CONTROLLER_CONFIG_DEFAULT_YAML "${_controller_config_default_yaml}"
+    CACHE FILEPATH "Factory controller configuration YAML")
+set(CONTROLLER_CONFIG_FACTORY_JSON
+    "${CMAKE_CURRENT_BINARY_DIR}/factory_default_config.json"
+    CACHE FILEPATH "Generated factory controller configuration JSON" FORCE)
+set(_vehicle_profile_json "")
+if(NOT VEHICLE_PROFILE_IS_NATIVE)
+  set(_vehicle_profile_json "${VEHICLE_PROFILE_ARTIFACT_DIR}/vehicle_profile.json")
 endif()
+controller_config_factory_generate(
+  YAML "${CONTROLLER_CONFIG_DEFAULT_YAML}"
+  OUTPUT_JSON "${CONTROLLER_CONFIG_FACTORY_JSON}"
+  OUTPUT_CATALOG "${OUTPUT_CATALOG_JSON}"
+  SIGNAL_CATALOG "${VEHICLE_PROFILE_COMPILER_CATALOG}"
+  PROFILE_JSON "${_vehicle_profile_json}"
+  ARTIFACT_TARGET "${VEHICLE_PROFILE_ARTIFACT_TARGET}")
 
 add_subdirectory(lib/signal_notification)
 add_subdirectory(lib/mazda)
