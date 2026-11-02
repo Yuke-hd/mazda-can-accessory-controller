@@ -101,6 +101,7 @@ public:
     head_ = 0;
     tail_ = 0;
     completed_frames_ = 0;
+    receive_held_ = false;
     statistics_ = {};
     faulted_ = false;
     if (partial_start_failure_) {
@@ -146,8 +147,16 @@ public:
     std::unique_lock<std::mutex> lock{mutex_};
     completed_frames_ = statistics_.frames_received;
     changed_.notify_all();
-    (void)changed_.wait_for(lock, std::chrono::milliseconds{timeout_ms},
-                            [this] { return head_ != tail_ || faulted_ || !running_; });
+    const auto receive_ready = [this] { return head_ != tail_ || faulted_ || !running_; };
+    if (hold_empty_receive_ && head_ == tail_ && !faulted_ && running_) {
+      receive_held_ = true;
+      changed_.notify_all();
+      changed_.wait(lock, receive_ready);
+      receive_held_ = false;
+      changed_.notify_all();
+    } else {
+      (void)changed_.wait_for(lock, std::chrono::milliseconds{timeout_ms}, receive_ready);
+    }
     if (faulted_) {
       return ReceiveStatus::Fault;
     }
@@ -179,6 +188,22 @@ public:
       ++head_;
     }
     changed_.notify_all();
+  }
+
+  void hold_empty_receive() noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    hold_empty_receive_ = true;
+  }
+
+  [[nodiscard]] bool wait_for_held_receive() {
+    std::unique_lock<std::mutex> lock{mutex_};
+    return changed_.wait_for(lock, std::chrono::milliseconds{500},
+                             [this] { return receive_held_; });
+  }
+
+  [[nodiscard]] bool receive_is_held() const noexcept {
+    std::lock_guard<std::mutex> lock{mutex_};
+    return receive_held_;
   }
 
   void fail() noexcept {
@@ -232,6 +257,8 @@ private:
   std::size_t retry_stop_calls_{0};
   std::size_t completed_frames_{0};
   std::size_t stop_timeouts_{0};
+  bool hold_empty_receive_{false};
+  bool receive_held_{false};
   bool running_{false};
   bool faulted_{false};
   bool ownership_{false};
@@ -511,6 +538,7 @@ struct BlockingCallback final {
   std::size_t calls{0};
   bool entered{false};
   bool release{false};
+  bool initial_returned{false};
   bool transition_seen{false};
   SignalNotification transition{};
 };
@@ -523,6 +551,8 @@ void block_first_notice(void *context, const SignalNotification &notice) noexcep
     callback.entered = true;
     callback.changed.notify_all();
     callback.changed.wait(lock, [&callback] { return callback.release; });
+    callback.initial_returned = true;
+    callback.changed.notify_all();
     return;
   }
   callback.transition = notice;
@@ -642,6 +672,53 @@ TEST_CASE("profile runtime dispatcher progress advances idle and stops in a bloc
   REQUIRE(wait_for_dispatch_progress_after(service, blocked));
   const auto idle = service.dispatch_progress();
   CHECK(wait_for_dispatch_progress_after(service, idle));
+  CHECK(service.stop().ok());
+}
+
+TEST_CASE("profile runtime dispatcher heartbeat advances during a quiescent receive wait") {
+  FakeClock clock;
+  FakeSource source;
+  source.hold_empty_receive();
+  ProfileRuntimeService service{kTables, clock, source};
+  BlockingCallback callback{};
+  const auto subscription =
+      service.provider().subscribe(SignalId{2}, &block_first_notice, &callback);
+  REQUIRE(subscription.ok());
+
+  REQUIRE(service.start().ok());
+  {
+    std::unique_lock<std::mutex> lock{callback.mutex};
+    REQUIRE(callback.changed.wait_for(lock, std::chrono::milliseconds{500},
+                                      [&callback] { return callback.entered; }));
+  }
+  REQUIRE(source.wait_for_held_receive());
+  {
+    std::lock_guard<std::mutex> lock{callback.mutex};
+    callback.release = true;
+  }
+  callback.changed.notify_all();
+  {
+    std::unique_lock<std::mutex> lock{callback.mutex};
+    REQUIRE(callback.changed.wait_for(lock, std::chrono::milliseconds{500},
+                                      [&callback] { return callback.initial_returned; }));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  std::size_t drained_notice_count = 0U;
+  {
+    std::lock_guard<std::mutex> lock{callback.mutex};
+    drained_notice_count = callback.calls;
+  }
+  REQUIRE(source.receive_is_held());
+
+  const auto idle_progress = service.dispatch_progress();
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  {
+    std::lock_guard<std::mutex> lock{callback.mutex};
+    CHECK(callback.calls == drained_notice_count);
+  }
+  CHECK(source.receive_is_held());
+  CHECK(service.dispatch_progress() > idle_progress);
   CHECK(service.stop().ok());
 }
 
