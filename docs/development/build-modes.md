@@ -18,7 +18,8 @@ vehicle validation.
 | [Offline host build](#4-offline-host-build) | Build without fetching the core dependency | As host, plus a core checkout | No |
 | [Firmware build](#5-firmware-build) | Compile the ESP32 application | ESP-IDF 5.5.4 | Yes |
 | [Firmware diagnostics](#51-firmware-diagnostic-builds) | Opt-in runtime stats, stage profiling, freshness debug | ESP-IDF 5.5.4 | No |
-| [Firmware with a custom profile](#6-firmware-with-a-custom-profile) | Embed a local controller config | ESP-IDF 5.5.4 | No |
+| [Firmware with a local controller config](#6-firmware-with-a-local-controller-config) | Embed a local controller config YAML | ESP-IDF 5.5.4 | No |
+| [Vehicle profile selection](#vehicle-profile-selection) | Select native Mazda or an imported mapping for host and firmware builds | CMake; ESP-IDF 5.5.4 for firmware | No |
 | [Replay tools](#7-replay-tools) | Run `can-replay` and `gvret-led-emulator` on the host | Host build | Built with the host build |
 | [Validators](#8-validators-and-formatting) | Architecture, boundary, and format checks | Python 3, clang-format supporting C++17 | Yes |
 | [Telemetry baseline](#9-telemetry-baseline) | Synthetic performance measurement | Host build, Python 3 | No |
@@ -145,7 +146,7 @@ an extra defaults file, in an out-of-tree build directory:
 | Telemetry stage profiling | `CONFIG_WEACT_CAN_TELEMETRY_PROFILING=y` | [Stage profiling](telemetry-stage-profiling.md) |
 | `0x091` freshness debug | `CONFIG_WEACT_CAN_FRESHNESS_DEBUG=y` | [CAN freshness debug](can-freshness-debug.md) |
 
-## 6. Firmware with a custom profile
+## 6. Firmware with a local controller config
 
 By default the firmware embeds `config/default.yaml`. To embed a local profile:
 
@@ -175,6 +176,18 @@ python3 tools/compile_controller_config.py config/default.yaml /tmp/controller-c
 ```
 
 See the [controller config spec](../specs/configuration/controller-config.md).
+
+## Vehicle profile selection
+
+`VEHICLE_PROFILE` selects the receive-only vehicle decoder and signal catalog
+at build time. It defaults to `native:mazda`; imported selections use one
+`mapping.json` path, resolved relative to the repository root in both host and
+ESP-IDF builds. The controller-config YAML option above selects factory
+lighting configuration and is independent.
+
+- [Host selector command](supported-build.md#building-with-a-selected-vehicle-profile)
+- [Firmware selector command](firmware-build.md#select-a-vehicle-profile)
+- [Selection, no-timeout defaults and saved-rule contract](../specs/vehicle-profiles/profile-integration.md)
 
 ## 7. Replay tools
 

@@ -53,6 +53,36 @@ reconfiguration and a new hash.
 The controller-config component rejects an unset or missing generated JSON;
 ESP-IDF compilation also requires the embedding definition.
 
+## Select a vehicle profile
+
+Vehicle profile selection is separate from the controller-config YAML above.
+`VEHICLE_PROFILE` defaults to `native:mazda`; an imported selection names one
+`mapping.json`. Relative selector paths resolve from the repository root in
+both host and firmware builds. Use a fresh out-of-tree build directory for
+each selection. Run the example from the repository root.
+
+This example selects the populated, two-source synthetic profile and reports
+the linked image size:
+
+```sh
+source /Users/yuke/ESP-IDF/v5.5.4/export.sh
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-profile-fw \
+  -D SDKCONFIG=/tmp/mazda-profile-fw/sdkconfig \
+  -DVEHICLE_PROFILE=tests/fixtures/vehicle-profiles/dbc/mapping-two-source.json set-target esp32
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-profile-fw \
+  -D SDKCONFIG=/tmp/mazda-profile-fw/sdkconfig \
+  -DVEHICLE_PROFILE=tests/fixtures/vehicle-profiles/dbc/mapping-two-source.json build
+idf.py -C firmware/weact-can485-v1.1 -B /tmp/mazda-profile-fw \
+  -D SDKCONFIG=/tmp/mazda-profile-fw/sdkconfig size
+```
+
+The selector is a CMake cache value. Changing it requires configure and a new
+image; do not reuse stale generated artifacts across selections. Imported
+profiles without declared freshness keep default factory output black. The
+[profile integration contract](../specs/vehicle-profiles/profile-integration.md)
+defines the selection and saved-rule behavior. The selected-service resource
+matrix is in [profile runtime validation](profile-runtime-validation.md#gh-398-selected-application-composition-and-resource-matrix).
+
 On macOS and Linux, source the SDK's `export.sh`; on other supported hosts,
 activate ESP-IDF `v5.5.4` using Espressif's setup procedure before running the
 same toolchain check and build commands. The checker reports missing tools
