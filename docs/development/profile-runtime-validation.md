@@ -250,15 +250,18 @@ GH-398 measures the selected service in the real firmware application. Unlike
 the historical retained-link probes above, each generated-profile row builds
 the application with one `ProfileRuntimeService` and its selected tables.
 Native rows keep one Mazda `VehicleTelemetry`; no second service is linked.
-All eight images below were built from the GH-398 worktree based on prerequisite
-commit `612cf09`, with ESP-IDF `v5.5.4`, target `esp32`, the pinned vehicle-core
-`0.3.0`, fresh out-of-tree build directories, and an external `sdkconfig` per
-image under `/tmp/mazda-m8/builds/398/`. After the matrix, profile fixture
-generation moved into the allowlisted shared CMake helper, `main.cpp` received
-formatting-only changes, and the architecture validator gained selected-service
-checks. The native-to-empty-to-populated configure smoke and a maximum-profile
-production rebuild passed after those changes; the other seven images were not
-rebuilt after the configure-helper refactor.
+All eight images were freshly built after #306 merged at `31e22a9`, from
+post-merge integration source `8267cf0`, with ESP-IDF `v5.5.4`, target `esp32`,
+pinned vehicle-core `0.3.0`, separate out-of-tree build directories and an
+external `sdkconfig` per row under `/tmp/mazda-m8/builds/398-post306/`. The
+final formatter-only source fix in `31e4a26` changes indentation only in
+`application.hpp`: the file remains 70 lines and the diff is empty when
+whitespace is ignored. All eight existing build directories were incrementally
+rebuilt and re-sized on exact final source `31e4a26`; the values below are the
+final-head results. The final manifest is
+`/tmp/mazda-m8/builds/398-post306/final-31e4a26-manifest.json`; each row
+contains its sdkconfig, ELF, BIN and linker-map SHA-256 values and build/size
+logs named `build-final-31e4a26.log` and `size-final-31e4a26.log`.
 
 The populated profile maps two independently authored synthetic DBC sources
 into one message with three extracted fields and one signal binding. The empty
@@ -285,14 +288,14 @@ retain their existing policy.
 
 | Application selection | Profile counts (sources; messages / fields / bindings / Notify) | DRAM used / free (B) | IRAM used / free (B) | Flash code (B) | Flash data (B) | Total image (B) | App binary |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Native Mazda, production | native | 83,828 / 40,752 | 123,431 / 7,641 | 468,458 | 94,040 | 716,181 | `0xaee10` |
-| Native Mazda, profiling | native | 92,076 / 32,504 | 128,115 / 2,957 | 479,434 | 94,336 | 738,329 | `0xb4490` |
-| Two-source imported, production | 2; 1 / 3 / 1 / 0 | 83,652 / 40,928 | 108,827 / 22,245 | 430,306 | 92,472 | 659,281 | `0xa0fc0` |
-| Two-source imported, profiling | 2; 1 / 3 / 1 / 0 | 89,300 / 35,280 | 110,979 / 20,093 | 432,390 | 92,752 | 667,453 | `0xa2fb0` |
-| Empty imported, production | 1; 1 / 2 / 0 / 0 | 83,492 / 41,088 | 108,827 / 22,245 | 426,818 | 92,472 | 655,633 | `0xa0180` |
-| Empty imported, profiling | 1; 1 / 2 / 0 / 0 | 89,140 / 35,440 | 110,979 / 20,093 | 428,902 | 92,752 | 663,805 | `0xa2170` |
-| Maximum imported, production fixture | 1; 64 / 64 / 64 / 17 | 93,732 / 30,848 | 108,827 / 22,245 | 446,482 | 92,472 | 685,537 | `0xa7650` |
-| Maximum imported, profiling fixture | 1; 64 / 64 / 64 / 17 | 99,380 / 25,200 | 110,979 / 20,093 | 448,570 | 92,752 | 693,713 | `0xa9640` |
+| Native Mazda, production | native | 83,996 / 40,584 | 123,431 / 7,641 | 469,342 | 94,024 | 717,217 | `0xaf210` |
+| Native Mazda, profiling | native | 92,236 / 32,344 | 128,115 / 2,957 | 480,282 | 94,320 | 739,321 | `0xb4870` |
+| Two-source imported, production | 2; 1 / 3 / 1 / 0 | 83,820 / 40,760 | 108,827 / 22,245 | 431,214 | 92,456 | 660,341 | `0xa13f0` |
+| Two-source imported, profiling | 2; 1 / 3 / 1 / 0 | 89,468 / 35,112 | 110,979 / 20,093 | 433,314 | 92,736 | 668,529 | `0xa33e0` |
+| Empty imported, production | 1; 1 / 2 / 0 / 0 | 83,652 / 40,928 | 108,827 / 22,245 | 427,686 | 92,456 | 656,645 | `0xa0580` |
+| Empty imported, profiling | 1; 1 / 2 / 0 / 0 | 89,308 / 35,272 | 110,979 / 20,093 | 429,806 | 92,736 | 664,861 | `0xa2590` |
+| Maximum imported, production fixture | 1; 64 / 64 / 64 / 17 | 93,900 / 30,680 | 108,827 / 22,245 | 447,338 | 92,456 | 686,545 | `0xa7a40` |
+| Maximum imported, profiling fixture | 1; 64 / 64 / 64 / 17 | 99,548 / 25,032 | 110,979 / 20,093 | 449,478 | 92,736 | 694,773 | `0xa9a70` |
 
 ESP-IDF size-report values include its 32-byte `.rtc.force_slow` contribution
 in the total image size. All eight application binaries passed the existing
@@ -302,26 +305,32 @@ that Mazda-only fragment because they do not contain those native handlers;
 their used/free IRAM is reported above. The profile service storage guard
 remains enabled.
 
-The final native ELF retains one application `telemetry` object of `0x7000`
-(28,672 bytes) and no `ProfileRuntimeService`. Imported ELFs retain one
-`telemetry` object of `0x6800` (26,624 bytes) and no Mazda telemetry service.
-The maximum application ELF retains all 64 generated decoder functions, its
-`0x500` (1,280-byte) dispatch table and `0x200` (512-byte) freshness table.
-The empty profile has no decoder or dispatch/freshness array symbols. No
-application ELF contains the old `vehicle_profile_link_probe_anchor`.
+On final source `31e4a26`, each native ELF retains one application `telemetry`
+object of `0x7000` (28,672 bytes), the Mazda telemetry service and no
+`ProfileRuntimeService`. Each imported ELF retains one `telemetry` object of
+`0x6800` (26,624 bytes), one selected `ProfileRuntimeService` process path,
+and no Mazda telemetry service. Its dispatcher pool is `0x1154` bytes in
+production and `0x1160` bytes in profiling, plus a 4-byte owner. The populated
+profile retains one decoder function, a `0x14`-byte dispatch table and an
+`0x8`-byte freshness table. The empty profile has no decoder or dispatch or
+freshness table symbols. The maximum fixture retains all 64 generated decoder
+functions, a `0x500`-byte dispatch table and a `0x200`-byte freshness table.
+No application ELF contains the old `vehicle_profile_link_probe_anchor`.
 
 The normal imported-profile selection remains `VEHICLE_PROFILE=<mapping.json>`.
 The two-source and empty rows use the synthetic mappings under
 `tests/fixtures/vehicle-profiles/dbc/`; the maximum fixture mode is only for
-resource measurements. Native and imported applications both retain startup
-black, configuration and service failure fail-off, and listen-only CAN
-acquisition with zero transmit queue. The eventual startup fallback from
-GH-306 remains a separate dependency and was not copied into this application.
-No image was flashed, and no bench or vehicle operation was performed.
+resource measurements. The post-#306 finalboot integration keeps repair upload
+available after a failed configuration start, while vehicle CAN remains
+stopped and lighting remains black. Once a normal run starts, every application
+selection uses `TWAI_MODE_LISTEN_ONLY` with a zero-length transmit queue. No
+image was flashed, and no bench or vehicle operation was performed.
 
-## GH-401 integrated acceptance (partial)
+## GH-401 integrated acceptance (pre-#306 partial record)
 
-This record covers software checks on the M8 integration test head. The full
+This historical section records partial checks before #306 merged and before
+the finalboot repair path was integrated. The final post-#306 evidence below
+supersedes its blocker and partial-acceptance statements. The earlier full
 fresh host build and CTest run passed on `0fad8a9`: all 864 tests passed in
 325.37 seconds, including `selected_profile_config_matrix`, architecture and
 public-header contracts, the Mazda suite, and the runtime consumer tests. The
@@ -338,14 +347,72 @@ passed 1/1 in 27.05 seconds. The full host suite was not repeated after this
 test-runner-only change. On `e095cf3`, all PR #412 host, firmware, and Host ASan
 + UBSan CI checks passed in Actions run `41440486821`.
 
-The eight-image GH-398 selected-application matrix above is reused as GH-398
-source/head evidence; it is not presented as rebuilt on the final #401 head.
-That section records its source commit and rebuild caveat: only the maximum
-production image was rebuilt after the fixture-generation helper refactor; the
-other seven images were not. No new firmware size campaign is part of this
-acceptance pass.
+At the time of this partial record, final saved-override boot fallback still
+depended on PR #306. PR #306 has since merged at `31e22a9`; the eight-image
+matrix above was refreshed on the post-merge source and the repair path was
+revalidated on the finalboot integration head. See the final acceptance record
+below. These results remain software evidence only; no bench, vehicle, flash,
+or hardware validation was performed.
 
-Final saved-override boot fallback remains blocked on separate PR #306. After
-it merges, rebase and verify the clean fallback path before closing #401 or
-marking milestone #310 complete. These results are software evidence only; no
-bench, vehicle, flash, or hardware validation was performed.
+## GH-401 final post-#306 acceptance
+
+This record supersedes the pre-#306 partial status above. PR #306 merged at
+`31e22a9`. The finalboot integration at `8267cf0` keeps the companion repair
+path available after configuration-start failure while leaving vehicle CAN
+stopped and the lighting output black. The final source `31e4a26` differs from
+`8267cf0` only by indentation in `application.hpp`: both versions have 70 lines,
+and `git diff --ignore-all-space` reports no source change.
+
+A fresh host configure and build on `8267cf0` used the supported external
+build path `/tmp/mazda-m8/builds/401-post306-host`, with Ninja, Debug,
+`BUILD_TESTING=ON` and `MAZDA_BUILD_HOST_TESTS=ON`:
+
+```sh
+cmake -S . -B /tmp/mazda-m8/builds/401-post306-host -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON -DMAZDA_BUILD_HOST_TESTS=ON
+cmake --build /tmp/mazda-m8/builds/401-post306-host --parallel 2
+ctest --test-dir /tmp/mazda-m8/builds/401-post306-host --output-on-failure --parallel 4
+python3 -m unittest discover -s tests/tools -p '*_test.py'
+```
+
+The full CTest run passed 869/869 in 245.72 seconds, including architecture,
+public-header and selected-profile matrix checks. The Python tooling suite ran
+622 tests in 161.029 seconds: 621 passed and one was skipped. Full host logs are
+under `/tmp/mazda-m8/builds/401-post306-host/logs/`; the complete Python output
+is `/tmp/mazda-m8/401-post306/logs/python-tooling.log`. The first CTest attempt
+placed its build directory under the worktree, so the nested profile matrix
+rejected that output path. I discarded that run and repeated configure, build
+and all CTest cases with the external path above; no source change was made for
+the path mistake.
+
+The follow-up source change at `31e4a26` is whitespace-only. An incremental
+host build passed, the formatter check passed for the changed header, and a
+focused CTest run passed 4/4: `selected_profile_config_matrix`, both override
+apply failure cases, and `companion_ble_startup_contracts`. The registered
+selected-profile matrix CTest passed across its A/B/empty selections. The
+nested CTest log directory is reused, so its `LastTest.log` records the final
+empty selection only: 10 passing cases, including refused startup, later
+startup refusal and empty-provider behavior. The outer CTest log records the
+matrix pass. Logs are
+`/tmp/mazda-m8/builds/401-post306-host/logs/ctest.log` and
+`/tmp/mazda-m8/builds/401-post306-host/selected-profile-config-matrix/Testing/Temporary/LastTest.log`.
+
+The final eight-image matrix above was freshly built after #306 merged and
+incrementally rebuilt and sized again on `31e4a26`. All eight app binaries fit
+the `0x1e0000` partition; native rows pass the 23-symbol IRAM gate. The report
+records the selected service, storage, table, decoder, sdkconfig, ELF, BIN and
+linker-map evidence in the final manifest linked above. The production
+sdkconfig SHA-256 is
+`213962419c4c159e169d08f7e22c219965354d7575631f97fd07bde4abeb646b`; profiling
+sdkconfigs use `ef4a5761fd1a5dc89dba011fbec6c0b82eb3310f56799f32ec6725a77e608be8`.
+Profiling enables FreeRTOS runtime stats, telemetry profiling and freshness
+debug; production leaves those options unset. Final image hashes differ from
+the initial `8267cf0` builds because ESP-IDF embeds the source commit in app
+version metadata; all size metrics and BIN lengths are unchanged.
+
+CI for final source `31e4a26` passed host, firmware and Host ASan + UBSan checks
+in [Actions run 41448746065](https://github.com/Yuke-hd/mazda-can-accessory-controller/actions/runs/41448746065).
+The selector commands from PR #411 remain unchanged in this integration. Their
+host configure and ESP-IDF `set-target esp32` checks passed with the two-source
+synthetic mapping during that documentation review. No bench, vehicle, flash or
+hardware validation was performed.
