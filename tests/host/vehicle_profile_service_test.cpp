@@ -286,6 +286,18 @@ const ProfileTables kTables{SignalCatalogView{kSignals}, kFreshness,
   return false;
 }
 
+[[nodiscard]] bool wait_for_dispatch_progress_after(const ProfileRuntimeService &service,
+                                                    const std::uint32_t previous) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds{500};
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (service.dispatch_progress() != previous) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  return service.dispatch_progress() != previous;
+}
+
 struct CallbackMutation final {
   ProfileRuntimeService *service{nullptr};
   std::mutex mutex{};
@@ -600,6 +612,36 @@ TEST_CASE("profile runtime publishes transitions while a callback is blocked") {
     CHECK(callback.transition.recovered);
     CHECK(callback.transition.coalesced);
   }
+  CHECK(service.stop().ok());
+}
+
+TEST_CASE("profile runtime dispatcher progress advances idle and stops in a blocked callback") {
+  FakeClock clock;
+  FakeSource source;
+  ProfileRuntimeService service{kTables, clock, source};
+  BlockingCallback callback{};
+  const auto subscription =
+      service.provider().subscribe(SignalId{2}, &block_first_notice, &callback);
+  REQUIRE(subscription.ok());
+
+  REQUIRE(service.start().ok());
+  {
+    std::unique_lock<std::mutex> lock{callback.mutex};
+    REQUIRE(callback.changed.wait_for(lock, std::chrono::milliseconds{500},
+                                      [&callback] { return callback.entered; }));
+  }
+  const auto blocked = service.dispatch_progress();
+  std::this_thread::sleep_for(std::chrono::milliseconds{20});
+  CHECK(service.dispatch_progress() == blocked);
+
+  {
+    std::lock_guard<std::mutex> lock{callback.mutex};
+    callback.release = true;
+  }
+  callback.changed.notify_all();
+  REQUIRE(wait_for_dispatch_progress_after(service, blocked));
+  const auto idle = service.dispatch_progress();
+  CHECK(wait_for_dispatch_progress_after(service, idle));
   CHECK(service.stop().ok());
 }
 

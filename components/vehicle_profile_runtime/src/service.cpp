@@ -185,6 +185,10 @@ public:
     return provider_;
   }
 
+  [[nodiscard]] std::uint32_t dispatch_progress() const noexcept {
+    return dispatch_progress_.load(std::memory_order_relaxed);
+  }
+
   [[nodiscard]] vehicle_telemetry::StatusResult start() noexcept {
     if (callback_mutation_rejected()) {
       return {vehicle_telemetry::ResultCode::InvalidState};
@@ -577,10 +581,12 @@ private:
 
   void dispatch_loop() noexcept {
 #if defined(ESP_PLATFORM)
+    constexpr TickType_t wait_ticks = pdMS_TO_TICKS(1) == 0 ? 1 : pdMS_TO_TICKS(1);
     for (;;) {
-      if (dispatch_wake_ == nullptr || xSemaphoreTake(dispatch_wake_, portMAX_DELAY) != pdTRUE) {
+      if (dispatch_wake_ == nullptr) {
         continue;
       }
+      (void)xSemaphoreTake(dispatch_wake_, wait_ticks);
       bool should_exit = false;
       bool should_dispatch = false;
       {
@@ -595,43 +601,47 @@ private:
       if (should_exit) {
         return;
       }
-      if (!should_dispatch) {
-        continue;
+      if (should_dispatch) {
+        callback_dispatch_identity_.store(current_execution_identity(), std::memory_order_release);
+        ProviderAccess::dispatch_pending(provider_);
+        callback_dispatch_identity_.store(0U, std::memory_order_release);
+        {
+          std::lock_guard<DispatchMutex> lock{dispatch_mutex_};
+          dispatch_active_ = false;
+        }
       }
-      callback_dispatch_identity_.store(current_execution_identity(), std::memory_order_release);
-      ProviderAccess::dispatch_pending(provider_);
-      callback_dispatch_identity_.store(0U, std::memory_order_release);
-      {
-        std::lock_guard<DispatchMutex> lock{dispatch_mutex_};
-        dispatch_active_ = false;
-      }
+      dispatch_progress_.fetch_add(1U, std::memory_order_relaxed);
     }
 #else
     for (;;) {
+      bool should_dispatch = false;
       {
         std::unique_lock<std::mutex> lock{dispatch_mutex_};
-        dispatch_changed_.wait(lock, [this] {
+        dispatch_changed_.wait_for(lock, std::chrono::milliseconds{1}, [this] {
           return dispatch_shutdown_requested_ || (dispatch_enabled_ && dispatch_pending_);
         });
         if (dispatch_shutdown_requested_ && !dispatch_pending_) {
           break;
         }
-        if (!dispatch_enabled_ || !dispatch_pending_) {
-          continue;
-        }
-        dispatch_pending_ = false;
-        dispatch_active_ = true;
-      }
-      callback_dispatch_identity_.store(current_execution_identity(), std::memory_order_release);
-      ProviderAccess::dispatch_pending(provider_);
-      callback_dispatch_identity_.store(0U, std::memory_order_release);
-      {
-        std::lock_guard<DispatchMutex> lock{dispatch_mutex_};
-        dispatch_active_ = false;
-        if (!dispatch_pending_) {
-          dispatch_changed_.notify_all();
+        should_dispatch = dispatch_enabled_ && dispatch_pending_;
+        if (should_dispatch) {
+          dispatch_pending_ = false;
+          dispatch_active_ = true;
         }
       }
+      if (should_dispatch) {
+        callback_dispatch_identity_.store(current_execution_identity(), std::memory_order_release);
+        ProviderAccess::dispatch_pending(provider_);
+        callback_dispatch_identity_.store(0U, std::memory_order_release);
+        {
+          std::lock_guard<DispatchMutex> lock{dispatch_mutex_};
+          dispatch_active_ = false;
+          if (!dispatch_pending_) {
+            dispatch_changed_.notify_all();
+          }
+        }
+      }
+      dispatch_progress_.fetch_add(1U, std::memory_order_relaxed);
     }
 #endif
     dispatcher_exited_.store(true, std::memory_order_release);
@@ -650,6 +660,7 @@ private:
   bool dispatch_pending_{false};
   bool dispatch_active_{false};
   std::atomic<bool> dispatcher_exited_{true};
+  std::atomic<std::uint32_t> dispatch_progress_{0};
   bool provider_active_{false};
 #if defined(ESP_PLATFORM)
   StaticSemaphore_t dispatch_wake_storage_{};
@@ -728,6 +739,12 @@ const vehicle_signals::SignalProvider &ProfileRuntimeService::provider() const n
   const auto *const service =
       std::launder(reinterpret_cast<const ProfileRuntimeServiceImplementation *>(storage_));
   return service->provider();
+}
+
+std::uint32_t ProfileRuntimeService::dispatch_progress() const noexcept {
+  const auto *const service =
+      std::launder(reinterpret_cast<const ProfileRuntimeServiceImplementation *>(storage_));
+  return service->dispatch_progress();
 }
 
 } // namespace vehicle_profile_runtime
