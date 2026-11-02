@@ -90,8 +90,8 @@ compilers rely on the ordinary host job for compatibility. Details:
 
 ## 4. Offline host build
 
-The generic CAN core (`esp32-vehicle-can-core`, release `0.2.1`) is normally
-fetched by CMake. For offline work, point at an exact `0.2.1` checkout:
+The generic CAN core (`esp32-vehicle-can-core`, release `0.3.0`) is normally
+fetched by CMake. For offline work, point at an exact `0.3.0` checkout:
 
 ```sh
 cmake -S . -B build/host -G Ninja -DBUILD_TESTING=ON \
@@ -101,7 +101,7 @@ cmake -S . -B build/host -G Ninja -DBUILD_TESTING=ON \
 | Cache variable | Default | Meaning |
 | --- | --- | --- |
 | `VEHICLE_CAN_CORE_REPOSITORY` | upstream GitHub URL | Where to fetch the core |
-| `VEHICLE_CAN_CORE_TAG` | `0.2.1` | Release tag to fetch |
+| `VEHICLE_CAN_CORE_TAG` | `0.3.0` | Release tag to fetch |
 | `VEHICLE_CAN_CORE_SOURCE_DIR` | `third_party/esp32-vehicle-can-core` | Local checkout; used instead of fetching when it exists |
 
 doctest is also fetched at configure time and is not covered by this override.

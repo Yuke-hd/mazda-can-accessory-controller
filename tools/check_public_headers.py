@@ -121,6 +121,7 @@ PUBLIC_HEADERS: Tuple[PublicHeader, ...] = (
     PublicHeader("mazda/facade_contracts.hpp", "facade contracts"),
     PublicHeader("mazda/reading.hpp", "reading contract"),
     PublicHeader("mazda/notification.hpp", "notification contract"),
+    PublicHeader("signal_notification/notification.hpp", "shared notification contract"),
     PublicHeader("mazda/telemetry_contracts.hpp", "Mazda compatibility contracts"),
     PublicHeader("vehicle_core/telemetry_contracts.hpp", "public telemetry contracts"),
     PublicHeader(
@@ -175,7 +176,16 @@ FORBIDDEN_DEPENDENCIES: DependencyRules = (
         ("vehicle_core/decoder_contracts.hpp", "mazda/decoder.hpp", "mazda/definitions.hpp"),
     ),
     ("mutable signal/state", ("vehicle_core/signal.hpp", "mazda/state.hpp")),
-    ("notification implementation", ("vehicle_core/notification_channel.hpp",)),
+    # signal_notification/notification_channel.hpp is the repository-owned,
+    # provider-private channel. The vehicle_core spelling is the pre-0.3.0
+    # core location, kept so a stale core checkout cannot reintroduce it.
+    (
+        "notification implementation",
+        (
+            "signal_notification/notification_channel.hpp",
+            "vehicle_core/notification_channel.hpp",
+        ),
+    ),
     ("lighting implementation", ("lighting_sink.hpp", "lighting_zone.hpp")),
     ("board dependency", ("board/board_config.h",)),
     (
@@ -232,6 +242,7 @@ def _include_dirs(root: Path, core_root: Optional[Path] = None) -> Tuple[Path, .
         root / "components/vehicle_telemetry/include",  # legacy isolated fixture
         root / "components/vehicle_profile_runtime/include",
         root / "lib/mazda/include",
+        root / "lib/signal_notification/include",
         root / "lib/vehicle_signals/include",
         root / "lib/companion_protocol/include",
         root / "lib/action_engine/include",
@@ -437,6 +448,7 @@ def _cmake_probe_files(probe_dir: Path, root: Path) -> Tuple[Path, Path, Path, P
         '#include "mazda/reading.hpp"\n'
         '#include "mazda/notification.hpp"\n'
         '#include "mazda/signal_provider.hpp"\n'
+        '#include "signal_notification/notification.hpp"\n'
         '#include "mazda/telemetry_contracts.hpp"\n'
         '#include "vehicle_core/telemetry_contracts.hpp"\n'
         '#include "vehicle_signals/signal_catalog.hpp"\n'

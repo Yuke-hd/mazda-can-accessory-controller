@@ -1187,6 +1187,67 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 f"live_signals.cpp references forbidden {token} outside comments", detail
             )
 
+    def test_notification_channel_is_included_only_by_providers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="architecture-channel-fixture-") as directory:
+            root = Path(directory)
+            channel = '#include "signal_notification/notification_channel.hpp"\n'
+            allowed = (
+                "components/mazda_telemetry/private_include/mazda/service.hpp",
+                "lib/vehicle_profile_runtime/src/notifications.hpp",
+                "lib/signal_notification/tests/channel_tests.cpp",
+            )
+            generated = (
+                "firmware/weact-can485-v1.1/managed_components/vehicle_core/tests/channel.cpp",
+                "firmware/weact-can485-v1.1/build/stale.cpp",
+            )
+            for relative in generated:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('#include "vehicle_core/notification_channel.hpp"\n', encoding="utf-8")
+            for relative in allowed:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(channel, encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                check_architecture._check_notification_channel_ownership(root)
+
+            leaks = {
+                "lib/mazda/include/mazda/notification.hpp": channel,
+                "components/companion_ble/src/stream.cpp": channel,
+                "tests/host/consumer_test.cpp": '#include "vehicle_core/notification_channel.hpp"\n',
+                "lib/action_engine/src/engine.cpp": '#include "vehicle_core/notification.hpp"\n',
+                # Only anchored generated paths are skipped, not every folder
+                # that shares a generated-folder name.
+                "lib/replay/build/leak.cpp": channel,
+                "firmware/weact-can485-v1.1/build_info.cpp": channel,
+            }
+            for relative, text in leaks.items():
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+            with self.assertRaises(check_architecture.ArchitectureFailure) as raised:
+                with redirect_stdout(io.StringIO()):
+                    check_architecture._check_notification_channel_ownership(root)
+
+            detail = str(raised.exception)
+            self.assertIn(
+                "lib/mazda/include/mazda/notification.hpp includes the private notification channel",
+                detail,
+            )
+            self.assertIn(
+                "components/companion_ble/src/stream.cpp includes the private notification channel",
+                detail,
+            )
+            self.assertIn("tests/host/consumer_test.cpp includes retired core notification", detail)
+            self.assertIn("lib/action_engine/src/engine.cpp includes retired core notification", detail)
+            self.assertIn("lib/replay/build/leak.cpp includes the private notification channel", detail)
+            self.assertIn(
+                "firmware/weact-can485-v1.1/build_info.cpp includes the private notification channel",
+                detail,
+            )
+            for relative in allowed + generated:
+                self.assertNotIn(relative, detail)
+
     def test_vehicle_core_target_private_mazda_dependency_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="architecture-core-fixture-") as directory:
             root = Path(directory)
@@ -1208,14 +1269,8 @@ class ArchitectureCheckerRegressionTests(unittest.TestCase):
                 "namespace vehicle_core { template <typename T> struct Reading { T value{}; }; }\n",
                 encoding="utf-8",
             )
-            (include / "notification.hpp").write_text(
-                "#pragma once\n#include \"vehicle_core/reading.hpp\"\n"
-                "namespace vehicle_core { template <typename T> struct Notification { Reading<T> current{}; }; }\n",
-                encoding="utf-8",
-            )
             (include / "telemetry_contracts.hpp").write_text(
-                "#pragma once\n#include \"vehicle_core/reading.hpp\"\n"
-                "#include \"vehicle_core/notification.hpp\"\n",
+                "#pragma once\n#include \"vehicle_core/reading.hpp\"\n",
                 encoding="utf-8",
             )
             (root / "lib/mazda/include/mazda").mkdir(parents=True)

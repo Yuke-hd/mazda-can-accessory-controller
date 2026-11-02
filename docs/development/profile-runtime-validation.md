@@ -88,7 +88,8 @@ selection must account for the active provider composition.
   the 20-byte dispatch table, the 8-byte freshness table,
   `ProfileRuntimeServiceImplementation::process`, provider process/publish/
   dispatch, service start/stop, and
-  `vehicle_core::NotificationChannel<vehicle_signals::SignalValue, 0>::dispatch_pending`.
+  `vehicle_core::NotificationChannel<vehicle_signals::SignalValue, 0>::dispatch_pending`
+  (renamed `signal_notification::NotificationChannel` since GH-390; see below).
 - The maximum map and ELF retain all 64 generated decoder functions, the
   1,280-byte dispatch table, the 512-byte freshness table, provider and adapter
   paths, and notification dispatch.
@@ -211,3 +212,34 @@ absolute paths for `sdkconfig.defaults`, `sdkconfig.runtime-stats.defaults`,
 and the external defaults file containing the two profiling options listed
 above. Select `empty` or `max` for the other synthetic profiles. Leave the
 option at its default `off` for the no-probe baseline.
+
+## GH-390 notification ownership and core 0.3.0
+
+GH-390 moved the notification contract and channel into the repository-owned
+`signal_notification` library and bumped the pinned vehicle core to `0.3.0`
+(`e9db379fc0f0edffa39f54b5133c1b2ac24f5fc1`). The R6 rows above stay as
+historical `0.2.1` measurements. The rebuilt images below used fresh
+out-of-tree directories, ESP-IDF `v5.5.4`, target `esp32`, and a
+`dependencies.lock` re-resolved by `idf.py update-dependencies` to `0.3.0`.
+The worst-case row used the same defaults as the R6 worst-case row; the
+populated row used `WEACT_CAN_PROFILE_LINK_PROBE=populated`.
+
+| Build | Flash code | Flash data | IRAM used / free | DRAM used / free | Total image |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Production | 467,806 | 94,116 | 123,431 / 7,641 | 83,796 / 40,784 | 715,589 |
+| Worst-case | 478,734 | 94,412 | 128,115 / 2,957 | 92,044 / 32,536 | 737,689 |
+| Populated production | 482,370 | 94,452 | 124,055 / 7,017 | 88,564 / 36,016 | 731,433 |
+
+DRAM is unchanged from the R6 rows for all three builds. All three images passed
+the IRAM placement gate with 23 `hot_code.lf` symbols in `.iram0.text`. The
+populated map and ELF retain
+`signal_notification::NotificationChannel<vehicle_signals::SignalValue, 0>::dispatch_pending`,
+and no image links a `vehicle_core` notification symbol. The empty and maximum
+probes were not rebuilt for GH-390.
+
+The fresh UBSan host build passed all 855 CTest cases, including
+`signal_notification_channel_tests`, `architecture_contracts`, and the public
+header boundary gate. The `tests/tools` Python suite ran 592
+tests: 591 passed and one was skipped. Evidence is
+software-only: no image was flashed and no bench or vehicle operation was
+performed.

@@ -33,6 +33,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/companion_protocol"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/mazda"
+    "${CMAKE_CURRENT_LIST_DIR}/../../lib/signal_notification"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_lighting_policy"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_signals")
 

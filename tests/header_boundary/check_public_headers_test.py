@@ -102,6 +102,10 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         self.assertIn("normal access failed as expected", result.stdout)
         self.assertIn("authorized access succeeded (internal include path)", result.stdout)
         self.assertIn("OK   mazda/signal_provider.hpp (generic signal provider)", result.stdout)
+        self.assertIn(
+            "OK   signal_notification/notification.hpp (shared notification contract)",
+            result.stdout,
+        )
         self.assertIn("OK   vehicle_signals/signal_contracts.hpp", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_catalog.hpp", result.stdout)
         self.assertIn("OK   vehicle_signals/signal_provider.hpp", result.stdout)
@@ -351,6 +355,34 @@ class PublicHeaderCheckerTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertNotEqual(result.returncode, 0, output)
         self.assertIn("raw frame", output)
+
+    def test_public_header_reaching_notification_channel_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:
+            root = self.copy_fixture(Path(directory))
+            # Simulate the provider-private channel leaking onto a public
+            # include root and being reached from the Mazda notification alias.
+            channel = (
+                root
+                / "lib/signal_notification/include/signal_notification/notification_channel.hpp"
+            )
+            channel.write_text(
+                "#pragma once\nnamespace signal_notification { struct Channel {}; }\n",
+                encoding="utf-8",
+            )
+            notification = root / "lib/mazda/include/mazda/notification.hpp"
+            notification.write_text(
+                notification.read_text(encoding="utf-8").replace(
+                    '#include "signal_notification/notification.hpp"\n',
+                    '#include "signal_notification/notification.hpp"\n'
+                    '#include "signal_notification/notification_channel.hpp"\n',
+                ),
+                encoding="utf-8",
+            )
+            result = run_checker(root)
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0, output)
+        self.assertIn("notification implementation", output)
+        self.assertIn("signal_notification/notification_channel.hpp", output)
 
     def test_exported_private_path_is_detected(self) -> None:
         with tempfile.TemporaryDirectory(prefix="header-boundary-test-") as directory:

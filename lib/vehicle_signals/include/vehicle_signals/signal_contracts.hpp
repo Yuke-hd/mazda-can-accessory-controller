@@ -132,7 +132,7 @@ struct SignalReading {
   ValidationStatus validation{ValidationStatus::Reference};
 };
 
-// Latest-state notice for one signal, matching vehicle_core::Notification.
+// Latest-state notice for one signal, matching signal_notification::Notification.
 // `current` is the latest reading; no previous reading is reconstructed. A
 // reading is usable when it has a value and is Fresh or FreshnessUnverified.
 // Flags are sticky across coalescing:

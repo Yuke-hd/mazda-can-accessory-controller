@@ -4,6 +4,8 @@ project(header_boundary_fixture LANGUAGES CXX)
 add_library(mazda_contracts INTERFACE)
 target_include_directories(mazda_contracts INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/lib/mazda/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/signal_notification/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/vehicle_core/include
 )
 
 add_library(vehicle_telemetry_contracts INTERFACE)

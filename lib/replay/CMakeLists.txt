@@ -38,6 +38,7 @@ target_include_directories(
   replay_controller
   PRIVATE
     ${CMAKE_SOURCE_DIR}/components/mazda_telemetry/private_include
+    ${CMAKE_SOURCE_DIR}/lib/signal_notification/private_include
     ${CMAKE_SOURCE_DIR}/lib/mazda/internal_include
 )
 target_link_libraries(

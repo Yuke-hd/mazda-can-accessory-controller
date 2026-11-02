@@ -73,12 +73,10 @@ def _write_core_probe(probe_dir: Path, core_root: Path) -> Path:
     source = probe_dir / "core_only_consumer.cpp"
     source.write_text(
         '#include "vehicle_core/vehicle_core.hpp"\n'
-        '#include "vehicle_core/notification.hpp"\n'
         '#include "vehicle_core/reading.hpp"\n'
         '#include "vehicle_core/telemetry_contracts.hpp"\n'
         "#include <type_traits>\n"
         "static_assert(std::is_trivially_copyable_v<vehicle_core::Reading<float>>);\n"
-        "static_assert(std::is_trivially_copyable_v<vehicle_core::Notification<bool>>);\n"
         "int main() {\n"
         "  vehicle_core::RawCanFrame frame{};\n"
         "  return vehicle_core::library_is_available() && frame.is_valid() ? 0 : 1;\n"
@@ -317,6 +315,9 @@ class PortableLayer:
     core_headers: Tuple[str, ...] = ()
     # Additional core headers allowed only in the layer's private sources.
     private_core_headers: Tuple[str, ...] = ()
+    # Repository include roots allowed only in the layer's private sources;
+    # they must not appear in the exported interface or the consumer closure.
+    private_include_roots: Tuple[str, ...] = ()
     # Repository directory whose compiled sources are checked, if any.
     source_dir: Optional[str] = None
     # Repository files that may hold vehicle catalog key literals. Every other
@@ -632,17 +633,19 @@ VEHICLE_SIGNALS_LAYER = PortableLayer(
 )
 VEHICLE_PROFILE_RUNTIME_LAYER = PortableLayer(
     name="vehicle_profile_runtime",
-    directories=("lib/vehicle_signals", "lib/vehicle_profile_runtime"),
+    directories=("lib/signal_notification", "lib/vehicle_signals", "lib/vehicle_profile_runtime"),
     headers=("vehicle_profile_runtime/tables.hpp", "vehicle_profile_runtime/provider.hpp"),
     probe_body=_VEHICLE_PROFILE_RUNTIME_PROBE_BODY,
-    target_links=("vehicle_core", "vehicle_signals"),
+    target_links=("vehicle_core", "signal_notification", "vehicle_signals"),
     # The source root is private to this portable library and contains its
     # bounded provider-state implementation headers.
     include_roots=("lib/vehicle_profile_runtime/include", "lib/vehicle_signals/include",
-                   "lib/vehicle_profile_runtime/src"),
+                   "lib/signal_notification/include", "lib/vehicle_profile_runtime/src"),
     core_headers=("vehicle_core/frame.hpp", "vehicle_core/telemetry_contracts.hpp",
                   "vehicle_core/time.hpp"),
-    private_core_headers=("vehicle_core/notification_channel.hpp",),
+    # The repository-owned notification channel is a private implementation
+    # detail of the provider sources; the consumer reaches only the contract.
+    private_include_roots=("lib/signal_notification/private_include",),
     source_dir="lib/vehicle_profile_runtime/src",
 )
 ACTION_ENGINE_LAYER = PortableLayer(
@@ -894,13 +897,20 @@ def _layer_dependency_violations(
     allowed_private_core = {
         (core_include / name).resolve() for name in layer.private_core_headers
     }
+    private_include_roots = tuple(
+        (root / include).resolve() for include in layer.private_include_roots
+    )
     violations: List[str] = []
     for index, (label, entry, source) in enumerate(matching):
         directory = entry.get("directory") if isinstance(entry, dict) else None
         cwd = Path(directory).resolve() if isinstance(directory, str) and directory else root
         tokens = _command_tokens(entry)
+        is_private_source = source != consumer_source
+        allowed_include_dirs = include_roots + (
+            private_include_roots if is_private_source else ()
+        )
         for include_dir in _include_directories(tokens, cwd):
-            if include_dir not in include_roots:
+            if include_dir not in allowed_include_dirs:
                 violations.append(f"forbidden {label} include directory: {include_dir}")
         for token in tokens:
             if token.startswith(("-D", "/D")) and _FORBIDDEN_SIGNALS_DEFINITION.search(token):
@@ -921,9 +931,13 @@ def _layer_dependency_violations(
                 _is_within(dependency, include) for include in include_roots[:-1]
             ):
                 continue
+            if is_private_source and any(
+                _is_within(dependency, include) for include in private_include_roots
+            ):
+                continue
             if _is_within(dependency, core_root):
                 allowed_core = allowed_public_core
-                if source != consumer_source:
+                if is_private_source:
                     allowed_core = allowed_core | allowed_private_core
                 if dependency not in allowed_core:
                     violations.append(f"forbidden {layer.name} core dependency: {dependency}")
@@ -1736,6 +1750,53 @@ def _check_host_only_tooling(root: Path) -> None:
     print("OK   firmware, components/ and lib/ builds reference no host-only profile tooling")
 
 
+# The notification channel is owned by lib/signal_notification. Only the two
+# signal providers (and the channel's own tests) may include it; everything
+# else, including public headers, may reach only the Notification/Callback
+# contract. Core 0.3.0 no longer ships a notification header at all.
+NOTIFICATION_CHANNEL_HEADER = "signal_notification/notification_channel.hpp"
+_NOTIFICATION_CHANNEL_INCLUDERS = (
+    "lib/signal_notification/tests/",
+    "components/mazda_telemetry/private_include/mazda/",
+    "lib/vehicle_profile_runtime/src/",
+)
+_NOTIFICATION_SCAN_ROOTS = ("components", "firmware", "lib", "tests", "tools")
+# Generated or local dependency state (for example a stale ESP-IDF
+# managed_components/ copy of an older core release) and checker fixtures are
+# not repository source. Prefixes are anchored so a source folder that merely
+# shares a name is still scanned.
+_NOTIFICATION_SKIPPED_PREFIXES = (
+    "firmware/weact-can485-v1.1/managed_components/",
+    "firmware/weact-can485-v1.1/build/",
+    "tests/header_boundary/fixtures/",
+)
+
+
+def _check_notification_channel_ownership(root: Path) -> None:
+    violations: List[str] = []
+    for scan_root in _NOTIFICATION_SCAN_ROOTS:
+        base = root / scan_root
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if path.suffix not in _CPP_SUFFIXES or not path.is_file():
+                continue
+            relative = path.relative_to(root).as_posix()
+            if relative.startswith(_NOTIFICATION_SKIPPED_PREFIXES):
+                continue
+            code, _ = _strip_cpp_comments(path.read_text(encoding="utf-8"))
+            for name in re.findall(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', code, re.M):
+                if name.startswith("vehicle_core/notification"):
+                    violations.append(f"{relative} includes retired core notification header {name}")
+                elif name == NOTIFICATION_CHANNEL_HEADER and not relative.startswith(
+                    _NOTIFICATION_CHANNEL_INCLUDERS
+                ):
+                    violations.append(f"{relative} includes the private notification channel")
+    if violations:
+        raise ArchitectureFailure("\n".join(violations))
+    print("OK   only the signal providers include the private notification channel")
+
+
 def _check_dependency_layout(root: Path) -> None:
     required = (
         root / "components/mazda_telemetry",
@@ -1764,8 +1825,8 @@ def _check_dependency_layout(root: Path) -> None:
     if tag_match is None:
         raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must name a release tag")
     release_tag = tag_match.group(1)
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_tag) or release_tag != "0.2.1":
-        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must be the 0.2.1 release tag")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release_tag) or release_tag != "0.3.0":
+        raise ArchitectureFailure("VEHICLE_CAN_CORE_TAG must be the 0.3.0 release tag")
     manifest = root / "firmware/weact-can485-v1.1/main/idf_component.yml"
     if not manifest.exists():
         raise ArchitectureFailure(f"firmware dependency manifest is missing: {manifest}")
@@ -1788,7 +1849,7 @@ def _check_dependency_layout(root: Path) -> None:
             component_refs.append(version_match.group(1))
     if len(component_refs) != 3 or set(component_refs) != {release_tag}:
         raise ArchitectureFailure(
-            "CMake and all three ESP-IDF generic component refs must use the same 0.2.1 release tag"
+            "CMake and all three ESP-IDF generic component refs must use the same 0.3.0 release tag"
         )
     print("OK   generic vehicle-core components are external and pinned")
 
@@ -1914,6 +1975,7 @@ def check(
             _check_companion_ble_startup_invariants(root)
             _check_companion_config_isolation(root)
             _check_tool_private_includes(root)
+            _check_notification_channel_ownership(root)
             _check_host_only_tooling(root)
             _check_adapter(
                 root,

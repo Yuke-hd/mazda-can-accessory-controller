@@ -1,7 +1,8 @@
 #pragma once
 
 // Mazda-facing aliases for the frozen, value-copy availability contract.
-// Definitions remain in vehicle_core so generic consumers can reason about
+// Reading/availability definitions remain in vehicle_core and the notification
+// contract lives in signal_notification, so generic consumers can reason about
 // data availability without depending on Mazda decoders or state storage.
 #include "mazda/notification.hpp"
 #include "vehicle_core/decoder_contracts.hpp"
@@ -11,9 +12,9 @@
 
 namespace mazda {
 
+using signal_notification::Notification;
 using vehicle_core::Availability;
 using vehicle_core::HealthObservation;
-using vehicle_core::Notification;
 using vehicle_core::Reading;
 using vehicle_core::ValidationStatus;
 

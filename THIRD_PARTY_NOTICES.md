@@ -69,10 +69,19 @@ source, exact version or commit, license, and required notices.
 
 ## Yuke-hd esp32-vehicle-can-core
 
-- **Source:** <https://github.com/Yuke-hd/esp32-vehicle-can-core/tree/0.2.1>
-- **Exact version/commit:** `0.2.1`, `b3d87ac094576f7a787114a1bd24db5cf427a4f7`
-- **License:** Apache-2.0, upstream [LICENSE](https://github.com/Yuke-hd/esp32-vehicle-can-core/blob/0.2.1/LICENSE)
-- **Role/status:** external `vehicle_core`, `can_bus`, and `vehicle_telemetry` dependencies consumed through CMake FetchContent and ESP-IDF Component Manager. No core source is copied into this repository; the upstream license and notices remain authoritative.
+- **Source:** <https://github.com/Yuke-hd/esp32-vehicle-can-core/tree/0.3.0>
+- **Exact version/commit:** `0.3.0`, `e9db379fc0f0edffa39f54b5133c1b2ac24f5fc1`
+- **License:** Apache-2.0, upstream [LICENSE](https://github.com/Yuke-hd/esp32-vehicle-can-core/blob/0.3.0/LICENSE)
+- **Role/status:** external `vehicle_core`, `can_bus`, and `vehicle_telemetry` dependencies consumed through CMake FetchContent and ESP-IDF Component Manager. No `0.3.0` core source is copied into this repository; the upstream license and notices remain authoritative.
+- **Derived notification code:** `lib/signal_notification/` (the
+  `Notification<T>`/`Callback<T>` contract, the private `NotificationChannel`,
+  and its ported tests) is derived from `components/vehicle_core` of release
+  `0.2.1` at `b3d87ac094576f7a787114a1bd24db5cf427a4f7`
+  (<https://github.com/Yuke-hd/esp32-vehicle-can-core/tree/0.2.1>), Apache-2.0,
+  same copyright owner. Core `0.3.0` removed that code; this repository now
+  owns and maintains the derived copy, renamed into the `signal_notification`
+  namespace with behaviour unchanged. Each derived file carries a provenance
+  comment.
 
 ## Espressif led_strip
 

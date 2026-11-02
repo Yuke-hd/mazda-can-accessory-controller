@@ -12,7 +12,8 @@ if(COMMAND idf_component_register)
       "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_profile_runtime/include"
     PRIV_INCLUDE_DIRS
       "${CMAKE_CURRENT_LIST_DIR}/../../lib/vehicle_profile_runtime/src"
-    REQUIRES vehicle_core vehicle_signals vehicle_telemetry
+      "${CMAKE_CURRENT_LIST_DIR}/../../lib/signal_notification/private_include"
+    REQUIRES vehicle_core vehicle_signals vehicle_telemetry signal_notification
     PRIV_REQUIRES freertos
   )
   target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_17)

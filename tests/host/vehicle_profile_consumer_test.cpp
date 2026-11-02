@@ -723,7 +723,7 @@ TEST_CASE("generated provider and populated adapter have fixed steady applicatio
   ProviderAccess::set_running(*provider, false);
   provider->~ProfileProvider();
 
-  // Direct pinned Runtime 0.2.1 startup is the platform worker reservation
+  // Direct pinned Runtime 0.3.0 startup is the platform worker reservation
   // baseline. Its C++ operator-new count is expected during startup only.
   // This guard does not see pthread/libc allocator calls and does not measure
   // the whole process heap.
