@@ -325,8 +325,8 @@ This record covers software checks on the M8 integration test head. The full
 fresh host build and CTest run passed on `0fad8a9`: all 864 tests passed in
 325.37 seconds, including `selected_profile_config_matrix`, architecture and
 public-header contracts, the Mazda suite, and the runtime consumer tests. The
-Python tooling suite on that head passed 618 tests with one skipped in 157.56
-seconds.
+Python tooling suite on that head ran 618 tests: 617 passed and one was skipped
+in 157.56 seconds.
 
 The subsequent test-only CMake change at `e095cf3` fixes the matrix runner's
 multi-configuration executable path. On that head, a fresh `Ninja Multi-Config`
