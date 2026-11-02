@@ -205,9 +205,9 @@ def _enum(value: Any, path: str, kind: str) -> str:
     return normalized
 
 
-def _load_signal_catalog() -> Mapping[str, Mapping[str, Any]]:
+def _load_signal_catalog(path: Path | None = None) -> Mapping[str, Mapping[str, Any]]:
     try:
-        source = SIGNAL_CATALOG_PATH.read_text(encoding="utf-8")
+        source = (SIGNAL_CATALOG_PATH if path is None else path).read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise CompileError("$", f"cannot read signal catalog: {error}") from error
     try:
@@ -595,8 +595,12 @@ def _normalize_output(value: Any, path: str, actions: set[str], rules: Sequence[
     return normalized
 
 
-def normalize_document(document: Any, output_catalog: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate and normalize a loaded YAML document to persisted JSON data."""
+def normalize_document(
+    document: Any,
+    output_catalog: Mapping[str, Any],
+    signal_catalog_path: Path | None = None,
+) -> dict[str, Any]:
+    """Validate and normalize YAML against the selected or native signal catalog."""
     root = _mapping(document, "$")
     _fields(root, "", ("version",), ("actions", "rules", "outputs", "sinks"))
     version = _integer(root["version"], "version", "version")
@@ -604,7 +608,7 @@ def normalize_document(document: Any, output_catalog: Mapping[str, Any]) -> dict
         raise CompileError("version", f"unsupported configuration version {version}; expected {VERSION}")
 
     actions, action_names = _normalize_actions(root.get("actions", []))
-    signal_catalog = _load_signal_catalog()
+    signal_catalog = _load_signal_catalog(signal_catalog_path)
     rules: list[dict[str, Any]] = []
     level_actions: set[str] = set()
     for index, raw_rule in enumerate(_sequence(root.get("rules", []), "rules")):
@@ -708,10 +712,17 @@ def load_yaml(path: Path) -> Any:
         raise CompileError("$", f"malformed YAML{location}: {detail}") from error
 
 
-def compile_file(input_path: Path, output_path: Path, output_catalog_path: Path) -> None:
+def compile_file(
+    input_path: Path,
+    output_path: Path,
+    output_catalog_path: Path,
+    signal_catalog_path: Path | None = None,
+) -> None:
     try:
         document = load_yaml(input_path)
-        normalized = normalize_document(document, load_output_catalog(output_catalog_path))
+        normalized = normalize_document(
+            document, load_output_catalog(output_catalog_path), signal_catalog_path
+        )
     except RecursionError as error:
         raise CompileError("$", "configuration nesting exceeds the supported depth") from error
     payload = json.dumps(normalized, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
@@ -728,9 +739,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("input", type=Path, help="authoring YAML configuration")
     parser.add_argument("output", type=Path, help="canonical JSON output")
     parser.add_argument("--output-catalog", type=Path, required=True, help="generated output catalog JSON")
+    parser.add_argument(
+        "--signal-catalog", type=Path, help="selected generated signal catalog JSON"
+    )
     args = parser.parse_args(argv)
     try:
-        compile_file(args.input, args.output, args.output_catalog)
+        compile_file(args.input, args.output, args.output_catalog, args.signal_catalog)
     except CompileError as error:
         print(f"ERROR: {args.input}: {error.path}: {error.message}", file=sys.stderr)
         return 2
