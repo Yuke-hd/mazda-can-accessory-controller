@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "source": {
+    "path": "docs/protocol/mazda_custom.dbc",
+    "version": "Mazda custom human-readable signals for SavvyCAN",
+    "sha256": "49b638287bd758c3c38660bd1156ff49f6bf2e0e614c46763066418e6bb97b9f",
+    "license_note": "See tests/fixtures/vehicle-profiles/mazda-comparison/PROVENANCE.md; this fixture adds no DBC copy or license grant",
+    "confidence": {
+      "ENGINE_DATA.EngineRPM": "Confirmed",
+      "ENGINE_DATA.AcceleratorPedal_Reference": "Reference",
+        "TRANSMISSION.Selector": "Confirmed for P/R/N/D only; unknown labels remain unconfirmed",
+      "TRANSMISSION.ActualGear": "Observed"
+    }
+  },
+  "fixture_license": "Apache-2.0; independently authored synthetic test vectors",
+  "vectors": [
+    {
+      "name": "engine_zero",
+      "identifier": 514,
+      "data": [0, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "engine_rpm": {"valid": true, "value": 0.0},
+          "accelerator_pedal_position": {"valid": true, "value": 0.0}
+        },
+        "native": {
+          "status": "decoded",
+          "engine_rpm": {"valid": true, "value": 0.0},
+          "accelerator_pedal_position": {"valid": true, "value": 0.0}
+        }
+      }
+    },
+    {
+      "name": "engine_one_raw_step",
+      "identifier": 514,
+      "data": [0, 1, 0, 0, 125, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "engine_rpm": {"valid": true, "value": 0.25},
+          "accelerator_pedal_position": {"valid": true, "value": 0.5}
+        },
+        "native": {
+          "status": "decoded",
+          "engine_rpm": {"valid": true, "value": 0.25},
+          "accelerator_pedal_position": {"valid": true, "value": 0.5}
+        }
+      }
+    },
+    {
+      "name": "engine_declared_maximum",
+      "identifier": 514,
+      "data": [132, 208, 0, 0, 250, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "engine_rpm": {"valid": true, "value": 8500.0},
+          "accelerator_pedal_position": {"valid": true, "value": 1.0}
+        },
+        "native": {
+          "status": "decoded",
+          "engine_rpm": {"valid": true, "value": 8500.0},
+          "accelerator_pedal_position": {"valid": true, "value": 1.0}
+        }
+      }
+    },
+    {
+      "name": "accelerator_above_declared_maximum",
+      "identifier": 514,
+      "data": [0, 0, 0, 0, 250, 1, 0, 0],
+      "expected": {
+        "generated": {
+          "engine_rpm": {"valid": true, "value": 0.0},
+          "accelerator_pedal_position": {"valid": false}
+        },
+        "native": {
+          "status": "decoded",
+          "engine_rpm": {"valid": true, "value": 0.0},
+          "accelerator_pedal_position": {"valid": false}
+        }
+      }
+    },
+    {
+      "name": "rpm_above_declared_maximum",
+      "identifier": 514,
+      "data": [132, 209, 0, 0, 125, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "engine_rpm": {"valid": false},
+          "accelerator_pedal_position": {"valid": true, "value": 0.5}
+        },
+        "native": {
+          "status": "malformed",
+          "engine_rpm": {"valid": false},
+          "accelerator_pedal_position": {"valid": false}
+        }
+      },
+      "intentional_differences": ["engine_rpm_rejects_the_native_engine_data_message"]
+    },
+    {
+      "name": "actual_gear_zero",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "actual_gear_first",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 2, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 5, "key": "first"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 5, "key": "first"}
+        }
+      }
+    },
+    {
+      "name": "actual_gear_sixth",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 12, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 10, "key": "sixth"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 10, "key": "sixth"}
+        }
+      }
+    },
+    {
+      "name": "actual_gear_unknown_lower_boundary",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 14, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 0, "key": "unknown"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": false}
+        }
+      },
+      "intentional_differences": ["mapped_unknown_actual_gears_stay_valid_in_imported_profiles"]
+    },
+    {
+      "name": "actual_gear_unknown_upper_boundary",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 26, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 0, "key": "unknown"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": false}
+        }
+      },
+      "intentional_differences": ["mapped_unknown_actual_gears_stay_valid_in_imported_profiles"]
+    },
+    {
+      "name": "actual_gear_reverse",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 28, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 4, "key": "reverse"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 4, "key": "reverse"}
+        }
+      }
+    },
+    {
+      "name": "actual_gear_shifting",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 30, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 11, "key": "shifting"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 11, "key": "shifting"}
+        }
+      }
+    },
+    {
+      "name": "selector_shifting",
+      "identifier": 552,
+      "data": [0, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 1, "key": "shifting"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "selector_park",
+      "identifier": 552,
+      "data": [1, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 2, "key": "park"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 2, "key": "park"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "selector_reverse",
+      "identifier": 552,
+      "data": [2, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 3, "key": "reverse"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 3, "key": "reverse"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "selector_neutral",
+      "identifier": 552,
+      "data": [3, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 4, "key": "neutral"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 4, "key": "neutral"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "selector_drive",
+      "identifier": 552,
+      "data": [4, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 5, "key": "drive"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": true, "value": 5, "key": "drive"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      }
+    },
+    {
+      "name": "selector_unknown_lower_boundary",
+      "identifier": 552,
+      "data": [5, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 0, "key": "unknown"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": false},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      },
+      "intentional_differences": ["mapped_unknown_selector_codes_stay_valid_in_imported_profiles"]
+    },
+    {
+      "name": "selector_unknown_upper_boundary",
+      "identifier": 552,
+      "data": [7, 0, 0, 0, 0, 0, 0, 0],
+      "expected": {
+        "generated": {
+          "selector_position": {"valid": true, "value": 0, "key": "unknown"},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        },
+        "native": {
+          "status": "decoded",
+          "selector_position": {"valid": false},
+          "actual_gear": {"valid": true, "value": 1, "key": "park_or_neutral"}
+        }
+      },
+      "intentional_differences": ["mapped_unknown_selector_codes_stay_valid_in_imported_profiles"]
+    }
+  ]
+}

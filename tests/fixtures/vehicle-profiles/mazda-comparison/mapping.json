@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "profile_id": "mazda.decoder-comparison",
+  "selected_bus": "body",
+  "sources": [
+    {
+      "path": "mazda_custom.dbc",
+      "sha256": "49b638287bd758c3c38660bd1156ff49f6bf2e0e614c46763066418e6bb97b9f",
+      "bus": "body",
+      "license": "No separate license is recorded for this DBC; see docs/protocol/signal-evidence.md, docs/development/license-and-vehicle-data.md and THIRD_PARTY_NOTICES.md for its existing repository provenance and review",
+      "encoding": "utf-8"
+    }
+  ],
+  "bindings": [
+    {
+      "target": "vehicle.engine_rpm",
+      "message": "ENGINE_DATA",
+      "field": "EngineRPM",
+      "unit": "rpm"
+    },
+    {
+      "target": "vehicle.accelerator_pedal_position",
+      "message": "ENGINE_DATA",
+      "field": "AcceleratorPedal_Reference",
+      "unit": "",
+      "conversion": {"scale": "0.01", "offset": "0"}
+    },
+    {
+      "target": "vehicle.selector_position",
+      "message": "TRANSMISSION",
+      "field": "Selector",
+      "unit": "",
+      "choices": {
+        "Shifting": "shifting",
+        "Park": "park",
+        "Reverse": "reverse",
+        "Neutral": "neutral",
+        "Drive": "drive",
+        "Unknown_5": "unknown",
+        "Unknown_6": "unknown",
+        "Unknown_7": "unknown"
+      }
+    },
+    {
+      "target": "vehicle.actual_gear",
+      "message": "TRANSMISSION",
+      "field": "ActualGear",
+      "unit": "",
+      "choices": {
+        "P_or_N": "park_or_neutral",
+        "1st": "first",
+        "2nd": "second",
+        "3rd": "third",
+        "4th": "fourth",
+        "5th": "fifth",
+        "6th": "sixth",
+        "Unknown_7": "unknown",
+        "Unknown_8": "unknown",
+        "Unknown_9": "unknown",
+        "Unknown_10": "unknown",
+        "Unknown_11": "unknown",
+        "Unknown_12": "unknown",
+        "Unknown_13": "unknown",
+        "Reverse": "reverse",
+        "Shifting": "shifting"
+      }
+    }
+  ]
+}
