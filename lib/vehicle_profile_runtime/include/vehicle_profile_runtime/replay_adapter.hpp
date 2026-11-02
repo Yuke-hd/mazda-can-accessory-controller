@@ -10,7 +10,8 @@ namespace vehicle_profile_runtime {
 enum class ReplayAdapterStatus : std::uint8_t { Ok, InvalidState, Faulted };
 
 // Synchronous host adapter for deterministic replay. Every operation and
-// provider subscription mutation must run on the construction thread.
+// provider subscription mutation must run on the construction thread. Mutating
+// operations are rejected while a provider notification callback is active.
 class ReplayAdapter final {
 public:
   ReplayAdapter(ProfileTables tables, vehicle_core::MonotonicClock &clock) noexcept;

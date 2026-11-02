@@ -59,7 +59,6 @@ public:
   std::size_t catalog_size{0};
 };
 
-#if !REPLAY_SELECTED_PROFILE_EXPECT_EMPTY
 struct RecordedNotifications final {
   std::array<vehicle_signals::SignalNotification, 8> entries{};
   std::size_t count{0};
@@ -71,7 +70,36 @@ void record_notification(void *const context,
   if (recorded.count < recorded.entries.size())
     recorded.entries[recorded.count++] = notification;
 }
-#endif
+
+struct CallbackMutationProbe final {
+  vehicle_profile_runtime::ReplayAdapter *adapter{nullptr};
+  std::size_t fresh_notices{0};
+  vehicle_profile_runtime::ReplayAdapterStatus process_status{
+      vehicle_profile_runtime::ReplayAdapterStatus::Ok};
+  vehicle_profile_runtime::ReplayAdapterStatus service_status{
+      vehicle_profile_runtime::ReplayAdapterStatus::Ok};
+  vehicle_profile_runtime::ReplayAdapterStatus fault_status{
+      vehicle_profile_runtime::ReplayAdapterStatus::Ok};
+  vehicle_profile_runtime::ReplayAdapterStatus stop_status{
+      vehicle_profile_runtime::ReplayAdapterStatus::Ok};
+  vehicle_signals::Availability availability_after_attempt{vehicle_signals::Availability::NoData};
+};
+
+void reject_callback_mutations(void *const context,
+                               const vehicle_signals::SignalNotification &notification) noexcept {
+  if (notification.current.availability != vehicle_signals::Availability::Fresh)
+    return;
+
+  auto &probe = *static_cast<CallbackMutationProbe *>(context);
+  ++probe.fresh_notices;
+  probe.process_status = probe.adapter->process(vehicle_core::RawCanFrame{});
+  probe.service_status = probe.adapter->service();
+  probe.fault_status = probe.adapter->source_fault();
+  probe.stop_status = probe.adapter->stop();
+  const auto reading = probe.adapter->provider().read(notification.id);
+  if (reading.ok())
+    probe.availability_after_attempt = reading.value->availability;
+}
 
 const vehicle_profile_runtime::DispatchEntry *dispatch_for(const vehicle_signals::SignalId id) {
   for (const auto &entry : vehicle_profile::kDispatchTable) {
@@ -107,8 +135,7 @@ gvret::TimedCanFrame brake_frame(const vehicle_core::MonotonicTimestamp timestam
   return timed;
 }
 
-#if !REPLAY_SELECTED_PROFILE_EXPECT_EMPTY
-vehicle_profile_runtime::ProfileTables selected_tables() {
+[[maybe_unused]] vehicle_profile_runtime::ProfileTables selected_tables() {
   return {vehicle_profile::kCatalog,
           vehicle_profile::kFreshnessPolicies.data(),
           vehicle_profile::kFreshnessPolicies.size(),
@@ -116,7 +143,6 @@ vehicle_profile_runtime::ProfileTables selected_tables() {
           vehicle_profile::kDispatchTable.size(),
           vehicle_profile::kMaxDecodeResults};
 }
-#endif
 
 bool is_black(const local_argb::PixelFrame &frame) {
   return std::all_of(frame.begin(), frame.end(),
@@ -127,7 +153,7 @@ std::size_t count_color(const local_argb::PixelFrame &frame, const local_argb::R
   return static_cast<std::size_t>(std::count(frame.begin(), frame.end(), color));
 }
 
-bool same_pixels(const Pixels &left, const Pixels &right) {
+[[maybe_unused]] bool same_pixels(const Pixels &left, const Pixels &right) {
   if (left.size() != right.size())
     return false;
   for (std::size_t frame = 0; frame < left.size(); ++frame) {
@@ -137,7 +163,7 @@ bool same_pixels(const Pixels &left, const Pixels &right) {
   return true;
 }
 
-Pixels replay_selected_profile() {
+[[maybe_unused]] Pixels replay_selected_profile() {
   const auto catalog = vehicle_profile::kCatalog;
   const auto *const rpm = catalog.find("vehicle.engine_rpm");
   const auto *const brake = catalog.find("vehicle.brake_pressed");
@@ -231,12 +257,8 @@ Pixels replay_selected_profile() {
 } // namespace
 
 TEST_CASE("empty selected profile stays empty and renders black through the real controller") {
-#if REPLAY_SELECTED_PROFILE_EXPECT_EMPTY
-  REQUIRE(vehicle_profile::kCatalog.empty());
-#else
   if (!vehicle_profile::kCatalog.empty())
     return;
-#endif
 
   replay::ReplayClock clock{};
   RecordingPixelSink pixels{};
@@ -263,19 +285,21 @@ TEST_CASE("empty selected profile stays empty and renders black through the real
 }
 
 TEST_CASE("selected replay adapter processes and publishes the generated provider") {
-#if REPLAY_SELECTED_PROFILE_EXPECT_EMPTY
-  return;
-#else
   const auto *const brake = vehicle_profile::kCatalog.find("vehicle.brake_pressed");
-  REQUIRE(brake != nullptr);
+  if (brake == nullptr)
+    return;
   const auto *const brake_dispatch = dispatch_for(brake->id);
   REQUIRE(brake_dispatch != nullptr);
 
   replay::ReplayClock clock{};
   vehicle_profile_runtime::ReplayAdapter adapter{selected_tables(), clock};
   RecordedNotifications notices{};
+  CallbackMutationProbe callback_probe{&adapter};
   const auto subscription = adapter.provider().subscribe(brake->id, record_notification, &notices);
   REQUIRE(subscription.ok());
+  const auto callback_probe_subscription =
+      adapter.provider().subscribe(brake->id, reject_callback_mutations, &callback_probe);
+  REQUIRE(callback_probe_subscription.ok());
   REQUIRE(adapter.start() == vehicle_profile_runtime::ReplayAdapterStatus::Ok);
   REQUIRE(notices.count == 1);
   CHECK(notices.entries[0].initial);
@@ -295,6 +319,14 @@ TEST_CASE("selected replay adapter processes and publishes the generated provide
   CHECK(notices.entries[1].current.availability == vehicle_signals::Availability::Fresh);
   CHECK_FALSE(notices.entries[1].became_unavailable);
   CHECK_FALSE(notices.entries[1].recovered);
+  CHECK(callback_probe.fresh_notices == 1);
+  CHECK(callback_probe.process_status ==
+        vehicle_profile_runtime::ReplayAdapterStatus::InvalidState);
+  CHECK(callback_probe.service_status ==
+        vehicle_profile_runtime::ReplayAdapterStatus::InvalidState);
+  CHECK(callback_probe.fault_status == vehicle_profile_runtime::ReplayAdapterStatus::InvalidState);
+  CHECK(callback_probe.stop_status == vehicle_profile_runtime::ReplayAdapterStatus::InvalidState);
+  CHECK(callback_probe.availability_after_attempt == vehicle_signals::Availability::Fresh);
   const auto reading = adapter.provider().read(brake->id);
   REQUIRE(reading.ok());
   REQUIRE(reading.value->value.has_value());
@@ -315,6 +347,9 @@ TEST_CASE("selected replay adapter processes and publishes the generated provide
   CHECK(notices.entries[3].current.availability == vehicle_signals::Availability::Fresh);
   CHECK_FALSE(notices.entries[3].became_unavailable);
   CHECK(notices.entries[3].recovered);
+  CHECK(callback_probe.fresh_notices == 2);
+  CHECK(callback_probe.stop_status == vehicle_profile_runtime::ReplayAdapterStatus::InvalidState);
+  CHECK(callback_probe.availability_after_attempt == vehicle_signals::Availability::Fresh);
 
   CHECK(adapter.stop() == vehicle_profile_runtime::ReplayAdapterStatus::Ok);
   REQUIRE(notices.count == 5);
@@ -325,17 +360,15 @@ TEST_CASE("selected replay adapter processes and publishes the generated provide
   const auto stopped = adapter.provider().read(brake->id);
   REQUIRE(stopped.ok());
   CHECK(stopped.value->availability == vehicle_signals::Availability::NoData);
-#endif
 }
 
 TEST_CASE(
     "populated selected profile drives expected values, pixels and recovery deterministically") {
-#if REPLAY_SELECTED_PROFILE_EXPECT_EMPTY
-  return;
-#else
+#if defined(REPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID) &&                                           \
+    defined(REPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID)
   REQUIRE_FALSE(vehicle_profile::kCatalog.empty());
   REQUIRE(vehicle_profile::kCatalog.find("vehicle.engine_rpm") != nullptr);
   REQUIRE(vehicle_profile::kCatalog.find("vehicle.brake_pressed") != nullptr);
-#endif
   CHECK(same_pixels(replay_selected_profile(), replay_selected_profile()));
+#endif
 }

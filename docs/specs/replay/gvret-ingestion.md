@@ -66,7 +66,8 @@ The production `ReplayController` keeps the native Mazda service's bounded
 the portable provider synchronously at each receive, timeout, and fault
 boundary, then drains notifications before returning. That path does not wait
 on wall time and uses the selected profile's generated catalog, decoder table,
-freshness policy, and factory configuration.
+freshness policy, and canonical generated factory JSON embedded in the replay
+binary. Runtime output setup does not read a mutable build artifact by path.
 
 `tests/tools/run_selected_profile_replay_matrix.py` reconfigures one host build
 from a populated two-source synthetic profile to an alternate CAN layout and

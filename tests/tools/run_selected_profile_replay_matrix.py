@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/fixtures/vehicle-profiles/dbc"
 TARGET = "replay_selected_profile_controller_tests"
+FACTORY_JSON_TARGET = "controller_config_factory_json"
+FACTORY_HEADER_TARGET = "replay_factory_config_header"
 
 
 def write_profile(directory: Path, profile_id: str, identifier_offset: int) -> Path:
@@ -72,7 +75,6 @@ def write_profile(directory: Path, profile_id: str, identifier_offset: int) -> P
 def configure_case(
     args: argparse.Namespace,
     mapping: Path,
-    expect_empty: bool,
     expected_engine_id: int | None = None,
     expected_brake_id: int | None = None,
 ) -> None:
@@ -88,12 +90,10 @@ def configure_case(
         "-DBUILD_TESTING=ON",
         "-DMAZDA_BUILD_HOST_TESTS=ON",
         f"-DVEHICLE_PROFILE={mapping}",
-        f"-DREPLAY_SELECTED_PROFILE_EXPECT_EMPTY={1 if expect_empty else 0}",
+        f"-DCONTROLLER_CONFIG_DEFAULT_YAML={ROOT / 'config/default.yaml'}",
+        f"-DREPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID={expected_engine_id or ''}",
+        f"-DREPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID={expected_brake_id or ''}",
     ]
-    if expected_engine_id is not None:
-        command.append(f"-DREPLAY_SELECTED_PROFILE_EXPECT_ENGINE_ID={expected_engine_id}")
-    if expected_brake_id is not None:
-        command.append(f"-DREPLAY_SELECTED_PROFILE_EXPECT_BRAKE_ID={expected_brake_id}")
     if args.core_source_dir is not None:
         command.append(f"-DVEHICLE_CAN_CORE_SOURCE_DIR={args.core_source_dir}")
     subprocess.run(command, check=True)
@@ -107,6 +107,55 @@ def configure_case(
     if executable.with_suffix(".exe").exists():
         executable = executable.with_suffix(".exe")
     subprocess.run([str(executable)], check=True)
+    if expected_engine_id == 256 and expected_brake_id == 145:
+        verify_embedded_factory_config(args, command, executable)
+
+
+def verify_embedded_factory_config(
+    args: argparse.Namespace, configure_command: list[str], executable: Path
+) -> None:
+    """Prove an old copied replay binary is independent of factory artifacts."""
+    relocated = args.build_dir / "relocated-old-replay"
+    relocated.mkdir(parents=True, exist_ok=True)
+    copied_executable = relocated / executable.name
+    shutil.copy2(executable, copied_executable)
+
+    factory_json = args.build_dir / "factory_default_config.json"
+    original_json = factory_json.read_bytes()
+    changed_config = json.loads(original_json)
+    changed_config["outputs"][0]["color"]["blue"] = 0
+    changed_json = json.dumps(changed_config, sort_keys=True, separators=(",", ":")) + "\n"
+    mutated_yaml = relocated / "mutated-factory.yaml"
+    mutated_yaml.write_text(changed_json, encoding="utf-8")
+
+    def run_copy() -> None:
+        subprocess.run([str(copied_executable)], check=True, cwd=relocated)
+
+    try:
+        factory_json.write_text(changed_json, encoding="utf-8")
+        run_copy()
+
+        reconfigure = [
+            argument
+            for argument in configure_command
+            if not argument.startswith("-DCONTROLLER_CONFIG_DEFAULT_YAML=")
+        ]
+        reconfigure.append(f"-DCONTROLLER_CONFIG_DEFAULT_YAML={mutated_yaml}")
+        subprocess.run(reconfigure, check=True)
+        subprocess.run(
+            [args.cmake, "--build", str(args.build_dir), "--target", FACTORY_JSON_TARGET],
+            check=True,
+        )
+        subprocess.run(
+            [args.cmake, "--build", str(args.build_dir), "--target", FACTORY_HEADER_TARGET],
+            check=True,
+        )
+        run_copy()
+
+        factory_json.unlink()
+        run_copy()
+    finally:
+        factory_json.write_bytes(original_json)
 
 
 def main() -> int:
@@ -123,13 +172,13 @@ def main() -> int:
     profile_b = write_profile(args.build_dir / "replay-fixture-b", "synthetic.replay.b", 1)
     empty = FIXTURES / "mapping-empty.json"
 
-    for label, mapping, expect_empty, engine_id, brake_id in (
-        ("two-source profile A", profile_a, False, 256, 145),
-        ("alternate CAN layout profile B", profile_b, False, 512, 146),
-        ("empty profile", empty, True, None, None),
+    for label, mapping, engine_id, brake_id in (
+        ("two-source profile A", profile_a, 256, 145),
+        ("alternate CAN layout profile B", profile_b, 512, 146),
+        ("empty profile", empty, None, None),
     ):
         print(f"\n== {label} ==", flush=True)
-        configure_case(args, mapping, expect_empty, engine_id, brake_id)
+        configure_case(args, mapping, engine_id, brake_id)
     return 0
 
 

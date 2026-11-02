@@ -47,25 +47,25 @@ public:
   }
 
   [[nodiscard]] ReplayAdapterStatus process(const vehicle_core::RawCanFrame &frame) noexcept {
-    if (!started_ || !on_owner_thread())
+    if (!started_ || !on_owner_thread() || ProviderAccess::callback_active(provider_))
       return ReplayAdapterStatus::InvalidState;
     return deliver(ProviderAccess::process(provider_, frame));
   }
 
   [[nodiscard]] ReplayAdapterStatus service() noexcept {
-    if (!started_ || !on_owner_thread())
+    if (!started_ || !on_owner_thread() || ProviderAccess::callback_active(provider_))
       return ReplayAdapterStatus::InvalidState;
     return deliver(ProviderAccess::service(provider_));
   }
 
   [[nodiscard]] ReplayAdapterStatus source_fault() noexcept {
-    if (!started_ || !on_owner_thread())
+    if (!started_ || !on_owner_thread() || ProviderAccess::callback_active(provider_))
       return ReplayAdapterStatus::InvalidState;
     return deliver(ProviderAccess::fault(provider_));
   }
 
   [[nodiscard]] ReplayAdapterStatus stop() noexcept {
-    if (!started_ || !on_owner_thread())
+    if (!started_ || !on_owner_thread() || ProviderAccess::callback_active(provider_))
       return ReplayAdapterStatus::InvalidState;
 
     ProviderAccess::deliver(provider_, ProviderAccess::fault(provider_));

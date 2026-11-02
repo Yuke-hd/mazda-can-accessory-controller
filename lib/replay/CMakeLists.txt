@@ -85,10 +85,33 @@ target_link_libraries(
   PRIVATE controller_config local_argb local_argb_actions local_argb_sink_contract
 )
 if(TARGET controller_config_factory_json)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  set(_replay_factory_json_header
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/factory_config.hpp")
+  add_custom_command(
+    OUTPUT "${_replay_factory_json_header}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/embed_factory_config.py"
+            --input "${CONTROLLER_CONFIG_FACTORY_JSON}"
+            --output "${_replay_factory_json_header}"
+    DEPENDS "${CONTROLLER_CONFIG_FACTORY_JSON}"
+            "${CMAKE_SOURCE_DIR}/tools/embed_factory_config.py"
+    COMMENT "Embedding selected factory configuration for replay"
+    VERBATIM)
+  add_custom_target(replay_factory_config_header
+    DEPENDS "${_replay_factory_json_header}")
+  add_dependencies(replay_factory_config_header controller_config_factory_json)
+  target_include_directories(replay_local_argb_stage PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_compile_definitions(replay_local_argb_stage PRIVATE
-    CONTROLLER_CONFIG_FACTORY_JSON_PATH="${CONTROLLER_CONFIG_FACTORY_JSON}")
-  add_dependencies(replay_local_argb_stage controller_config_factory_json)
-elseif(NOT VEHICLE_PROFILE_IS_NATIVE)
+    CONTROLLER_CONFIG_FACTORY_JSON_EMBEDDED=1)
+  add_dependencies(replay_local_argb_stage replay_factory_config_header)
+elseif(VEHICLE_PROFILE_IS_NATIVE)
+  target_compile_definitions(replay_local_argb_stage PRIVATE
+    REPLAY_SELECTED_PROFILE_NATIVE=1)
+else()
   message(FATAL_ERROR "selected-profile replay requires generated factory JSON")
 endif()
 replay_warnings(replay_local_argb_stage)
