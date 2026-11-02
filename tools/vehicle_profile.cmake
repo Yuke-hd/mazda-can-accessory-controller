@@ -114,6 +114,54 @@ function(vehicle_profile_select)
   set(VEHICLE_PROFILE_ARTIFACT_TARGET vehicle_profile_artifacts PARENT_SCOPE)
 endfunction()
 
+function(vehicle_profile_select_max_resource_fixture)
+  get_property(_already GLOBAL PROPERTY VEHICLE_PROFILE_SELECTION_DONE)
+  if(_already)
+    message(FATAL_ERROR "vehicle profile selection may be called once per project")
+  endif()
+  if(NOT VEHICLE_PROFILE STREQUAL "native:mazda")
+    message(FATAL_ERROR
+      "maximum profile resource fixture requires VEHICLE_PROFILE=native:mazda")
+  endif()
+  set_property(GLOBAL PROPERTY VEHICLE_PROFILE_SELECTION_DONE TRUE)
+  get_property(_already_generated GLOBAL PROPERTY VEHICLE_PROFILE_GENERATED)
+  if(_already_generated)
+    message(FATAL_ERROR "vehicle profile artifacts may be generated once per project")
+  endif()
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(_output "${CMAKE_BINARY_DIR}/vehicle_profile_resource_fixture/max")
+  _vehicle_profile_resolve_output("${_output}" _output)
+  set(_generator "${_VEHICLE_PROFILE_TOOLS_DIR}/generate_profile_runtime_link_probe.py")
+  set(_fixture "${_VEHICLE_PROFILE_REPOSITORY_ROOT}/tests/fixtures/vehicle-profiles/runtime-limits.json")
+  set(_command "${Python3_EXECUTABLE}" "${_generator}" --selection max
+               --application-artifacts --output-dir "${_output}")
+  execute_process(COMMAND ${_command}
+    RESULT_VARIABLE _result OUTPUT_VARIABLE _stdout ERROR_VARIABLE _stderr)
+  if(NOT _result EQUAL 0)
+    message(FATAL_ERROR
+      "Maximum profile resource fixture generation failed:\n${_stdout}${_stderr}")
+  endif()
+
+  file(GLOB _modules CONFIGURE_DEPENDS "${_VEHICLE_PROFILE_TOOLS_DIR}/vehicle_profiles/*.py")
+  set(_inputs "${_generator}" "${_fixture}" ${_modules})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_inputs})
+  add_custom_target(vehicle_profile_artifacts COMMAND ${_command} DEPENDS ${_inputs} VERBATIM)
+  set_property(GLOBAL PROPERTY VEHICLE_PROFILE_GENERATED TRUE)
+  message(STATUS
+    "Selected profile resource fixture: maximum generated profile (not a vehicle profile selection)")
+
+  set(VEHICLE_PROFILE_IS_NATIVE FALSE PARENT_SCOPE)
+  set(VEHICLE_PROFILE_MAPPING_PATH "" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_ARTIFACT_DIR "${_output}" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_COMPILER_CATALOG "${_output}/controller_signal_catalog.json" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_METADATA_HEADER "${_output}/vehicle_profile_metadata.hpp" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_RUNTIME_HEADER "${_output}/vehicle_profile_runtime.hpp" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_INCLUDE_DIR "${_output}" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_CAPABILITY_REPORT "${_output}/capability_report.json" PARENT_SCOPE)
+  set(VEHICLE_PROFILE_ARTIFACT_TARGET vehicle_profile_artifacts PARENT_SCOPE)
+endfunction()
+
 function(vehicle_profile_generate)
   cmake_parse_arguments(PROFILE "" "MANIFEST;POLICIES;GENERATOR_REVISION;OUTPUT_DIR"
                         "SOURCE_FILES;GENERATOR_INPUTS" ${ARGN})

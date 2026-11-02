@@ -85,6 +85,67 @@ class LocalArgbBoundaryValidatorTests(unittest.TestCase):
     def test_repository_composition_passes(self) -> None:
         self.assert_accepted()
 
+    def test_generated_profile_selects_one_profile_runtime_service(self) -> None:
+        self.edit(
+            MAIN,
+            "using SelectedTelemetryService = vehicle_profile_runtime::ProfileRuntimeService;",
+            "using SelectedTelemetryService = mazda::VehicleTelemetry;",
+        )
+        self.assert_rejected(
+            "generated-profile selected telemetry service type is missing",
+        )
+
+    def test_generated_profile_rejects_unverified_freshness_in_live_engine(self) -> None:
+        self.edit(
+            MAIN,
+            "static action_engine::ActionEngine engine{signal_provider,\n"
+            "                                          action_engine::UnverifiedFreshnessPolicy::Reject};",
+            "static action_engine::ActionEngine engine{signal_provider};",
+        )
+        self.assert_rejected(
+            "generated-profile live and scratch engines must both reject unverified freshness"
+        )
+
+    def test_generated_profile_rejects_unverified_freshness_in_scratch_check(self) -> None:
+        self.edit(
+            MAIN,
+            "static companion_config::ScratchApplyCheck config_apply_check{\n"
+            "    signal_provider, application_clock, action_engine::UnverifiedFreshnessPolicy::Reject};",
+            "static companion_config::ScratchApplyCheck config_apply_check{\n"
+            "    signal_provider, application_clock};",
+        )
+        self.assert_rejected(
+            "generated-profile live and scratch engines must both reject unverified freshness"
+        )
+
+    def test_extra_unselected_service_instance_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "static SelectedTelemetryService telemetry{};",
+            "static SelectedTelemetryService telemetry{};\n"
+            "static mazda::VehicleTelemetry secondary_telemetry{};",
+        )
+        self.assert_rejected("vehicle integration declares an unconditional non-selected service instance")
+
+    def test_duplicate_selected_service_instance_is_rejected(self) -> None:
+        self.edit(
+            MAIN,
+            "static SelectedTelemetryService telemetry{};",
+            "static SelectedTelemetryService telemetry{};\n"
+            "static SelectedTelemetryService second_telemetry{};",
+        )
+        self.assert_rejected("vehicle integration must select exactly one service instance per profile branch")
+
+    def test_generated_profile_requires_profile_runtime_and_vehicle_telemetry(self) -> None:
+        self.edit(
+            MAIN_CMAKE,
+            "list(APPEND main_requires vehicle_profile_runtime vehicle_telemetry)",
+            "list(APPEND main_requires vehicle_telemetry)",
+        )
+        self.assert_rejected(
+            "vehicle application must select Mazda telemetry or generated-profile runtime requirements"
+        )
+
     def test_startup_sequence_called_directly_from_app_main_is_rejected(self) -> None:
         self.edit(MAIN, "  if (!start_vehicle_io_on_core1()) {", "  if (!start_vehicle_io()) {")
         self.assert_rejected(
