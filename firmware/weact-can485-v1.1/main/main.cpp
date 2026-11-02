@@ -20,14 +20,24 @@
 #include "local_argb/lighting_sink.hpp"
 #include "local_argb/local_argb.h"
 #include "local_argb_actions/led_action_sink.hpp"
+#include "vehicle_core/time.hpp"
+#include "vehicle_signals/signal_provider.hpp"
+#if VEHICLE_PROFILE_IS_NATIVE
 #include "mazda/signal_provider.hpp"
 #include "mazda/vehicle_telemetry.hpp"
+#else
+#include "vehicle_profile_runtime.hpp"
+#include "vehicle_profile_runtime/provider.hpp"
+#include "vehicle_profile_runtime/service.hpp"
+#include "vehicle_profile_runtime/tables.hpp"
+#include "vehicle_telemetry/can_bus_source.hpp"
+#endif
 #include "sdkconfig.h"
 
-#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_FRESHNESS_DEBUG
 #include "freshness_debug_logger.hpp"
 #endif
-#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_TELEMETRY_PROFILING
 #include "telemetry_profiling_logger.hpp"
 #endif
 #if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
@@ -42,6 +52,7 @@
 namespace {
 constexpr char kTag[] = "weact_can485_v11";
 
+#if VEHICLE_PROFILE_IS_NATIVE
 struct ApplicationState {
   std::uint32_t turn_notifications{0};
 };
@@ -84,24 +95,32 @@ bool reading_is_actionable(const mazda::Reading<float> &reading) noexcept {
          (reading.availability == mazda::Availability::Fresh ||
           reading.availability == mazda::Availability::FreshnessUnverified);
 }
+#endif
+
+#if VEHICLE_PROFILE_IS_NATIVE
+using SelectedTelemetryService = mazda::VehicleTelemetry;
+#else
+using SelectedTelemetryService = vehicle_profile_runtime::ProfileRuntimeService;
+#endif
 
 // The renderer supervisor watches this count: if the notification dispatcher
 // stops completing loop passes, the strip fails off without a Deactivate.
 std::uint32_t notification_dispatch_progress(const void *context) noexcept {
-  return static_cast<const mazda::VehicleTelemetry *>(context)->dispatch_progress();
+  return static_cast<const SelectedTelemetryService *>(context)->dispatch_progress();
 }
 
-// The facade owns a 32 KiB opaque service allocation. Keep it, the provider,
-// the engine, the LED sink and the typed callback context in application-owned
-// storage instead of the 3.5 KiB app_main task stack. The LED sink is the
-// renderer queue's only publisher. Static destructors never run on ESP-IDF.
-// If teardown were ever added, it would have to stop the facade
-// (telemetry.stop()) before the engine is destroyed, and then call
+// Keep the selected service, provider, engine, LED sink and typed callback
+// context in application-owned storage instead of the 3.5 KiB app_main task
+// stack. The LED sink is the renderer queue's only publisher. Static
+// destructors never run on ESP-IDF. If teardown were ever added, it would have
+// to stop the selected service (telemetry.stop()) before the engine is destroyed, and then call
 // local_argb::fail_off(), because a stopped facade and a destroyed engine send
 // no Deactivate. The facade's lifecycle owner is the vehicle I/O startup task,
 // which exits after start, so such a stop would have to run on a long-lived
 // owner instead.
+#if VEHICLE_PROFILE_IS_NATIVE
 static ApplicationState application_state{};
+#endif
 class ApplicationClock final : public vehicle_core::MonotonicClock {
 public:
   vehicle_core::MonotonicTimestamp now() const noexcept override {
@@ -111,16 +130,34 @@ public:
 static ApplicationClock application_clock{};
 static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(),
                                                      application_clock};
-static mazda::VehicleTelemetry telemetry{};
+#if VEHICLE_PROFILE_IS_NATIVE
+static SelectedTelemetryService telemetry{};
 static mazda::MazdaSignalProvider signal_provider{telemetry};
 static action_engine::ActionEngine engine{signal_provider};
-#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+#else
+static vehicle_telemetry::CanBusSource can_bus_source{can_bus::Configuration{}};
+constexpr vehicle_profile_runtime::ProfileTables kSelectedProfileTables{
+    vehicle_profile::kCatalog,
+    vehicle_profile::kFreshnessPolicies.data(),
+    vehicle_profile::kFreshnessPolicies.size(),
+    vehicle_profile::kDispatchTable.data(),
+    vehicle_profile::kDispatchTable.size(),
+    vehicle_profile::kMaxDecodeResults,
+};
+static SelectedTelemetryService telemetry{kSelectedProfileTables, application_clock,
+                                          can_bus_source};
+static vehicle_signals::SignalProvider &signal_provider{telemetry.provider()};
+static action_engine::ActionEngine engine{signal_provider,
+                                          action_engine::UnverifiedFreshnessPolicy::Reject};
+#endif
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_FRESHNESS_DEBUG
 static weact_can485::freshness_debug::Logger freshness_debug_logger{telemetry};
 #endif
-#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_TELEMETRY_PROFILING
 static weact_can485::telemetry_profiling::Logger telemetry_profiling_logger{telemetry};
 #endif
 #if CONFIG_WEACT_CAN_FREERTOS_RUNTIME_STATS
+#if VEHICLE_PROFILE_IS_NATIVE
 weact_can485::freertos_runtime_stats::PauseSnapshot
 read_telemetry_pause_snapshot(const void *const context) noexcept {
   const auto &source = *static_cast<const mazda::VehicleTelemetry *>(context);
@@ -129,6 +166,9 @@ read_telemetry_pause_snapshot(const void *const context) noexcept {
 }
 static weact_can485::freertos_runtime_stats::Logger freertos_runtime_stats_logger{
     &read_telemetry_pause_snapshot, &telemetry};
+#else
+static weact_can485::freertos_runtime_stats::Logger freertos_runtime_stats_logger{nullptr, nullptr};
+#endif
 #endif
 static controller_config::persisted::ControllerConfig active_configuration{};
 // The NVS config store. The vehicle I/O startup task creates it and then
@@ -139,7 +179,12 @@ static std::unique_ptr<controller_config::persisted::ConfigStoreBackend> config_
 // The companion config ports. A commit dry-runs the upload on a scratch,
 // never-attached engine and LED sink whose lighting sink discards every
 // command, so it never touches the live engine or the renderer queue.
+#if VEHICLE_PROFILE_IS_NATIVE
 static companion_config::ScratchApplyCheck config_apply_check{signal_provider, application_clock};
+#else
+static companion_config::ScratchApplyCheck config_apply_check{
+    signal_provider, application_clock, action_engine::UnverifiedFreshnessPolicy::Reject};
+#endif
 static companion_config::ConfigService config_service{active_configuration, config_apply_check};
 
 void log_configuration_diagnostic(
@@ -261,11 +306,10 @@ bool configure_engine_lighting(
 
 namespace {
 // Runs the vehicle I/O startup sequence: load configuration, startup black,
-// apply configuration, signal
-// subscriptions and the CAN start, in that order. Every failure after
+// apply configuration, provider subscriptions and the CAN start, in that
+// order. Every failure after
 // local_argb::start() fails off before refusing. The task that runs it becomes
-// the telemetry facade's lifecycle owner, so every facade lifecycle call
-// (subscribe, attach, start) must stay in this function.
+// the selected telemetry service's lifecycle owner, so start stays here.
 bool start_vehicle_io() noexcept {
   config_backend = controller_config::persisted::make_nvs_config_store_backend();
   if (config_backend == nullptr)
@@ -275,8 +319,9 @@ bool start_vehicle_io() noexcept {
     ESP_LOGE(kTag, "engine LED action setup failed; refusing to start CAN");
     return false;
   }
+#if VEHICLE_PROFILE_IS_NATIVE
   // The turn channel has two subscriber slots: the typed notice log and the
-  // engine. Both register while the facade is stopped.
+  // engine. Both register while the native facade is stopped.
   const auto turn_subscription =
       telemetry.on_turn_state_changed(&turn_state_changed, &application_state);
   if (!turn_subscription.ok()) {
@@ -284,6 +329,7 @@ bool start_vehicle_io() noexcept {
     ESP_LOGE(kTag, "turn notification registration failed; refusing to start CAN");
     return false;
   }
+#endif
   if (engine.attach() != vehicle_signals::SignalStatus::Ok) {
     local_argb::fail_off();
     ESP_LOGE(kTag, "engine attachment failed; refusing to start CAN");
@@ -297,24 +343,24 @@ bool start_vehicle_io() noexcept {
 
   ESP_LOGI(kTag,
            "WeAct CAN485 DevBoard V1.1 vehicle CAN mode: STRICT LISTEN-ONLY; bitrate=%lu; "
-           "TX queue disabled; receive API only; telemetry facade owns acquisition",
+           "TX queue disabled; receive API only; selected telemetry service owns acquisition",
            500UL);
   if (!telemetry.start().ok()) {
     local_argb::fail_off();
-    ESP_LOGE(kTag, "strict listen-only telemetry startup failed; refusing to continue");
+    ESP_LOGE(kTag, "strict listen-only selected-service startup failed; refusing to continue");
     return false;
   }
 
-#if CONFIG_WEACT_CAN_FRESHNESS_DEBUG
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_FRESHNESS_DEBUG
   if (!freshness_debug_logger.start())
     ESP_LOGW(kTag, "CAN freshness debug logger task could not be created; telemetry continues");
 #endif
-#if CONFIG_WEACT_CAN_TELEMETRY_PROFILING
+#if VEHICLE_PROFILE_IS_NATIVE && CONFIG_WEACT_CAN_TELEMETRY_PROFILING
   if (!telemetry_profiling_logger.start())
     ESP_LOGW(kTag, "telemetry profiling logger task could not be created; telemetry continues");
 #endif
 
-  ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
+  ESP_LOGI(kTag, "strict listen-only CAN acquisition started through selected service");
   // Sets the Live signals telemetry-started flag. It only stores an atomic
   // flag, so it never waits and never blocks the vehicle I/O startup.
   companion_ble::mark_telemetry_started();
@@ -404,12 +450,14 @@ extern "C" void app_main(void) {
     ESP_LOGW(kTag, "FreeRTOS runtime diagnostic task could not be created; control continues");
 #endif
   for (;;) {
+#if VEHICLE_PROFILE_IS_NATIVE
     const auto speed = telemetry.speed_kph();
     const auto engine_rpm = telemetry.engine_rpm();
     if (reading_is_actionable(speed) && reading_is_actionable(engine_rpm)) {
       ESP_LOGD(kTag, "telemetry poll: speed=%.2f kph engine_rpm=%.2f", *speed.value,
                *engine_rpm.value);
     }
+#endif
     // Polled rules, such as the RPM level fill and red zone, are sampled at
     // this cadence; the engine serializes them with the turn notices.
     (void)engine.sample_polled_rules();

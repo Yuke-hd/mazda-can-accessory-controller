@@ -227,6 +227,20 @@ class RuntimeCodeGenerationTests(unittest.TestCase):
                 self.assertTrue((output / "vehicle_profile_metadata.hpp").is_file())
                 self.assertTrue((output / "vehicle_profile_runtime.hpp").is_file())
 
+    def test_maximum_resource_fixture_generates_selected_application_artifacts(self):
+        output = self.root / "resource-fixture-max"
+        generate_link_probe("max", output, application_artifacts=True)
+        profile = json.loads((output / "vehicle_profile.json").read_text())
+        catalog = json.loads((output / "controller_signal_catalog.json").read_text())
+        report = json.loads((output / "capability_report.json").read_text())
+        self.assertEqual(len(profile["bindings"]), 64)
+        self.assertEqual(len(catalog["signals"]), 64)
+        self.assertEqual(profile["artifact_identity"], report["artifact_identity"])
+        self.assertIn(b'kBindingCount = 64U', (output / "vehicle_profile_runtime.hpp").read_bytes())
+        with self.assertRaisesRegex(ValueError, "only for the maximum fixture"):
+            generate_link_probe("empty", self.root / "invalid-resource-fixture",
+                                application_artifacts=True)
+
     def test_runtime_message_field_binding_and_notify_caps_reject_overflow(self):
         maximum = json.loads((FIXTURES / "runtime-limits.json").read_text())
 

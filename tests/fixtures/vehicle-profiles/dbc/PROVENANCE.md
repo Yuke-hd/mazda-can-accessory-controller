@@ -1,8 +1,8 @@
 # DBC import fixtures
 
-`demo-a.dbc`, `demo-b.dbc`, `mapping-demo-a.json` and `mapping-empty.json` are
-newly authored synthetic files, licensed Apache-2.0 with the rest of this
-repository.
+`demo-a.dbc`, `demo-b.dbc`, `mapping-demo-a.json`, `mapping-two-source.json`
+and `mapping-empty.json` are newly authored synthetic files, licensed
+Apache-2.0 with the rest of this repository.
 
 - The synthetic DBCs contain no vehicle observations, captures, VINs or real
   DBC content, and no Mazda data.

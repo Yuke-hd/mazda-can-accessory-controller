@@ -510,9 +510,21 @@ def main() -> int:
         if re.search(rf'^\s*#\s*include\s*"{re.escape(header)}"', code, re.M) is None:
             failures.append(f'{label} is missing from vehicle integration: #include "{header}"')
     for needle, label in (
-        ("static mazda::VehicleTelemetry telemetry{}", "static facade instance"),
+        ("using SelectedTelemetryService = mazda::VehicleTelemetry;",
+         "native selected telemetry service type"),
+        ("using SelectedTelemetryService = vehicle_profile_runtime::ProfileRuntimeService;",
+         "generated-profile selected telemetry service type"),
+        ("static SelectedTelemetryService telemetry", "static selected service instance"),
         ("static mazda::MazdaSignalProvider signal_provider{telemetry}",
-         "static generic provider over the facade"),
+         "native generic provider over the facade"),
+        ("static vehicle_signals::SignalProvider &signal_provider{telemetry.provider()}",
+         "generated-profile provider over the selected service"),
+        ("static vehicle_telemetry::CanBusSource can_bus_source{can_bus::Configuration{}}",
+         "generated-profile receive-only acquisition source"),
+        ("constexpr vehicle_profile_runtime::ProfileTables kSelectedProfileTables{",
+         "generated-profile selected decoder tables"),
+        ("static SelectedTelemetryService telemetry{kSelectedProfileTables, application_clock,",
+         "generated-profile selected service construction"),
         ("static action_engine::ActionEngine engine{signal_provider}", "static action engine"),
         ("static local_argb_actions::LedActionSink led_actions{local_argb::internal::sink(), application_clock}",
          "static LED action sink bound to the renderer queue"),
@@ -541,6 +553,30 @@ def main() -> int:
     ):
         if re.sub(r"\s+", "", needle) not in re.sub(r"\s+", "", structure):
             failures.append(f"{label} is missing from vehicle integration: {needle}")
+
+    freshness_reject = "action_engine::UnverifiedFreshnessPolicy::Reject"
+    if structure.count(freshness_reject) != 2:
+        failures.append(
+            "generated-profile live and scratch engines must both reject unverified freshness"
+        )
+    selected_service_declarations = re.findall(
+        r"static\s+SelectedTelemetryService\s+\w+\s*\{", structure
+    )
+    if len(selected_service_declarations) != 2 or re.search(
+        r"#if\s+VEHICLE_PROFILE_IS_NATIVE\s+"
+        r"static\s+SelectedTelemetryService\s+telemetry\s*\{\s*\}.*?"
+        r"#else\s+static\s+vehicle_telemetry::CanBusSource.*?"
+        r"static\s+SelectedTelemetryService\s+telemetry\s*\{\s*kSelectedProfileTables.*?"
+        r"#endif",
+        structure,
+        re.S,
+    ) is None:
+        failures.append("vehicle integration must select exactly one service instance per profile branch")
+    if re.search(
+        r"static\s+(?:mazda::VehicleTelemetry|vehicle_profile_runtime::ProfileRuntimeService)\s+\w+\s*[({]",
+        structure,
+    ):
+        failures.append("vehicle integration declares an unconditional non-selected service instance")
 
     # Startup order is checked inside the startup sequence only, and fails
     # closed: a call that the sequence does not make is a violation.
@@ -619,15 +655,30 @@ def main() -> int:
     ):
         if f'/../../{component}"' not in vehicle_project_cmake:
             failures.append(f"vehicle project does not select the {component} component")
-    requires = re.search(r"\bREQUIRES\b([^)]*)", vehicle_cmake)
+    main_requires = re.search(r"\bset\s*\(\s*main_requires\b([^)]*)\)", vehicle_cmake)
     for component in (
         "action_engine",
         "local_argb_actions",
         "local_argb_sink_contract",
         "controller_config",
     ):
-        if requires is None or component not in requires.group(1).split():
+        if main_requires is None or component not in main_requires.group(1).split():
             failures.append(f"vehicle application does not require the {component} component")
+    if main_requires is None:
+        failures.append("vehicle application does not define its component requirements")
+    elif "REQUIRES ${main_requires}" not in re.sub(r"\s+", " ", vehicle_cmake):
+        failures.append("vehicle application does not register its selected component requirements")
+    selected_requires = re.sub(r"\s+", " ", vehicle_cmake)
+    if not re.search(
+        r"elseif\s*\(\s*VEHICLE_PROFILE_IS_NATIVE\s*\)\s*"
+        r"list\s*\(\s*APPEND\s+main_requires\s+mazda_telemetry\s*\)\s*"
+        r"else\s*\(\s*\)\s*"
+        r"list\s*\(\s*APPEND\s+main_requires\s+vehicle_profile_runtime\s+vehicle_telemetry\s*\)",
+        selected_requires,
+    ):
+        failures.append(
+            "vehicle application must select Mazda telemetry or generated-profile runtime requirements"
+        )
     if "local_argb_compat" in vehicle_cmake:
         failures.append("vehicle application still selects the retired local_argb compatibility target")
     if failures:
