@@ -34,7 +34,11 @@ namespace {
 } // namespace
 
 ActionEngine::ActionEngine(vehicle_signals::SignalProvider &provider) noexcept
-    : provider_(&provider) {}
+    : ActionEngine(provider, UnverifiedFreshnessPolicy::Allow) {}
+
+ActionEngine::ActionEngine(vehicle_signals::SignalProvider &provider,
+                           const UnverifiedFreshnessPolicy unverified_freshness) noexcept
+    : provider_(&provider), unverified_freshness_(unverified_freshness) {}
 
 ConfigStatus ActionEngine::add_sink(ActionSink &sink) noexcept {
   if (attached_) {
@@ -70,6 +74,10 @@ ConfigStatus ActionEngine::add_range_rule(const RangeRuleConfig &config) noexcep
   if (!resolution.rule.has_value()) {
     return resolution.status;
   }
+  const auto freshness_status = check_freshness(config.freshness);
+  if (freshness_status != ConfigStatus::Ok) {
+    return freshness_status;
+  }
   return polled_rules_.add(*resolution.rule);
 }
 
@@ -84,21 +92,26 @@ ConfigStatus ActionEngine::add_sampled_state_rule(const SampledStateRuleConfig &
     return resolution.status;
   }
 
+  std::optional<ResolvedCondition> resolved_release{};
   if (config.release_threshold.has_value()) {
     if (!has_valid_release_threshold(config.condition, *config.release_threshold)) {
       return ConfigStatus::InvalidHysteresis;
     }
-    SignalCondition release_condition = config.condition;
-    release_condition.operand = RuleOperand::number(*config.release_threshold);
+    SignalCondition release_candidate = config.condition;
+    release_candidate.operand = RuleOperand::number(*config.release_threshold);
     const auto release_resolution =
-        resolve_sampled_condition(provider_->catalog(), release_condition, config.freshness);
+        resolve_sampled_condition(provider_->catalog(), release_candidate, config.freshness);
     if (!release_resolution.condition.has_value()) {
       return release_resolution.status;
     }
-    return polled_rules_.add(
-        SampledStateRule{*resolution.condition, config.action, release_resolution.condition});
+    resolved_release = release_resolution.condition;
   }
-  return polled_rules_.add(SampledStateRule{*resolution.condition, config.action});
+  const auto freshness_status = check_freshness(config.freshness);
+  if (freshness_status != ConfigStatus::Ok) {
+    return freshness_status;
+  }
+  return polled_rules_.add(
+      SampledStateRule{*resolution.condition, config.action, resolved_release});
 }
 
 ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) const noexcept {
@@ -115,6 +128,14 @@ ConfigStatus ActionEngine::check_action(ActionId action, RuleOutput output) cons
   return ConfigStatus::Ok;
 }
 
+ConfigStatus ActionEngine::check_freshness(const FreshnessRequirement freshness) const noexcept {
+  if (unverified_freshness_ == UnverifiedFreshnessPolicy::Reject &&
+      freshness == FreshnessRequirement::FreshOrUnverified) {
+    return ConfigStatus::UnsupportedCapability;
+  }
+  return ConfigStatus::Ok;
+}
+
 ConditionResolution ActionEngine::resolve_rule(const SignalCondition &condition, ActionId action,
                                                FreshnessRequirement freshness,
                                                RuleOutput output) const noexcept {
@@ -122,7 +143,15 @@ ConditionResolution ActionEngine::resolve_rule(const SignalCondition &condition,
   if (status != ConfigStatus::Ok) {
     return ConditionResolution{status, std::nullopt};
   }
-  return resolve_condition(provider_->catalog(), condition, freshness);
+  const auto resolution = resolve_condition(provider_->catalog(), condition, freshness);
+  if (!resolution.condition.has_value()) {
+    return resolution;
+  }
+  const ConfigStatus freshness_status = check_freshness(freshness);
+  if (freshness_status != ConfigStatus::Ok) {
+    return ConditionResolution{freshness_status, std::nullopt};
+  }
+  return resolution;
 }
 
 SignalStatus ActionEngine::attach() noexcept {

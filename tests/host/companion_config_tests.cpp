@@ -27,6 +27,7 @@ namespace {
 
 namespace persisted = controller_config::persisted;
 namespace wire = companion_protocol;
+using action_engine::UnverifiedFreshnessPolicy;
 using companion_config::ApplyCheck;
 using companion_config::ConfigService;
 using companion_config::ScratchApplyCheck;
@@ -42,6 +43,33 @@ constexpr std::string_view kUnknownSignal =
     R"({"version":1,"actions":[{"name":"a"}],"rules":[{"type":"state","action":"a",)"
     R"("signal_key":"vehicle.not_a_signal","comparison":"equal",)"
     R"("operand":{"choice":"left"},"freshness":"fresh"}]})";
+constexpr std::string_view kUnverifiedBrakeRule =
+    R"({"version":1,"actions":[{"name":"brake"}],"rules":[{"type":"state",)"
+    R"("action":"brake","signal_key":"vehicle.brake_pressed","comparison":"equal",)"
+    R"("operand":{"boolean":true},"freshness":"fresh_or_unverified"}]})";
+constexpr std::string_view kFreshBrakeRule =
+    R"({"version":1,"actions":[{"name":"brake"}],"rules":[{"type":"state",)"
+    R"("action":"brake","signal_key":"vehicle.brake_pressed","comparison":"equal",)"
+    R"("operand":{"boolean":true},"freshness":"fresh"}]})";
+constexpr std::string_view kPartiallyMissingRules =
+    R"({"version":1,"actions":[{"name":"brake"},{"name":"missing"}],"rules":[)"
+    R"({"type":"state","action":"brake","signal_key":"vehicle.brake_pressed",)"
+    R"("comparison":"equal","operand":{"boolean":true},"freshness":"fresh"},)"
+    R"({"type":"state","action":"missing","signal_key":"vehicle.not_in_catalog",)"
+    R"("comparison":"equal","operand":{"boolean":true},"freshness":"fresh"}]})";
+
+constexpr vehicle_signals::SignalMetadata kImportedCatalogA[] = {
+    {vehicle_signals::SignalId{41}, "vehicle.brake_pressed", vehicle_signals::SignalType::Boolean,
+     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,
+     vehicle_signals::SignalCapability::Read | vehicle_signals::SignalCapability::Notify, nullptr,
+     0},
+};
+constexpr vehicle_signals::SignalMetadata kImportedCatalogB[] = {
+    {vehicle_signals::SignalId{912}, "vehicle.brake_pressed", vehicle_signals::SignalType::Boolean,
+     vehicle_signals::SignalUnit::None, vehicle_signals::ValidationStatus::Reference,
+     vehicle_signals::SignalCapability::Read | vehicle_signals::SignalCapability::Notify, nullptr,
+     0},
+};
 
 std::string factory_json() {
   std::ifstream file{CONTROLLER_CONFIG_FACTORY_JSON_PATH, std::ios::binary};
@@ -127,6 +155,23 @@ struct Boot {
   persisted::ControllerConfig active{};
   ScriptedApplyCheck apply_check{};
   ConfigService service{active, apply_check};
+};
+
+struct SelectedProviderBoot {
+  SelectedProviderBoot(FakeBackend &store, test_support::FakeSignalProvider &provider,
+                       test_support::FakeClock &clock,
+                       const UnverifiedFreshnessPolicy freshness_policy)
+      : apply_check(provider, clock, freshness_policy), service(active, apply_check) {
+    persisted::ConfigStore config_store{store};
+    auto selected = persisted::load_boot_configuration(&config_store, kMinimal);
+    REQUIRE(selected.ok());
+    service.record_boot(selected, &store);
+    active = std::move(*selected.configuration);
+  }
+
+  persisted::ControllerConfig active{};
+  ScratchApplyCheck apply_check;
+  ConfigService service;
 };
 
 } // namespace
@@ -497,4 +542,84 @@ TEST_CASE("the scratch dry run rejects a signal the catalog does not have") {
   CHECK(status.stage == persisted::ApplyStage::Rule);
   CHECK(status.engine == action_engine::ConfigStatus::UnknownSignal);
   CHECK(provider.subscription_count() == 0);
+}
+
+TEST_CASE("an imported policy rejects fresh_or_unverified uploads before saving") {
+  FakeBackend store;
+  test_support::FakeSignalProvider provider{vehicle_signals::SignalCatalogView{kImportedCatalogA}};
+  test_support::FakeClock clock;
+  SelectedProviderBoot boot{store, provider, clock, UnverifiedFreshnessPolicy::Reject};
+  const auto before = boot.service.prepare_boot();
+
+  const auto outcome = boot.service.commit(view(kUnverifiedBrakeRule));
+
+  REQUIRE(outcome.result() == wire::TransferResult::ApplyRejected);
+  CHECK(outcome.apply().stage == wire::ApplyStage::Rule);
+  CHECK(outcome.apply().engine == wire::EngineConfigCode::UnsupportedCapability);
+  CHECK(store.writes == 0);
+  CHECK(store.stored.empty());
+  const auto after = boot.service.prepare_boot();
+  CHECK(after.status.active.length() == before.status.active.length());
+  CHECK(after.status.active.crc32() == before.status.active.crc32());
+
+  const auto parsed = persisted::parse_controller_config(kUnverifiedBrakeRule);
+  REQUIRE(parsed.ok());
+  const auto boot_apply = boot.apply_check.dry_run(*parsed.configuration);
+  CHECK(boot_apply.stage == persisted::ApplyStage::Rule);
+  CHECK(boot_apply.engine == action_engine::ConfigStatus::UnsupportedCapability);
+}
+
+TEST_CASE("a bare saved rule reapplies through a compatible provider with different signal ids") {
+  FakeBackend store;
+  test_support::FakeSignalProvider provider_a{
+      vehicle_signals::SignalCatalogView{kImportedCatalogA}};
+  test_support::FakeClock clock;
+  SelectedProviderBoot first_boot{store, provider_a, clock, UnverifiedFreshnessPolicy::Reject};
+
+  const auto outcome = first_boot.service.commit(view(kFreshBrakeRule));
+
+  REQUIRE(outcome.result() == wire::TransferResult::Saved);
+  REQUIRE(store.writes == 1);
+  const std::string saved_json = store.stored;
+
+  test_support::FakeSignalProvider provider_b{
+      vehicle_signals::SignalCatalogView{kImportedCatalogB}};
+  persisted::ConfigStore config_store{store};
+  auto selected = persisted::load_boot_configuration(&config_store, kMinimal);
+  REQUIRE(selected.ok());
+  REQUIRE(selected.source == persisted::ConfigurationSource::PersistedOverride);
+  REQUIRE(selected.configuration.has_value());
+  ScratchApplyCheck apply_check{provider_b, clock, UnverifiedFreshnessPolicy::Reject};
+
+  CHECK(apply_check.dry_run(*selected.configuration).ok());
+  CHECK(selected.configuration->rules.size() == 1);
+  CHECK(store.writes == 1);
+  CHECK(store.stored == saved_json);
+  CHECK(saved_json.find("\"version\":1") == 1);
+  CHECK(saved_json.find("profile") == std::string::npos);
+}
+
+TEST_CASE("a saved document with one missing public signal is rejected whole without rewriting") {
+  FakeBackend store;
+  persisted::ConfigStore config_store{store};
+  const auto saved = config_store.save_override(kPartiallyMissingRules);
+  REQUIRE(saved.ok());
+  REQUIRE(store.writes == 1);
+
+  auto selected = persisted::load_boot_configuration(&config_store, kMinimal);
+  REQUIRE(selected.ok());
+  REQUIRE(selected.configuration.has_value());
+  REQUIRE(selected.configuration->rules.size() == 2);
+  test_support::FakeSignalProvider provider{vehicle_signals::SignalCatalogView{kImportedCatalogA}};
+  test_support::FakeClock clock;
+  ScratchApplyCheck apply_check{provider, clock, UnverifiedFreshnessPolicy::Reject};
+
+  const auto status = apply_check.dry_run(*selected.configuration);
+
+  CHECK(status.stage == persisted::ApplyStage::Rule);
+  CHECK(status.index == 1);
+  CHECK(status.engine == action_engine::ConfigStatus::UnknownSignal);
+  CHECK(selected.configuration->rules.size() == 2);
+  CHECK(store.writes == 1);
+  CHECK(store.stored == saved.canonical_json);
 }

@@ -39,7 +39,12 @@ class ScratchApplyCheck final : public ApplyCheck {
 public:
   ScratchApplyCheck(vehicle_signals::SignalProvider &provider,
                     vehicle_core::MonotonicClock &clock) noexcept
-      : provider_(provider), clock_(clock) {}
+      : ScratchApplyCheck(provider, clock, action_engine::UnverifiedFreshnessPolicy::Allow) {}
+  // Match the live engine's selected-profile policy. Imported compositions
+  // pass Reject; the native composition keeps the existing Allow behavior.
+  ScratchApplyCheck(vehicle_signals::SignalProvider &provider, vehicle_core::MonotonicClock &clock,
+                    action_engine::UnverifiedFreshnessPolicy unverified_freshness) noexcept
+      : provider_(provider), clock_(clock), unverified_freshness_(unverified_freshness) {}
 
   [[nodiscard]] controller_config::persisted::ApplyStatus
   dry_run(const controller_config::persisted::ControllerConfig &config) noexcept override;
@@ -54,6 +59,7 @@ private:
 
   vehicle_signals::SignalProvider &provider_;
   vehicle_core::MonotonicClock &clock_;
+  action_engine::UnverifiedFreshnessPolicy unverified_freshness_;
   DiscardingLightingSink lighting_{};
   std::optional<action_engine::ActionEngine> engine_{};
   std::optional<local_argb_actions::LedActionSink> leds_{};
