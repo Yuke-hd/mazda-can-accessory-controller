@@ -326,16 +326,17 @@ fresh host build and CTest run passed on `0fad8a9`: all 864 tests passed in
 325.37 seconds, including `selected_profile_config_matrix`, architecture and
 public-header contracts, the Mazda suite, and the runtime consumer tests. The
 Python tooling suite on that head ran 618 tests: 617 passed and one was skipped
-in 157.56 seconds.
+in 157.56 seconds. The exact unittest summary is preserved at
+`/tmp/mazda-m8/builds/401-final-host/python-tooling-summary.log`; this is a
+summary file, not a full stdout log.
 
 The subsequent test-only CMake change at `e095cf3` fixes the matrix runner's
 multi-configuration executable path. On that head, a fresh `Ninja Multi-Config`
 configure followed by
 `ctest -C Debug -R '^selected_profile_config_matrix$' --output-on-failure`
 passed 1/1 in 27.05 seconds. The full host suite was not repeated after this
-test-runner-only change. On `e095cf3`, the PR #412 host and firmware CI jobs
-passed; Host ASan + UBSan was still running when this partial record was
-updated. Refresh that status before recording final acceptance.
+test-runner-only change. On `e095cf3`, all PR #412 host, firmware, and Host ASan
++ UBSan CI checks passed in Actions run `41440486821`.
 
 The eight-image GH-398 selected-application matrix above is reused as GH-398
 source/head evidence; it is not presented as rebuilt on the final #401 head.
