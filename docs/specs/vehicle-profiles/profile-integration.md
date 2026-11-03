@@ -82,13 +82,18 @@ Imported default features use `Fresh` rules only. They produce output only for
 signals whose binding declares `timeout_ms`; a profile that decodes correctly
 but declares no timeouts keeps default output black.
 
-A profile with zero bindings (`all_features_disabled`), or one whose features
-are all unsupported, compiles valid v1 factory JSON with empty actions, rules
-and output bindings plus valid board sink settings. Pixels start and remain
-black, discovery is empty and replay observes no inputs. No Mazda policy is
-selected implicitly. A valid empty configuration may start the bounded
-receive-only provider. A factory validation or apply failure keeps CAN stopped
-and BLE repair available under the existing failed-off startup contract.
+A profile with zero bindings (`all_features_disabled`) compiles valid v1 factory
+JSON with empty actions, rules and output bindings plus valid board sink
+settings. Pixels start and remain black; discovery is empty and replay observes
+no inputs. No Mazda policy is selected implicitly. A valid empty configuration
+may start the bounded receive-only provider. A factory validation or apply
+failure keeps CAN stopped and BLE repair available under the existing failed-off
+startup contract.
+
+A populated profile whose factory features are all unsupported compiles the
+same empty factory lighting configuration, while retaining its mapped signal
+catalog and decoding for BLE discovery, replay and saved user rules. Factory
+output remains black; no Mazda policy is selected implicitly.
 
 ## Saved rules
 
