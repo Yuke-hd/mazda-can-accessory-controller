@@ -46,13 +46,27 @@ class ControllerConfigCompilerTests(unittest.TestCase):
     def run_compiler(
         self, source: str, output_name: str = "output.json"
     ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
+        return self.run_compiler_with_signal_catalog(source, output_name)
+
+    def run_compiler_with_signal_catalog(
+        self,
+        source: str,
+        output_name: str = "output.json",
+        signal_catalog: dict[str, object] | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], bytes | None]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             input_path = root / "input.yaml"
             output_path = root / output_name
             input_path.write_text(source, encoding="utf-8")
+            command = [sys.executable, str(COMPILER), "--output-catalog", str(self.output_catalog)]
+            if signal_catalog is not None:
+                signal_catalog_path = root / "signal_catalog.json"
+                signal_catalog_path.write_text(json.dumps(signal_catalog), encoding="utf-8")
+                command.extend(("--signal-catalog", str(signal_catalog_path)))
+            command.extend((str(input_path), str(output_path)))
             result = subprocess.run(
-                [sys.executable, str(COMPILER), "--output-catalog", str(self.output_catalog), str(input_path), str(output_path)],
+                command,
                 cwd=REPOSITORY,
                 check=False,
                 capture_output=True,
@@ -575,6 +589,146 @@ class ControllerConfigCompilerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("choice", result.stderr)
         self.assertIsNone(output_path)
+
+    def test_selected_signal_catalogs_and_empty_catalog_compile(self) -> None:
+        cases = (
+            (
+                {"version": 1, "signals": {"fixture.temperature": {
+                    "type": "number", "capabilities": ["notify"]}}},
+                """
+                version: 1
+                actions: [{name: action}]
+                rules:
+                  - type: state
+                    action: action
+                    signal_key: fixture.temperature
+                    comparison: greater
+                    operand: {number: 5}
+                outputs: []
+                """,
+                "fixture.temperature",
+            ),
+            (
+                {"version": 1, "signals": {"fixture.mode": {
+                    "type": "enum", "capabilities": ["notify"],
+                    "choices": ["enabled", "disabled"]}}},
+                """
+                version: 1
+                actions: [{name: action}]
+                rules:
+                  - type: state
+                    action: action
+                    signal_key: fixture.mode
+                    comparison: equal
+                    operand: {choice: enabled}
+                outputs: []
+                """,
+                "fixture.mode",
+            ),
+        )
+        for catalog, source, expected_key in cases:
+            with self.subTest(expected_key=expected_key):
+                result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=catalog)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(payload)["rules"][0]["signal_key"], expected_key)
+
+        result, payload = self.run_compiler_with_signal_catalog(
+            "version: 1\n", signal_catalog={"version": 1, "signals": {}}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(payload), {"version": 1, "actions": [], "rules": [], "outputs": []})
+
+    def test_selected_signal_catalog_does_not_fall_back_to_native_signals(self) -> None:
+        source = """
+        version: 1
+        actions: [{name: action}]
+        rules:
+          - type: state
+            action: action
+            signal_key: vehicle.turn_state
+            comparison: equal
+            operand: {choice: left}
+        outputs: []
+        """
+        result, payload = self.run_compiler_with_signal_catalog(
+            source, signal_catalog={"version": 1, "signals": {}}
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("unknown signal 'vehicle.turn_state'", result.stderr)
+        self.assertIsNone(payload)
+
+    def test_selected_signal_catalog_keeps_rule_and_catalog_validation_strict(self) -> None:
+        source = """
+        version: 1
+        actions: [{name: action}]
+        rules:
+          - type: state
+            action: action
+            signal_key: fixture.mode
+            comparison: equal
+            operand: {choice: enabled}
+        outputs: []
+        """
+        catalog = {"version": 1, "signals": {"fixture.mode": {
+            "type": "enum", "capabilities": ["notify"], "choices": ["enabled"]}}}
+        for operand, diagnostic in (
+            ("{number: 1}", "does not match signal"),
+            ("{choice: unknown}", "unknown choice"),
+        ):
+            with self.subTest(operand=operand):
+                result, payload = self.run_compiler_with_signal_catalog(
+                    source.replace("{choice: enabled}", operand), signal_catalog=catalog
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertIsNone(payload)
+
+        without_notify = {"version": 1, "signals": {"fixture.mode": {
+            "type": "enum", "capabilities": ["read"], "choices": ["enabled"]}}}
+        result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=without_notify)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("does not support notify delivery", result.stderr)
+        self.assertIsNone(payload)
+
+        missing_choices = {"version": 1, "signals": {"fixture.mode": {
+            "type": "enum", "capabilities": ["notify"]}}}
+        result, payload = self.run_compiler_with_signal_catalog(source, signal_catalog=missing_choices)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("enum signal choices are required", result.stderr)
+        self.assertIsNone(payload)
+
+    def test_compile_file_api_accepts_explicit_signal_catalog_path(self) -> None:
+        from tools.compile_controller_config import compile_file
+
+        source = """
+        version: 1
+        actions: [{name: action}]
+        rules:
+          - type: state
+            action: action
+            signal_key: fixture.state
+            comparison: equal
+            operand: {boolean: true}
+        outputs: []
+        """
+        catalog = {
+            "version": 1,
+            "signals": {"fixture.state": {"type": "boolean", "capabilities": ["notify"]}},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "input.yaml"
+            output_path = root / "output.json"
+            signal_catalog_path = root / "signal_catalog.json"
+            input_path.write_text(source, encoding="utf-8")
+            signal_catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+            compile_file(input_path, output_path, self.output_catalog,
+                         signal_catalog_path=signal_catalog_path)
+
+            self.assertEqual(json.loads(output_path.read_bytes())["rules"][0]["signal_key"],
+                             "fixture.state")
 
     def test_ambiguous_yaml_words_remain_enum_choices(self) -> None:
         source = """
@@ -1295,6 +1449,7 @@ class ControllerConfigCompilerTests(unittest.TestCase):
 
 class OutputCatalogCompilerTests(unittest.TestCase):
     run_compiler = ControllerConfigCompilerTests.run_compiler
+    run_compiler_with_signal_catalog = ControllerConfigCompilerTests.run_compiler_with_signal_catalog
 
     def setUp(self) -> None:
         directory = tempfile.TemporaryDirectory()
