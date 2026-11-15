@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest/doctest.h>
 
+#include "companion_protocol/display_snapshot.hpp"
 #include "companion_protocol/live_signal_layout.hpp"
 #include "companion_protocol/live_signal_stream.hpp"
 #include "companion_protocol/live_signals.hpp"
@@ -138,6 +139,21 @@ TEST_CASE("every production catalog choice of an Enum slot has a protocol code")
     }
     const auto *entry = catalog.find(slot.key);
     REQUIRE(entry != nullptr);
+    for (std::size_t index = 0; index < entry->choice_count; ++index) {
+      CHECK_MESSAGE(slot.choice_code(entry->choices[index].key).has_value(),
+                    entry->choices[index].key);
+    }
+  }
+}
+
+TEST_CASE("every display signal key resolves in the production catalog with its type") {
+  Harness harness;
+  const auto catalog = harness.provider.catalog();
+  for (const auto &slot : companion_protocol::display_signal_slots()) {
+    const auto *entry = catalog.find(slot.key);
+    REQUIRE_MESSAGE(entry != nullptr, slot.key);
+    CHECK(entry->type == slot.type);
+    CHECK(entry->capabilities.has(vehicle_signals::SignalCapability::Read));
     for (std::size_t index = 0; index < entry->choice_count; ++index) {
       CHECK_MESSAGE(slot.choice_code(entry->choices[index].key).has_value(),
                     entry->choices[index].key);

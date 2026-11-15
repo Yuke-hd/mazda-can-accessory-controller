@@ -33,7 +33,8 @@ two signal providers and the channel's own tests include
 retired `vehicle_core/notification*` headers. `companion_protocol` may link only `vehicle_signals`; its sources must
 not name Mazda types, the BLE stack, CAN drivers, RTOS, or LED outputs outside
 comments, and vehicle catalog key literals are allowed only in
-`lib/companion_protocol/src/live_signal_layout.cpp`. Its isolated consumer
+`lib/companion_protocol/src/live_signal_layout.cpp` and
+`lib/companion_protocol/src/display_snapshot.cpp`. Its isolated consumer
 exercises the catalog export and token-bound page selector, packet record
 builder, and extensible pacing stream against only the pinned generic provider
 contracts. This catches dependency and link-interface leaks in both the new
