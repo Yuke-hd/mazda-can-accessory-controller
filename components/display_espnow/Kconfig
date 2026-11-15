@@ -1,0 +1,13 @@
+menu "Round display link"
+
+config DISPLAY_ESPNOW
+    bool "Stream telemetry to the paired round display over ESP-NOW"
+    default n
+    help
+        Starts Wi-Fi in station mode (no access point connection) and sends
+        one encrypted ESP-NOW telemetry v1 snapshot every 50 ms to the
+        display saved by pairing. Runs alongside the companion BLE link
+        through Wi-Fi/BT coexistence. Without a saved pairing, Wi-Fi is not
+        started. CAN stays listen-only; this sends no vehicle traffic.
+
+endmenu

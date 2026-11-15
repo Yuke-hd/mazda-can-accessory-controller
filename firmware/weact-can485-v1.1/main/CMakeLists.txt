@@ -25,7 +25,7 @@ idf_component_register(
   INCLUDE_DIRS "."
   REQUIRES board local_argb local_argb_sink_contract local_argb_actions action_engine
            controller_config vehicle_can_rx mazda_telemetry freertos vehicle_core esp_timer
-           companion_ble companion_config esp_app_format
+           companion_ble companion_config esp_app_format display_espnow
   PRIV_REQUIRES esp_driver_twai
   EMBED_FILES "${OUTPUT_CATALOG_JSON}"
   # Flash-cache layout; see docs/development/flash-cache-layout.md.
