@@ -14,6 +14,7 @@ if(COMMAND idf_component_register)
                               "src/config_transfer.cpp"
                               "src/crc32.cpp"
                               "src/device_info.cpp"
+                              "src/display_link.cpp"
                               "src/display_snapshot.cpp"
                               "src/extensible_live_stream.cpp"
                               "src/extensible_live_signals.cpp"
@@ -40,6 +41,7 @@ add_library(companion_protocol STATIC
   src/config_transfer.cpp
   src/crc32.cpp
   src/device_info.cpp
+  src/display_link.cpp
   src/display_snapshot.cpp
   src/extensible_live_stream.cpp
   src/extensible_live_signals.cpp
