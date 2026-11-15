@@ -76,6 +76,15 @@ For default-off five-second per-task CPU/runtime, idle progress, stack, and
 telemetry budget-pause diagnostics, use the
 [FreeRTOS task runtime diagnostic guide](freertos-runtime-diagnostics.md).
 
+## Round display link
+
+The ESP-NOW link to the round display is off by default. Layer
+`sdkconfig.espnow.defaults` to enable `CONFIG_DISPLAY_ESPNOW` and move Wi-Fi's
+IRAM speed paths to flash, and provision the setup code with
+`tools/provision_display_code.py`. See the
+[display link spec](../specs/companion/display-espnow.md) for the commands,
+measured sizes and the bench checks still required.
+
 ## Partition layout
 
 The firmware uses a custom single-app partition table,
