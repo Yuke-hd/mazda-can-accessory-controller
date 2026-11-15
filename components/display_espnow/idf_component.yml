@@ -1,0 +1,5 @@
+dependencies:
+  # Pairing v1 setup only (Security1 responder). Pinned to the version whose
+  # sources sdk/overlay.json was reviewed against; apply.py fails on drift.
+  espressif/esp-now:
+    version: "2.5.3"

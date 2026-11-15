@@ -881,3 +881,14 @@ set_tests_properties(
   profile_runtime_generated_decoder_codegen
   PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
 )
+
+# The display link's esp-now boundary regression compiles exact pinned SDK
+# code, so it runs only when the firmware's managed components are resolved.
+set(_esp_now_managed_dir
+    "${CMAKE_SOURCE_DIR}/firmware/weact-can485-v1.1/managed_components/espressif__esp-now")
+if(EXISTS "${_esp_now_managed_dir}/src/espnow/src/espnow.c")
+  add_test(NAME display_espnow_sdk_context_regression
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${CMAKE_SOURCE_DIR}/components/display_espnow/sdk/context_regression.py"
+                   "${_esp_now_managed_dir}")
+endif()

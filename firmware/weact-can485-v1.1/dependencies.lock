@@ -7,6 +7,30 @@ dependencies:
       path: components/can_bus
       type: git
     version: e9db379fc0f0edffa39f54b5133c1b2ac24f5fc1
+  espressif/cmake_utilities:
+    component_hash: afc935d5a93cda71ce3223b817de128d07484439d585e6fe613bde820e17f36a
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.4.1
+  espressif/esp-now:
+    component_hash: 217f4e2c1672bcc71e5890fb3659528bbce5f1a8a995b1668fec9374acbd0f45
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.5.3'
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.5.3
   espressif/led_strip:
     component_hash: 28621486f77229aaf81c71f5e15d6fbf36c2949cf11094e07090593e659e7639
     dependencies:
@@ -39,10 +63,11 @@ dependencies:
     version: e9db379fc0f0edffa39f54b5133c1b2ac24f5fc1
 direct_dependencies:
 - can_bus
+- espressif/esp-now
 - espressif/led_strip
 - idf
 - vehicle_core
 - vehicle_telemetry
-manifest_hash: c0b668ed62ef341e94aa1954b605602192ed239b3599a6cad05c9237862e916b
+manifest_hash: a47f0f0b5d2ac4208b1780fce63e9e0e17dd61adb0bc1f7dd948b473f775b11a
 target: esp32
 version: 2.0.0
