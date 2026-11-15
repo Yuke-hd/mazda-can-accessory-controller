@@ -360,10 +360,10 @@ bool start_vehicle_io() noexcept {
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
   // Sets the Live signals telemetry-started flag. It only stores an atomic
   // flag, so it never waits and never blocks the vehicle I/O startup.
-  companion_ble::mark_telemetry_started();
 #if CONFIG_DISPLAY_ESPNOW
   display_espnow::mark_telemetry_started();
 #endif
+  companion_ble::mark_telemetry_started();
   return true;
 }
 
