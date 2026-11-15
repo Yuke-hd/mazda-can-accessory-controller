@@ -2,7 +2,9 @@
 
 // Round display ESP-NOW link (docs/specs/companion/display-espnow.md).
 //
-// Streams ECAN telemetry v1 snapshots to the display saved by pairing v1. The
+// Streams ECAN telemetry v1 snapshots to the display saved by pairing v1. A
+// 5 s user key press restarts into setup mode, where the pairing v1 responder
+// runs for one 120 s window and saves the authenticated display. The
 // composition root hands it the read-only signal provider; it never touches
 // CAN, the LED renderer or lighting. A failure only loses the display link.
 
@@ -14,6 +16,10 @@ struct Inputs {
   // False when NVS initialization failed this boot: no pairing can be read,
   // so Wi-Fi is never started.
   bool nvs_available{false};
+  // Samples the active-low user key; nullptr disables the long press.
+  bool (*user_key_pressed)(){nullptr};
+  // The controlled restart (fail-off first). Required for setup mode.
+  void (*restart)() noexcept {nullptr};
 };
 
 // Starts the link on its own low-priority startup task and returns without

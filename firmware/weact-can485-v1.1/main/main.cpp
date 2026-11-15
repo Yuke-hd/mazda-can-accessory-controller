@@ -218,6 +218,8 @@ __attribute__((noinline)) void start_companion_link() noexcept {
   // The display link also only reads the provider; a failure loses the link.
   display_espnow::Inputs display_inputs{};
   display_inputs.nvs_available = controller_config::persisted::nvs_initialized();
+  display_inputs.user_key_pressed = board::user_key_pressed;
+  display_inputs.restart = restart_after_fail_off;
   if (!display_espnow::start(signal_provider, display_inputs))
     ESP_LOGW(kTag, "display link not started; lighting continues without it");
 #endif
