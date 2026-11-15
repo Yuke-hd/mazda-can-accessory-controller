@@ -9,6 +9,18 @@ namespace companion_protocol {
 
 namespace {
 
+// ECAN v1 record type: Bool 1, Number 2, Enum 3.
+std::uint8_t wire_type(vehicle_signals::SignalType type) noexcept {
+  switch (type) {
+  case vehicle_signals::SignalType::Boolean:
+    return 1;
+  case vehicle_signals::SignalType::Number:
+    return 2;
+  default:
+    return 3;
+  }
+}
+
 using vehicle_signals::Availability;
 using vehicle_signals::SignalCapability;
 using vehicle_signals::SignalMetadata;
@@ -46,8 +58,8 @@ constexpr DisplaySignalSlot enumeration(std::string_view key, const LiveChoiceCo
   return DisplaySignalSlot{key, SignalType::Enum, DisplayRange::Signed, codes, N, false};
 }
 constexpr DisplaySignalSlot boolean(std::string_view key, bool freshness_unset = false) {
-  return DisplaySignalSlot{key, SignalType::Boolean, DisplayRange::Signed, nullptr, 0,
-                           freshness_unset};
+  return DisplaySignalSlot{key, SignalType::Boolean, DisplayRange::Signed, nullptr,
+                           0,   freshness_unset};
 }
 
 // Index i is wire ID i + 1; never reorder.
@@ -174,7 +186,8 @@ const std::array<DisplaySignalSlot, kDisplaySignalCount> &display_signal_slots()
   return kSlots;
 }
 
-DisplaySnapshotSampler::DisplaySnapshotSampler(const vehicle_signals::SignalProvider &provider) noexcept
+DisplaySnapshotSampler::DisplaySnapshotSampler(
+    const vehicle_signals::SignalProvider &provider) noexcept
     : provider_(provider) {
   const auto catalog = provider_.catalog();
   for (std::size_t index = 0; index < kDisplaySignalCount; ++index) {
@@ -199,10 +212,7 @@ DisplaySnapshot DisplaySnapshotSampler::sample(bool telemetry_started, std::uint
     const Record record =
         telemetry_started ? record_for(kSlots[index], resolved_[index], provider_) : Record{};
     bytes[offset] = static_cast<std::uint8_t>(index + 1);
-    bytes[offset + 1] = static_cast<std::uint8_t>(kSlots[index].type == SignalType::Boolean ? 1
-                                                  : kSlots[index].type == SignalType::Number
-                                                      ? 2
-                                                      : 3);
+    bytes[offset + 1] = wire_type(kSlots[index].type);
     bytes[offset + 2] = static_cast<std::uint8_t>(record.availability);
     write_u32(bytes, offset + 4, record.value);
   }

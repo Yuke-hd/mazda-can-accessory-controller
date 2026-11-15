@@ -25,9 +25,9 @@ inline constexpr std::size_t kPairingRecordBytes = 26;
 // the controller has no pending stage (pairing-v1: it persists after the
 // authenticated key response and restarts).
 struct PairingRecord {
-  std::array<std::uint8_t, 6> peer{};  // display station MAC
-  std::uint8_t channel{0};             // Wi-Fi channel 1-13
-  std::array<std::uint8_t, 16> lmk{};  // first 16 bytes of the exchanged key
+  std::array<std::uint8_t, 6> peer{}; // display station MAC
+  std::uint8_t channel{0};            // Wi-Fi channel 1-13
+  std::array<std::uint8_t, 16> lmk{}; // first 16 bytes of the exchanged key
 };
 
 using PairingRecordBytes = std::array<std::uint8_t, kPairingRecordBytes>;

@@ -31,10 +31,10 @@ constexpr char kNamespace[] = "display_link";
 constexpr char kRecordKey[] = "record";
 constexpr char kSetupFlagKey[] = "setup";
 constexpr char kSetupCodeKey[] = "setup_code";
-constexpr std::uint64_t kPublishPeriodUs = 50'000;     // 20 Hz (telemetry v1)
-constexpr std::uint64_t kUserKeyPeriodUs = 20'000;     // kLongPressSamples basis
-constexpr std::uint32_t kPairingWindowMs = 120'000;    // pairing v1
-constexpr int kMaxPairingFailures = 3;                 // pairing v1
+constexpr std::uint64_t kPublishPeriodUs = 50'000;  // 20 Hz (telemetry v1)
+constexpr std::uint64_t kUserKeyPeriodUs = 20'000;  // kLongPressSamples basis
+constexpr std::uint32_t kPairingWindowMs = 120'000; // pairing v1
+constexpr int kMaxPairingFailures = 3;              // pairing v1
 constexpr std::uint8_t kUnpairedSetupChannel = 1;
 // Core 0 keeps core 1 for vehicle I/O (ADR-0004), like the companion link.
 constexpr BaseType_t kStartupCore = 0;
@@ -86,8 +86,8 @@ std::optional<companion_protocol::PairingRecord> load_record() noexcept {
   std::size_t size = bytes.size();
   const esp_err_t err = nvs_get_blob(handle, kRecordKey, bytes.data(), &size);
   nvs_close(handle);
-  auto record = err == ESP_OK ? companion_protocol::decode_pairing_record(bytes.data(), size)
-                              : std::nullopt;
+  auto record =
+      err == ESP_OK ? companion_protocol::decode_pairing_record(bytes.data(), size) : std::nullopt;
   wipe(bytes.data(), bytes.size());
   return record;
 }
@@ -243,8 +243,7 @@ void start_long_press() noexcept {
   if (inputs.user_key_pressed == nullptr || inputs.restart == nullptr) {
     return;
   }
-  const esp_timer_create_args_t args{sample_user_key, nullptr, ESP_TIMER_TASK, "display_key",
-                                     true};
+  const esp_timer_create_args_t args{sample_user_key, nullptr, ESP_TIMER_TASK, "display_key", true};
   if (checked(esp_timer_create(&args, &user_key_timer), "user key timer")) {
     (void)checked(esp_timer_start_periodic(user_key_timer, kUserKeyPeriodUs),
                   "user key timer start");
@@ -283,8 +282,8 @@ void run_setup() noexcept {
   if (setup_saved.load()) {
     ESP_LOGI(kTag, "display paired; restarting into streaming mode");
   } else {
-    ESP_LOGI(kTag, "%s; pairing window closed", notified ? "too many failed attempts"
-                                                         : "pairing window expired");
+    ESP_LOGI(kTag, "%s; pairing window closed",
+             notified ? "too many failed attempts" : "pairing window expired");
   }
   // Let the SDK return from the key-response path before the restart.
   vTaskDelay(pdMS_TO_TICKS(100));
@@ -325,7 +324,8 @@ void startup(void * /*argument*/) {
 
 } // namespace
 
-bool start(const vehicle_signals::SignalProvider &signal_provider, const Inputs &start_inputs) noexcept {
+bool start(const vehicle_signals::SignalProvider &signal_provider,
+           const Inputs &start_inputs) noexcept {
   if (started_once.exchange(true)) {
     return false;
   }
