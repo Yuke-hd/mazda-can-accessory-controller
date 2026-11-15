@@ -470,6 +470,12 @@ add_test(
 )
 
 add_test(
+  NAME provision_display_code
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/provision_display_code_test.py
+)
+
+add_test(
   NAME protocol_acceleration_evidence
   COMMAND ${Python3_EXECUTABLE}
           ${CMAKE_SOURCE_DIR}/tests/tools/acceleration_evidence_test.py
