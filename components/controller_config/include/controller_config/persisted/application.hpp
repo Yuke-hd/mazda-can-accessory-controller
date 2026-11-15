@@ -52,7 +52,7 @@ struct PersistedOverrideApplyResult final {
 
   [[nodiscard]] bool ok() const noexcept {
     return !override_status.ok() ? factory_status.ok() && !factory_diagnostic.has_value()
-                     : override_status.ok();
+                                 : override_status.ok();
   }
 };
 

@@ -1,0 +1,3 @@
+# Vendored byte-identical from esp32-1-75 (see ../../sdk/README.md); never reformat.
+DisableFormat: true
+SortIncludes: Never

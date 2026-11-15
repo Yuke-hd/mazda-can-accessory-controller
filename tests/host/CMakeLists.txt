@@ -358,6 +358,15 @@ add_executable(companion_protocol_live_signals_tests companion_protocol_live_sig
 target_link_libraries(companion_protocol_live_signals_tests PRIVATE companion_protocol
                                                                     vehicle_signals_test_support
                                                                     doctest::doctest)
+add_executable(companion_protocol_display_snapshot_tests
+               companion_protocol_display_snapshot_tests.cpp)
+target_link_libraries(companion_protocol_display_snapshot_tests PRIVATE companion_protocol
+                                                                        vehicle_signals_test_support
+                                                                        doctest::doctest)
+add_executable(companion_protocol_display_link_tests companion_protocol_display_link_tests.cpp)
+target_link_libraries(companion_protocol_display_link_tests PRIVATE companion_protocol
+                                                                    vehicle_signals_test_support
+                                                                    doctest::doctest)
 add_executable(companion_protocol_extensible_tests companion_protocol_extensible_tests.cpp)
 target_link_libraries(companion_protocol_extensible_tests PRIVATE companion_protocol
                                                                   vehicle_signals_test_support
@@ -391,6 +400,8 @@ foreach(companion_test IN ITEMS companion_protocol_codec_tests companion_protoco
                                 companion_protocol_output_catalog_tests
                                 companion_protocol_transfer_tests
                                 companion_protocol_live_signals_tests
+                                companion_protocol_display_snapshot_tests
+                                companion_protocol_display_link_tests
                                 companion_protocol_extensible_tests
                                 companion_protocol_extensible_stream_tests
                                 companion_protocol_extensible_integration_tests
@@ -456,6 +467,12 @@ add_test(
   NAME architecture_checker_regression
   COMMAND ${Python3_EXECUTABLE}
           ${CMAKE_SOURCE_DIR}/tests/tools/check_architecture_test.py
+)
+
+add_test(
+  NAME provision_display_code
+  COMMAND ${Python3_EXECUTABLE}
+          ${CMAKE_SOURCE_DIR}/tests/tools/provision_display_code_test.py
 )
 
 add_test(
@@ -870,3 +887,14 @@ set_tests_properties(
   profile_runtime_generated_decoder_codegen
   PROPERTIES ENVIRONMENT "MAZDA_VEHICLE_CAN_CORE_ROOT=${MAZDA_VEHICLE_CAN_CORE_ROOT}"
 )
+
+# The display link's esp-now boundary regression compiles exact pinned SDK
+# code, so it runs only when the firmware's managed components are resolved.
+set(_esp_now_managed_dir
+    "${CMAKE_SOURCE_DIR}/firmware/weact-can485-v1.1/managed_components/espressif__esp-now")
+if(EXISTS "${_esp_now_managed_dir}/src/espnow/src/espnow.c")
+  add_test(NAME display_espnow_sdk_context_regression
+           COMMAND "${Python3_EXECUTABLE}"
+                   "${CMAKE_SOURCE_DIR}/components/display_espnow/sdk/context_regression.py"
+                   "${_esp_now_managed_dir}")
+endif()

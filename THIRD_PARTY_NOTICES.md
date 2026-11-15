@@ -91,6 +91,20 @@ source, exact version or commit, license, and required notices.
 - **Role/status:** managed ESP-IDF dependency for the WeAct V1.1 100-pixel
   WS2812B RMT backend; no component source is copied into this repository.
 
+## Espressif esp-now
+
+- **Source:** <https://components.espressif.com/components/espressif/esp-now/versions/2.5.3>
+- **Exact version:** `2.5.3`, upstream commit
+  `4432294ef6a6cb274b441c0678414455a4055cff`
+- **License:** Apache-2.0, as published with the registry component.
+- **Role/status:** managed ESP-IDF dependency for round display pairing v1
+  setup (Security1 responder). `components/display_espnow/sdk/overlay.json`
+  holds reviewed replacements of three upstream files
+  (`src/espnow/src/espnow.c`, `src/security/src/espnow_security_initiator.c`,
+  `src/security/src/espnow_security_responder.c`), copied unchanged from the
+  esp32-1-75 display project; `sdk/apply.py` applies them only over the
+  pinned upstream SHA-256 and refuses any other source.
+
 ## GitHub Actions checkout
 
 - **Source:** <https://github.com/actions/checkout>

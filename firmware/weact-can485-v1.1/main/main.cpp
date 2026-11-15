@@ -1,6 +1,9 @@
 #include "action_engine/engine.hpp"
 #include "board/board_config.h"
 #include "companion_ble/companion_ble.hpp"
+#if CONFIG_DISPLAY_ESPNOW
+#include "display_espnow/display_espnow.hpp"
+#endif
 #include "companion_config/apply_check.hpp"
 #include "companion_config/config_service.hpp"
 #include "controller_config/factory_default.hpp"
@@ -211,6 +214,15 @@ __attribute__((noinline)) void start_companion_link() noexcept {
                            static_cast<std::size_t>(output_catalog_end - output_catalog_start)};
   if (!companion_ble::start(device_info, inputs))
     ESP_LOGW(kTag, "companion BLE not started; lighting continues without the companion link");
+#if CONFIG_DISPLAY_ESPNOW
+  // The display link also only reads the provider; a failure loses the link.
+  display_espnow::Inputs display_inputs{};
+  display_inputs.nvs_available = controller_config::persisted::nvs_initialized();
+  display_inputs.user_key_pressed = board::user_key_pressed;
+  display_inputs.restart = restart_after_fail_off;
+  if (!display_espnow::start(signal_provider, display_inputs))
+    ESP_LOGW(kTag, "display link not started; lighting continues without it");
+#endif
 }
 
 // Loads and applies one boot-time JSON configuration while the engine is
@@ -348,6 +360,9 @@ bool start_vehicle_io() noexcept {
   ESP_LOGI(kTag, "strict listen-only CAN acquisition started through telemetry facade");
   // Sets the Live signals telemetry-started flag. It only stores an atomic
   // flag, so it never waits and never blocks the vehicle I/O startup.
+#if CONFIG_DISPLAY_ESPNOW
+  display_espnow::mark_telemetry_started();
+#endif
   companion_ble::mark_telemetry_started();
   return true;
 }

@@ -1,7 +1,7 @@
 # Portable companion BLE protocol codec: device info, Command decoding, the
 # chunked config transfer state machine, Config status, config read-back,
 # bounded signal-catalog export, live-signal frames and their notification
-# pacing, plus the pairing window,
+# pacing, round display ECAN snapshots, plus the pairing window,
 # user key debounce and link security policy that the BLE binding enforces. It
 # links only the portable vehicle_signals contracts; no BLE stack, Mazda, CAN,
 # RTOS, LED, storage or config-model target is reachable.
@@ -14,6 +14,8 @@ if(COMMAND idf_component_register)
                               "src/config_transfer.cpp"
                               "src/crc32.cpp"
                               "src/device_info.cpp"
+                              "src/display_link.cpp"
+                              "src/display_snapshot.cpp"
                               "src/extensible_live_stream.cpp"
                               "src/extensible_live_signals.cpp"
                               "src/live_signal_layout.cpp"
@@ -39,6 +41,8 @@ add_library(companion_protocol STATIC
   src/config_transfer.cpp
   src/crc32.cpp
   src/device_info.cpp
+  src/display_link.cpp
+  src/display_snapshot.cpp
   src/extensible_live_stream.cpp
   src/extensible_live_signals.cpp
   src/live_signal_layout.cpp

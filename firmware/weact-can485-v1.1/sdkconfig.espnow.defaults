@@ -1,0 +1,7 @@
+# Opt-in round display link (docs/specs/companion/display-espnow.md). Layer it:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.espnow.defaults" ...
+CONFIG_DISPLAY_ESPNOW=y
+# BLE plus Wi-Fi overflow IRAM on the ESP32. A 20 Hz, 200-byte sender does not
+# need Wi-Fi's IRAM speed paths, so they move to flash.
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set

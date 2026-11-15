@@ -28,6 +28,7 @@ set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/local_argb_actions"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/controller_config"
+    "${CMAKE_CURRENT_LIST_DIR}/../../components/display_espnow"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/vehicle_can_rx"
     "${CMAKE_CURRENT_LIST_DIR}/../../components/mazda_telemetry"
     "${CMAKE_CURRENT_LIST_DIR}/../../lib/action_engine"
@@ -136,6 +137,20 @@ add_custom_target(controller_config_factory_json
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(weact_can485_v11_vehicle_listen_only)
+
+# Apply the display project's reviewed esp-now 2.5.3 boundary adaptation
+# before compilation; apply.py refuses unknown upstream source.
+idf_component_get_property(_esp_now_dir espressif__esp-now COMPONENT_DIR)
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_CURRENT_LIST_DIR}/../../components/display_espnow/sdk/apply.py" "${_esp_now_dir}"
+  RESULT_VARIABLE _esp_now_patch_result)
+if(NOT _esp_now_patch_result EQUAL 0)
+  message(FATAL_ERROR "Pinned esp-now SDK adaptation failed")
+endif()
+idf_component_get_property(_esp_now_lib espressif__esp-now COMPONENT_LIB)
+target_include_directories(${_esp_now_lib} PRIVATE
+  "${CMAKE_CURRENT_LIST_DIR}/../../components/display_espnow/include")
 
 # Flash-cache layout (docs/development/flash-cache-layout.md). The ESP32's
 # shared flash cache made telemetry throughput depend on how unrelated Kconfig

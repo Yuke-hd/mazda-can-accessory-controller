@@ -665,9 +665,12 @@ COMPANION_PROTOCOL_LAYER = PortableLayer(
     target_links=("vehicle_signals",),
     include_roots=("lib/companion_protocol/include", "lib/vehicle_signals/include"),
     source_dir="lib/companion_protocol/src",
-    # The live-signal layout names the generic catalog keys it streams; the
-    # keys stay in this one table.
-    key_literal_files=("lib/companion_protocol/src/live_signal_layout.cpp",),
+    # The live-signal layout and the display snapshot table name the generic
+    # catalog keys they stream; the keys stay in these two tables.
+    key_literal_files=(
+        "lib/companion_protocol/src/live_signal_layout.cpp",
+        "lib/companion_protocol/src/display_snapshot.cpp",
+    ),
 )
 
 
